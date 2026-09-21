@@ -20,7 +20,7 @@ Fechado nas credenciais da banca:
 | Tribunal | Sistemas ativos | Credencial da banca |
 | --- | --- | --- |
 | Tribunal de Justiça do Estado do Rio de Janeiro | PJe, eproc, DCP | PJe, eproc, DCP |
-| Tribunal de Justiça do Estado de São Paulo | e-SAJ, eproc | eproc apenas |
+| Tribunal de Justiça do Estado de São Paulo | e-SAJ, eproc | e-SAJ e eproc |
 | Tribunal Regional do Trabalho da 1ª Região | PJe | PJe |
 | Justiça Federal da 2ª Região | eproc | eproc |
 
@@ -209,9 +209,41 @@ semente ou código de segundo fator, e nada disso aparece em log, em auditoria
 ou em mensagem de erro. A ferramenta `justica_credenciais_situacao` responde
 apenas se a credencial existe, e um teste trava esse formato.
 
-Senha e semente ficam em **entradas separadas**. Juntas equivalem à conta
-inteira: o segundo fator deixa de ser segundo fator quando viaja ao lado da
-senha, que foi exatamente o defeito da planilha que originou o projeto.
+Login, senha e semente ficam em **entradas separadas**. Senha e semente juntas
+equivalem à conta inteira: o segundo fator deixa de ser segundo fator quando
+viaja ao lado da senha, que foi exatamente o defeito da planilha que originou
+o projeto.
+
+A prontidão exige login e senha, **não** o segundo fator. Está confirmado que o
+eproc o exige de usuário externo desde abril de 2024, mas para os demais
+portais não há confirmação, e exigir de todos marcaria como incompleta uma
+credencial que funciona.
+
+### Importar a planilha da banca
+
+A planilha existente vira cofre com um comando, sem copiar e colar segredo:
+
+```powershell
+justica-credenciais importar --planilha "C:\caminho\senhas_tribunais.xlsx" --simular
+justica-credenciais importar --planilha "C:\caminho\senhas_tribunais.xlsx"
+```
+
+A leitura acontece na máquina do advogado e o valor vai da célula direto para o
+cofre do sistema. Nada é impresso na tela, nada passa por arquivo intermediário
+e nada trafega por chat. O relatório mostra apenas quais campos entraram.
+
+Os rótulos do escritório são mapeados para os códigos do projeto: `JFRJ` vira
+`TRF2` e `TRT RJ` vira `TRT1`. Linha de tribunal fora do escopo é ignorada com
+o motivo, em vez de falhar a importação inteira.
+
+Campo de segundo fator inválido não derruba a linha: login e senha entram assim
+mesmo, e a observação diz o que houve. É o caso do portal legado do Rio, cujo
+campo de autenticação tem três caracteres e não é semente de autenticador.
+
+Depois de conferir, **apague a planilha** ou guarde-a fora da máquina. Manter
+senha e semente juntas num arquivo anula o segundo fator.
+
+### Carregar manualmente
 
 Quem carrega o cofre é o advogado, pelo terminal da própria máquina:
 
@@ -375,8 +407,7 @@ A correção foi validada revertendo-a e confirmando que o teste falha.
 ## Pendências que dependem do operador
 
 1. Confirmar a natureza do campo de três caracteres do DCP na planilha.
-2. Credencial de e-SAJ para São Paulo: sem ela, o acervo não migrado fica sem
-   acesso autenticado.
+2. Rotacionar as senhas antes de importar, se alguma já circulou fora do cofre.
 3. Observar os nomes de sistema devolvidos para eproc, e-SAJ e DCP. Só `PJe`
    foi visto em campo; os demais estão no mapa como rótulo esperado, ainda não
    confirmado.

@@ -70,10 +70,10 @@ TRIBUNAIS: dict[str, Tribunal] = {
         # e-SAJ ainda concentra a maior parte do acervo nao migrado.
         sistemas_candidatos=(Sistema.EPROC, Sistema.ESAJ),
         observacao=(
-            "Migracao SAJ para eproc em ciclos. A banca NAO possui credencial de "
-            "e-SAJ, entao a fatia nao migrada fica sem acesso autenticado."
+            "Migracao SAJ para eproc em ciclos. A banca possui credencial dos "
+            "dois sistemas, entao cobre tanto o acervo migrado quanto o antigo."
         ),
-        credencial_disponivel=(Sistema.EPROC,),
+        credencial_disponivel=(Sistema.EPROC, Sistema.ESAJ),
     ),
     "5.01": Tribunal(
         codigo="TRT1",

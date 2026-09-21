@@ -10,6 +10,7 @@ dependencies = [
     "pyyaml>=6.0",
     "keyring>=25.0",
     "pyotp>=2.9",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

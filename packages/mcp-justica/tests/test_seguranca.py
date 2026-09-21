@@ -69,5 +69,6 @@ def test_ferramenta_de_credenciais_nao_pode_devolver_segredo():
     assert "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" not in saida
     # E so pode conter estas chaves.
     assert set(cofre.situacao(identidade)) == {
-        "identidade", "senha_guardada", "semente_guardada", "pronta_para_uso",
+        "identidade", "login_guardado", "senha_guardada", "semente_guardada",
+        "pronta_para_uso",
     }

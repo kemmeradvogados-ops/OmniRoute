@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
+SERVICO_LOGIN = "justica-mcp:login"
 SERVICO_SENHA = "justica-mcp:senha"
 SERVICO_SEMENTE = "justica-mcp:semente-segundo-fator"
 
@@ -145,6 +146,14 @@ class Cofre:
         except Exception:
             return False
 
+    def guardar_login(self, identidade: Identidade, login: str) -> None:
+        """O login varia por cadastro: numero de inscricao em um portal,
+        cadastro de pessoa fisica em outro. Fica no cofre junto do resto porque
+        e dado pessoal, e nao aparece em nenhuma resposta de ferramenta."""
+        if not (login or "").strip():
+            raise ValueError("Login vazio nao e gravado.")
+        self._gravar(SERVICO_LOGIN, identidade.chave, login.strip())
+
     def guardar_senha(self, identidade: Identidade, senha: str) -> None:
         if not (senha or "").strip():
             raise ValueError("Senha vazia nao e gravada.")
@@ -155,7 +164,11 @@ class Cofre:
 
     def remover(self, identidade: Identidade) -> list[str]:
         removidos = []
-        for servico, nome in ((SERVICO_SENHA, "senha"), (SERVICO_SEMENTE, "semente")):
+        for servico, nome in (
+            (SERVICO_LOGIN, "login"),
+            (SERVICO_SENHA, "senha"),
+            (SERVICO_SEMENTE, "semente"),
+        ):
             try:
                 if self._backend.get_password(servico, identidade.chave) is not None:
                     self._backend.delete_password(servico, identidade.chave)
@@ -165,6 +178,9 @@ class Cofre:
         return removidos
 
     # ---------------- consulta sem vazamento ----------------
+
+    def tem_login(self, identidade: Identidade) -> bool:
+        return self._ler(SERVICO_LOGIN, identidade.chave) is not None
 
     def tem_senha(self, identidade: Identidade) -> bool:
         return self._ler(SERVICO_SENHA, identidade.chave) is not None
@@ -176,15 +192,27 @@ class Cofre:
         """Resposta segura para ferramenta e relatorio: presenca, nunca valor."""
         return {
             "identidade": identidade.rotulo,
+            "login_guardado": self.tem_login(identidade),
             "senha_guardada": self.tem_senha(identidade),
             "semente_guardada": self.tem_semente(identidade),
-            "pronta_para_uso": self.tem_senha(identidade) and self.tem_semente(identidade),
+            # Prontidao exige login e senha. O segundo fator fica a parte
+            # porque nem todo portal o usa: esta confirmado para o eproc, que
+            # o exige de usuario externo desde abril de 2024, mas para os
+            # demais nao ha confirmacao. Exigir de todos marcaria como
+            # incompleta uma credencial que funciona.
+            "pronta_para_uso": self.tem_login(identidade) and self.tem_senha(identidade),
         }
 
     # ---------------- leitura interna ----------------
     # Sublinhado de proposito: uso exclusivo dos adaptadores, no instante da
     # chamada ao portal. O retorno destes metodos NUNCA pode entrar em resposta
     # de ferramenta, log, auditoria ou mensagem de erro.
+
+    def _login(self, identidade: Identidade) -> str:
+        valor = self._ler(SERVICO_LOGIN, identidade.chave)
+        if valor is None:
+            raise CredencialAusente(identidade, "Login")
+        return valor
 
     def _senha(self, identidade: Identidade) -> str:
         valor = self._ler(SERVICO_SENHA, identidade.chave)

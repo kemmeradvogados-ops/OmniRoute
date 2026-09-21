@@ -59,11 +59,13 @@ def test_identidade_normaliza_caixa():
 def test_situacao_nunca_devolve_o_segredo(cofre, tjrj):
     """`situacao` alimenta ferramenta e relatorio. Se vazasse, a credencial
     entraria no contexto do modelo, que e exatamente o que o projeto proibe."""
+    cofre.guardar_login(tjrj, "11122233344")
     cofre.guardar_senha(tjrj, SENHA)
     cofre.guardar_semente(tjrj, SEMENTE)
     serializada = json.dumps(cofre.situacao(tjrj))
     assert SENHA not in serializada
     assert SEMENTE.replace(" ", "") not in serializada
+    assert "11122233344" not in serializada, "o login tambem e dado pessoal"
     assert cofre.situacao(tjrj)["pronta_para_uso"] is True
 
 
@@ -131,8 +133,21 @@ def test_cofre_quebrado_da_mensagem_util_em_vez_de_traceback(tjrj):
         quebrado.tem_senha(tjrj)
 
 
-def test_remover_apaga_os_dois_segredos(cofre, tjrj):
+def test_remover_apaga_tudo(cofre, tjrj):
+    cofre.guardar_login(tjrj, "11122233344")
     cofre.guardar_senha(tjrj, SENHA)
     cofre.guardar_semente(tjrj, SEMENTE)
-    assert sorted(cofre.remover(tjrj)) == ["semente", "senha"]
+    assert sorted(cofre.remover(tjrj)) == ["login", "semente", "senha"]
     assert cofre.situacao(tjrj)["pronta_para_uso"] is False
+
+
+def test_prontidao_nao_exige_segundo_fator(cofre, tjrj):
+    """Nem todo portal usa segundo fator. Esta confirmado para o eproc, que o
+    exige de usuario externo desde abril de 2024, mas para os demais nao ha
+    confirmacao. Exigir de todos marcaria como incompleta uma credencial que
+    funciona perfeitamente."""
+    cofre.guardar_login(tjrj, "11122233344")
+    cofre.guardar_senha(tjrj, SENHA)
+    situacao = cofre.situacao(tjrj)
+    assert situacao["pronta_para_uso"] is True
+    assert situacao["semente_guardada"] is False

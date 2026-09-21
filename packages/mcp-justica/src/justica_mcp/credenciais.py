@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import sys
+from pathlib import Path
 
 from .core.cofre import (
     Cofre, CofreIndisponivel, CredencialAusente, Identidade, SementeInvalida,
@@ -44,6 +45,51 @@ def _resolver(tribunal: str, sistema: str) -> Identidade:
     return identidade
 
 
+def cmd_importar(cofre: Cofre, planilha: str, simular: bool) -> int:
+    """Le a planilha da banca e carrega o cofre, sem copiar e colar segredo."""
+    from .planilha import PlanilhaInvalida, importar
+
+    caminho = Path(planilha).expanduser()
+    print("=" * LARGURA)
+    print(("SIMULACAO DE IMPORTACAO" if simular else "IMPORTACAO DA PLANILHA").center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Arquivo: {caminho}")
+    print("Os valores vao da celula direto para o cofre do sistema.")
+    print("Nada e impresso na tela e nada passa por arquivo intermediario.\n")
+
+    try:
+        resultados = importar(caminho, cofre, simular=simular)
+    except PlanilhaInvalida as exc:
+        print(f"  {exc}")
+        return 1
+
+    for r in resultados:
+        if r.identidade is None:
+            print(f"  [ignorada] linha {r.linha}: {r.rotulo_planilha}")
+            print(f"             {r.observacao}")
+            continue
+        marca = "[completa]" if r.completa else "[ parcial]"
+        campos = ", ".join(
+            nome for nome, ok in
+            (("login", r.login), ("senha", r.senha), ("segundo fator", r.semente)) if ok
+        ) or "nada"
+        verbo = "importaria" if simular else "importado"
+        print(f"  {marca} {r.identidade.rotulo:16s} {verbo}: {campos}")
+        if r.observacao:
+            print(f"             {r.observacao}")
+
+    aproveitadas = [r for r in resultados if r.identidade is not None]
+    print(f"\n  {len(aproveitadas)} par(es) processado(s).")
+    if simular:
+        print("  Simulacao: NADA foi gravado. Repita sem --simular para valer.")
+    else:
+        print("\n  Confira com: justica-credenciais listar")
+        print("  Depois de conferir, APAGUE a planilha ou guarde-a fora desta")
+        print("  maquina: o cofre passa a ser a fonte, e manter senha e semente")
+        print("  juntas num arquivo anula o segundo fator.")
+    return 0
+
+
 def cmd_listar(cofre: Cofre) -> int:
     print("=" * LARGURA)
     print("CREDENCIAIS NO COFRE".center(LARGURA))
@@ -57,8 +103,9 @@ def cmd_listar(cofre: Cofre) -> int:
         if not s["pronta_para_uso"]:
             faltando += 1
         print(
-            f"  {marca} {identidade.rotulo:20s} "
-            f"senha: {'sim' if s['senha_guardada'] else 'NAO'}   "
+            f"  {marca} {identidade.rotulo:16s} "
+            f"login: {'sim' if s['login_guardado'] else 'NAO'}  "
+            f"senha: {'sim' if s['senha_guardada'] else 'NAO'}  "
             f"segundo fator: {'sim' if s['semente_guardada'] else 'NAO'}"
         )
     print()
@@ -75,6 +122,10 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool, so_se
     print("O que voce digitar NAO aparece na tela e NAO fica em arquivo.\n")
 
     if not so_semente:
+        login = input("  Login (inscricao, cadastro de pessoa fisica, matricula): ").strip()
+        if login:
+            cofre.guardar_login(identidade, login)
+            print("  Login gravado.")
         senha = getpass.getpass("  Senha do portal: ")
         confere = getpass.getpass("  Repita a senha:  ")
         if senha != confere:
@@ -146,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("listar", help="mostra o que esta guardado, nunca o valor")
 
+    imp = sub.add_parser("importar", help="carrega o cofre a partir da planilha da banca")
+    imp.add_argument("--planilha", required=True, help="caminho do arquivo .xlsx")
+    imp.add_argument("--simular", action="store_true",
+                     help="mostra o que faria sem gravar nada")
+
     g = sub.add_parser("guardar", help="grava senha e semente de segundo fator")
     g.add_argument("--tribunal", required=True)
     g.add_argument("--sistema", required=True)
@@ -187,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.comando == "listar":
         return cmd_listar(cofre)
+    if args.comando == "importar":
+        return cmd_importar(cofre, args.planilha, args.simular)
     if args.comando == "guardar":
         return cmd_guardar(cofre, args.tribunal, args.sistema, args.so_senha, args.so_semente)
     if args.comando == "testar":
