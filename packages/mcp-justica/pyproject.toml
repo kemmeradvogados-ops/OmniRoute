@@ -15,11 +15,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+navegador = ["playwright>=1.45"]
 
 [project.scripts]
 justica-mcp = "justica_mcp.server:main"
 justica-diagnostico = "justica_mcp.diagnostico:main"
 justica-credenciais = "justica_mcp.credenciais:main"
+justica-portal = "justica_mcp.portal:main"
 
 [build-system]
 requires = ["setuptools>=68"]

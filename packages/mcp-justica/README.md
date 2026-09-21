@@ -292,13 +292,46 @@ Download está proibido em qualquer modo nesta versão.
 
 Trinta testes cobrem a trava, incluindo cada termo de risco individualmente.
 
+### Reconhecimento de portal
+
+Primeiro passo do acesso autenticado, e o mais tímido possível. Abre um
+endereço, **lê** a estrutura da página e relata. Não preenche campo, não clica
+em botão, não autentica, não baixa nada.
+
+```powershell
+justica-portal reconhecer --url "<endereço copiado da barra do navegador>"
+```
+
+Exige o navegador do Playwright:
+
+```powershell
+pip install -e ".[navegador]"
+playwright install chromium
+```
+
+Se a máquina já tem um Chrome ou Chromium, dá para apontar para ele e pular o
+download: `$env:JUSTICA_CHROMIUM = "C:\caminho\para\chrome.exe"`.
+
+O relatório traz título da página, campos de formulário (com nome, id, rótulo e
+marcação do campo de senha), botões, e o que a trava decidiu em cada passo.
+Campo oculto é ignorado. Nenhum dado de processo aparece: só a estrutura.
+
+**A trava vale aqui também.** O endereço digitado na linha de comando é uma
+autorização explícita do operador e vira permissão efêmera, válida só naquela
+execução, ancorada em esquema, domínio e caminho. Uma página vizinha do mesmo
+portal **não** fica autorizada por tabela, e um redirecionamento para fora do
+endereço autorizado interrompe a leitura. Termo de risco no endereço bloqueia
+mesmo que tenha sido o operador a digitá-lo.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
 - Sondagem real de sistema, via `registrar_sonda`, que hoje não tem nenhuma
   sonda registrada.
-- Conferência em campo das telas do eproc, para preencher a lista de permissão,
-  que hoje está vazia e por isso bloqueia tudo.
+- Conferência em campo das telas do eproc, com `justica-portal reconhecer`,
+  para preencher a lista de permissão, que hoje está vazia e bloqueia tudo.
+- O passo de autenticação, que só será escrito depois que o reconhecimento
+  mostrar a estrutura real da tela de login.
 - Listagem de intimações pendentes **sem abrir**. Decisão do operador: listar
   sim, abrir não. A primeira execução precisa ser assistida, porque a premissa
   de que listar não dispara ciência ainda não foi confirmada para o eproc.
