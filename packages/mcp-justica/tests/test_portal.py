@@ -298,3 +298,63 @@ def test_caixa_de_selecao_nao_e_campo_de_codigo():
     caixa = _campo(tipo="checkbox", nome="chkLiberarDispositivo",
                    rotulo="Não usar o 2FA neste dispositivo e navegador")
     assert _parece_segundo_fator(caixa) is False
+
+
+# ---------------- selecao de perfil ----------------
+
+def _botao(identificador, texto, formulario="frmEscolherUsuario", na_tela=True):
+    from justica_mcp.portal import Campo
+
+    return Campo(marcador="button", tipo="button", nome=None,
+                 identificador=identificador, rotulo=None, texto_visivel=texto,
+                 e_senha=False, na_tela=na_tela, formulario=formulario, extras={})
+
+
+PERFIS_REAIS = [
+    _botao("tr0", "RJ168943\nADVOGADO"),
+    _botao("tr1", "SP436159\nADVOGADO"),
+]
+
+
+def test_encontra_os_perfis_do_formulario_de_escolha():
+    """Estrutura confirmada em campo em 21 de setembro de 2026: os botoes de
+    inscricao vivem no formulario `frmEscolherUsuario`."""
+    from justica_mcp.portal import _perfis_disponiveis
+
+    perfis = _perfis_disponiveis(PERFIS_REAIS)
+    assert [p[0] for p in perfis] == ["tr0", "tr1"]
+
+
+def test_ignora_botoes_fora_do_formulario_de_escolha():
+    """A mesma tela traz botoes de menu e de rolagem, que nao sao perfis."""
+    from justica_mcp.portal import _perfis_disponiveis
+
+    ruido = [
+        _botao("btnProfile", "account_circle", formulario=None),
+        _botao("backTop", "keyboard_arrow_up", formulario=None, na_tela=False),
+    ]
+    assert _perfis_disponiveis(ruido + PERFIS_REAIS) == [
+        ("tr0", "RJ168943\nADVOGADO"), ("tr1", "SP436159\nADVOGADO"),
+    ]
+
+
+def test_casa_perfil_por_trecho_do_rotulo():
+    from justica_mcp.portal import _casar_perfil
+
+    assert _casar_perfil(PERFIS_REAIS, "RJ168943")[0] == "tr0"
+    assert _casar_perfil(PERFIS_REAIS, "sp436159")[0] == "tr1", "caixa nao importa"
+    assert _casar_perfil(PERFIS_REAIS, "168943")[0] == "tr0", "trecho basta"
+
+
+def test_perfil_inexistente_nao_casa_com_nada():
+    """Casar por aproximacao aqui seria pior que falhar: o perfil determina
+    quais processos aparecem, e entrar no errado da visao incompleta sem aviso."""
+    from justica_mcp.portal import _casar_perfil
+
+    assert _casar_perfil(PERFIS_REAIS, "MG999999") is None
+
+
+def test_tela_sem_perfis_nao_inventa_nenhum():
+    from justica_mcp.portal import _perfis_disponiveis
+
+    assert _perfis_disponiveis([_botao("btnConsultar", "Consultar", formulario=None)]) == []

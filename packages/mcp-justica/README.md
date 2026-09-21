@@ -414,6 +414,28 @@ Essa tela obrigou a ampliar os termos de risco para uma segunda classe: ações
 que **enfraquecem a segurança da conta**. Não consomem prazo, mas o dano é
 duradouro e silencioso.
 
+### Seleção de perfil
+
+Terceira etapa, descoberta em campo: depois do segundo fator o eproc pode pedir
+que se escolha entre as inscrições ligadas ao mesmo acesso.
+
+**O perfil escolhido determina quais processos o sistema mostra.** Escolher por
+conta própria daria visão incompleta sem nenhum aviso, então sem indicação o
+comando lista as opções e para:
+
+```powershell
+justica-portal autenticar --url "..." --tribunal TRF2 --sistema eproc --perfil RJ168943 --confirmo-tentativa-unica
+```
+
+O casamento é por trecho do rótulo, sem distinguir caixa. Perfil que não
+corresponde a nada **não é aproximado**: falhar é melhor que entrar no perfil
+errado.
+
+A tela de perfil fica em endereço próprio, fora da permissão do login, e a
+trava barrou o clique na primeira versão. Ela estava certa. A autorização foi
+feita estreita: vale só para aquela tela e só para o botão do perfil escolhido,
+como permissão separada, em vez de liberar o endereço inteiro.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).

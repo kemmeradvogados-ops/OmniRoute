@@ -681,6 +681,32 @@ def entrar(
 
 
 
+def _perfis_disponiveis(botoes: list["Campo"]) -> list[tuple[str, str]]:
+    """Botoes de escolha de inscricao na tela de selecao de perfil.
+
+    No eproc eles vivem no formulario `frmEscolherUsuario` e trazem a inscricao
+    e a qualificacao no texto, em linhas separadas.
+    """
+    saida = []
+    for b in botoes:
+        if not (b.na_tela and b.identificador and b.texto_visivel):
+            continue
+        if (b.formulario or "").lower().startswith("frmescolher"):
+            saida.append((b.identificador, b.texto_visivel))
+    return saida
+
+
+def _casar_perfil(
+    perfis: list[tuple[str, str]], desejado: str
+) -> Optional[tuple[str, str]]:
+    """Casa por trecho do rotulo, sem distinguir caixa nem espacos."""
+    alvo = re.sub(r"\s+", "", desejado).lower()
+    for identificador, rotulo in perfis:
+        if alvo in re.sub(r"\s+", "", rotulo).lower():
+            return identificador, rotulo
+    return None
+
+
 def autenticar(
     url: str,
     tribunal: str,
@@ -693,12 +719,13 @@ def autenticar(
     botao_entrar: str = "#sbmEntrar",
     campo_codigo: str = "#txtAcessoCodigo",
     botao_validar: str = "#btnValidar",
+    perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
 ) -> int:
-    """Autenticacao completa: credencial, segundo fator, e para por ali.
+    """Autenticacao completa: credencial, segundo fator, perfil, e para ali.
 
     A tela do segundo fator so existe dentro da sessao aberta pelo login, entao
     os dois passos ocorrem numa execucao so.
@@ -879,6 +906,56 @@ def autenticar(
                 return 0
 
             campos, botoes = _coletar(pagina)
+            # ---------- etapa 3: perfil ----------
+            # O eproc pode ter mais de uma inscricao ligada ao mesmo acesso, e
+            # o perfil escolhido determina QUAIS PROCESSOS o sistema mostra.
+            # Escolher por conta propria daria uma visao incompleta sem aviso,
+            # entao sem indicacao do operador o comando lista e para.
+            perfis = _perfis_disponiveis(botoes)
+            if perfis:
+                print(f"\n  SELECAO DE PERFIL ({len(perfis)} disponivel(is)):")
+                for identificador, rotulo in perfis:
+                    print(f"    {rotulo}   (seletor #{identificador})")
+
+                escolhido = _casar_perfil(perfis, perfil) if perfil else None
+                if perfil and escolhido is None:
+                    print(f"\n  Nenhum perfil corresponde a {perfil!r}. Nada foi selecionado.")
+                    print("  Use um dos rotulos acima, ou parte dele.")
+                    return 1
+                if escolhido is None:
+                    print("\n  Perfil nao indicado, entao nada foi selecionado.")
+                    print("  O perfil determina quais processos aparecem, e escolher")
+                    print("  por conta propria daria visao incompleta sem aviso.")
+                    print("  Repita o comando acrescentando, por exemplo:")
+                    print(f"    --perfil {perfis[0][1].split()[0]}")
+                    return 0
+
+                identificador, rotulo = escolhido
+                seletor = f"#{identificador}"
+                # A tela de perfil fica em endereco proprio, fora da permissao
+                # do login, e a trava barrou o clique na primeira versao. Ela
+                # estava certa. A autorizacao aqui e estreita de proposito:
+                # vale so para esta tela e so para o botao do perfil escolhido,
+                # em vez de liberar o endereco inteiro.
+                guarda.permissoes.append(Permissao(
+                    padrao_url=permissao_efemera(pagina.url).padrao_url,
+                    descricao=f"selecao do perfil {rotulo.splitlines()[0]}",
+                    conferido_em="execucao atual",
+                    seletores_clicaveis=(seletor,),
+                ))
+                guarda.pode_executar(Acao.CLICAR, seletor, url=pagina.url)
+                print(f"\n  Selecionando o perfil {rotulo.splitlines()[0]}...")
+                pagina.query_selector(seletor).click()
+                try:
+                    pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+                except Exception:
+                    pass
+                estado.registrar(acao="login_etapa_perfil", tribunal=identidade.tribunal,
+                                 sistema=identidade.sistema, resultado=rotulo.splitlines()[0])
+                print(f"  Endereco: {pagina.url}")
+                print(f"  Titulo: {pagina.title()!r}")
+                campos, botoes = _coletar(pagina)
+
             print(f"\n  ESTRUTURA DA TELA ONDE PAROU ({len(campos)} campos, {len(botoes)} botoes):")
             for c in campos[:15]:
                 print(f"    {c.linha()}")
@@ -943,6 +1020,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
     a.add_argument("--campo-codigo", default="#txtAcessoCodigo")
     a.add_argument("--botao-validar", default="#btnValidar")
+    a.add_argument("--perfil", default=None,
+                   help="inscricao a usar quando houver mais de um perfil, "
+                        "por exemplo RJ168943")
     a.add_argument("--oculto", action="store_true")
     a.add_argument("--segundos", type=int, default=45)
 
@@ -955,7 +1035,7 @@ def main(argv: list[str] | None = None) -> int:
             return autenticar(
                 args.url, args.tribunal, args.sistema, confirmado=args.confirmado,
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
-                oculto=args.oculto, segundos=args.segundos,
+                perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
             )
         if args.comando == "entrar":
             return entrar(
