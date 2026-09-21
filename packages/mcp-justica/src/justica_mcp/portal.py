@@ -1309,7 +1309,11 @@ def consultar_processo(
             from .documentos import baixar_documentos_dos_eventos
 
             pasta = Path(diretorio_estado()) / "processos" / numero.apenas_digitos
-            guarda.permissoes.append(permissao_de_origem(
+            # No inicio da lista: a auditoria precisa atribuir cada download a
+            # permissao que de fato o autorizou. Ao final da lista, a permissao
+            # da busca casava primeiro e o registro saia com o motivo errado,
+            # o que enfraquece a auditoria como prova do que aconteceu.
+            guarda.permissoes.insert(0, permissao_de_origem(
                 pagina.url, "documentos do processo, mesma origem do portal"
             ))
             guarda.permitir_download = True

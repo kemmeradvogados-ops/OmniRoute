@@ -518,3 +518,18 @@ def test_permissao_de_origem_nao_libera_clique_nem_preenchimento():
     )
     assert g.avaliar(Acao.CLICAR, "#btnQualquer", url=ENDERECO).permitido is False
     assert g.avaliar(Acao.PREENCHER, "#campo", url=ENDERECO).permitido is False
+
+
+def test_auditoria_atribui_o_download_a_permissao_de_documentos():
+    """A auditoria e a prova do que aconteceu. Com a permissao de documentos ao
+    final da lista, a da busca casava primeiro e o registro saia com o motivo
+    errado, o que enfraquece essa prova."""
+    from justica_mcp.core.guarda_navegacao import Acao, GuardaNavegacao, Modo
+    from justica_mcp.portal import permissao_de_origem
+
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[_permissao_busca()],
+                        permitir_download=True)
+    g.permissoes.insert(0, permissao_de_origem(ENDERECO, "documentos do processo"))
+    d = g.avaliar(Acao.BAIXAR, "https://eproc1g.tjrj.jus.br/eproc/doc.pdf")
+    assert d.permitido is True
+    assert "documentos do processo" in d.motivo
