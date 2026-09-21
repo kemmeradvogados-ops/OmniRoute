@@ -847,3 +847,38 @@ def test_tempo_esgotado_devolve_falso_sem_enviar_nada(capsys):
     tela = _TelaComDesafio(libera_apos=9999)
     assert _aguardar_desafio_humano(tela, "#txtUsuario", 0, oculto=False) is False
     assert "Nada foi enviado" in capsys.readouterr().out
+
+
+def test_espera_aceita_criterio_proprio_de_conclusao():
+    """Resolvido no meio do login, o portal pode ir direto ao segundo fator ou
+    a selecao de perfil. Esperar por uma tela so faria o comando desistir de um
+    login que deu certo."""
+    estado = {"consultas": 0}
+
+    class Tela:
+        def query_selector(self, seletor):
+            if "challenges.cloudflare.com" in seletor:
+                return object() if estado["consultas"] < 2 else None
+            return None
+
+        def wait_for_timeout(self, ms):
+            estado["consultas"] += 1
+
+    def pronto(_):
+        return estado["consultas"] >= 2
+
+    assert _aguardar_desafio_humano(Tela(), "#txtAcessoCodigo", 30, False, pronto) is True
+
+
+def test_criterio_proprio_que_nunca_conclui_respeita_o_tempo(capsys):
+    class Tela:
+        def query_selector(self, seletor):
+            return object() if "challenges.cloudflare.com" in seletor else None
+
+        def wait_for_timeout(self, ms):
+            pass
+
+    assert _aguardar_desafio_humano(
+        Tela(), "#txtAcessoCodigo", 0, False, lambda _: False
+    ) is False
+    assert "Nada foi enviado" in capsys.readouterr().out

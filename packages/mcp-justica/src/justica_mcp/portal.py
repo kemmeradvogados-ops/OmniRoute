@@ -930,6 +930,23 @@ def autenticar(
             except Exception:
                 pass
 
+            # O desafio do Cloudflare tambem aparece DEPOIS do envio da
+            # credencial, e nao so na abertura da pagina. Verificado em campo em
+            # 21 de setembro de 2026: o portal devolveu
+            # `acao=principal&acao_retorno=login` com o botao Enviar do desafio.
+            # A espera so rodava na abertura, entao o comando desistia de um
+            # login que apenas aguardava a pessoa, e gastava a tentativa a toa.
+            if pagina.query_selector(campo_codigo) is None and _ha_desafio_humano(pagina):
+                def _passou(p):
+                    alvo = p.query_selector(campo_codigo)
+                    if alvo is not None and alvo.is_visible():
+                        return True
+                    return _ja_autenticado(p)
+
+                _aguardar_desafio_humano(
+                    pagina, campo_codigo, espera_humana, oculto, pronto=_passou
+                )
+
             erros = _mensagens_de_erro(pagina)
             campo = pagina.query_selector(campo_codigo)
             if campo is None:
@@ -1143,7 +1160,9 @@ def _ha_desafio_humano(pagina) -> bool:
     return False
 
 
-def _aguardar_desafio_humano(pagina, seletor_esperado: str, segundos: int, oculto: bool) -> bool:
+def _aguardar_desafio_humano(
+    pagina, seletor_esperado: str, segundos: int, oculto: bool, pronto=None
+) -> bool:
     """Espera o OPERADOR resolver o desafio do Cloudflare, na janela aberta.
 
     Este projeto NAO resolve, contorna nem disfarca o desafio. Ele e um
@@ -1169,13 +1188,21 @@ def _aguardar_desafio_humano(pagina, seletor_esperado: str, segundos: int, ocult
     print(f"\n  >>> Va ate a janela do navegador, marque a caixa e, se houver botao,")
     print(f"  >>> clique em Enviar. Aguardando ate {segundos}s.")
 
+    # Depois do desafio o portal nem sempre volta para a mesma tela: resolvido
+    # no meio do login, ele pode ir direto ao segundo fator ou a selecao de
+    # perfil. Esperar so por uma tela faria o comando desistir de um login que
+    # deu certo.
+    if pronto is None:
+        def pronto(p):
+            alvo = p.query_selector(seletor_esperado)
+            return alvo is not None and alvo.is_visible()
+
     limite = time.monotonic() + segundos
     avisado = 0
     while time.monotonic() < limite:
         try:
-            alvo = pagina.query_selector(seletor_esperado)
-            if alvo is not None and alvo.is_visible():
-                print("  Desafio resolvido; a tela de login apareceu. Seguindo.")
+            if pronto(pagina):
+                print("  Desafio resolvido. Seguindo.")
                 return True
         except Exception:
             pass
@@ -1234,6 +1261,16 @@ def _relatar_tela(pagina, titulo: str) -> None:
         for b in botoes[:20]:
             alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
             print(f"      (fora da tela) {alvo:30s} {(b.texto_visivel or '')[:50]!r}")
+    try:
+        quadros = pagina.query_selector_all("iframe")
+        if quadros:
+            print(f"    QUADROS EMBUTIDOS ({len(quadros)}):")
+            for q in quadros[:10]:
+                print(f"      src={(q.get_attribute('src') or '(sem src)')[:90]}")
+    except Exception:
+        pass
+    print(f"    Desafio de verificacao humana detectado: "
+          f"{'sim' if _ha_desafio_humano(pagina) else 'nao'}")
     ligacoes = pagina.query_selector_all("a[href]")
     interessantes = []
     for a in ligacoes:

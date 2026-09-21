@@ -651,6 +651,12 @@ O caminho oferecido é o honesto e é o único: o programa **detecta** o desafio
 **avisa** e **espera** o operador marcar a caixa na janela já aberta. Verificação
 humana feita por um humano.
 
+O desafio aparece em dois momentos, e os dois são tratados: ao abrir a página e
+**depois do envio da credencial**. Neste segundo caso o portal devolve
+`acao=principal&acao_retorno=login`, e a espera aceita como conclusão tanto a
+tela do segundo fator quanto a de seleção de perfil, porque o portal pode ir
+direto para qualquer uma das duas.
+
 ```powershell
 justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --espera-humana 240
 ```
