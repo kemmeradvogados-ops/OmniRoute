@@ -89,3 +89,20 @@ def test_acento_em_utf8_continua_intacto(monkeypatch):
     )
     assert carregar_env(caminho) == ["JUSTICA_PASTA_COPIAS"]
     assert os.environ["JUSTICA_PASTA_COPIAS"] == "G:\\Meu Drive\\4.Processos\\Cópias"
+
+
+def test_tolera_marca_de_ordem_de_byte_no_meio_do_arquivo(monkeypatch):
+    """`Add-Content -Encoding UTF8` do Windows PowerShell pode gravar a marca
+    de ordem de byte a cada acrescimo, e nao so no inicio do arquivo. No meio
+    o utf-8-sig nao a remove: a chave acrescentada ganharia um caractere
+    invisivel no nome e jamais seria encontrada, com o arquivo parecendo
+    perfeito na tela."""
+    monkeypatch.delenv("JUSTICA_PASTA_COPIAS", raising=False)
+    monkeypatch.delenv("DATAJUD_API_KEY", raising=False)
+    caminho = Path(tempfile.mkdtemp()) / ".env"
+    caminho.write_bytes(
+        b"\xef\xbb\xbfDATAJUD_API_KEY=abc\n"
+        b"\xef\xbb\xbfJUSTICA_PASTA_COPIAS=G:\\Copias\n"
+    )
+    assert carregar_env(caminho) == ["DATAJUD_API_KEY", "JUSTICA_PASTA_COPIAS"]
+    assert os.environ["JUSTICA_PASTA_COPIAS"] == "G:\\Copias"

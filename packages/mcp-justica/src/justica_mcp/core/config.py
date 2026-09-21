@@ -51,7 +51,13 @@ def carregar_env(caminho: Optional[Path] = None) -> list[str]:
 
     lidas: list[str] = []
     for linha in _ler(arquivo).splitlines():
-        linha = linha.strip()
+        # A marca de ordem de byte e retirada linha a linha, nao so no inicio
+        # do arquivo: `Add-Content -Encoding UTF8` do Windows PowerShell pode
+        # grava-la de novo a cada acrescimo, no MEIO do arquivo, e ali o
+        # utf-8-sig nao a remove. O efeito seria um caractere invisivel colado
+        # no nome da chave recem-adicionada, que entao nunca seria encontrada,
+        # com o arquivo parecendo correto na tela.
+        linha = linha.strip().lstrip("\ufeff").strip()
         if not linha or linha.startswith("#") or "=" not in linha:
             continue
         chave, _, valor = linha.partition("=")
