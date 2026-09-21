@@ -26,7 +26,10 @@ def carregar_env(caminho: Optional[Path] = None) -> list[str]:
         return []
 
     lidas: list[str] = []
-    for linha in arquivo.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig remove a marca de ordem de byte que o PowerShell grava com
+    # `Out-File -Encoding utf8`. Sem isso a PRIMEIRA chave do arquivo viria
+    # com um caractere invisivel no nome e nunca seria encontrada.
+    for linha in arquivo.read_text(encoding="utf-8-sig").splitlines():
         linha = linha.strip()
         if not linha or linha.startswith("#") or "=" not in linha:
             continue

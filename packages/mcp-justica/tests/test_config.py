@@ -49,3 +49,14 @@ def test_nao_devolve_valores_apenas_nomes(monkeypatch):
     lidas = carregar_env(_env("SEGREDO=valor-sensivel\n"))
     assert lidas == ["SEGREDO"]
     assert "valor-sensivel" not in str(lidas)
+
+
+def test_tolera_marca_de_ordem_de_byte_do_powershell(monkeypatch):
+    """`Out-File -Encoding utf8` no PowerShell grava BOM. Sem tratar, a
+    primeira chave do arquivo ganharia um caractere invisivel no nome e
+    jamais seria encontrada, com o diagnostico dizendo 'chave ausente'."""
+    monkeypatch.delenv("DATAJUD_API_KEY", raising=False)
+    caminho = Path(tempfile.mkdtemp()) / ".env"
+    caminho.write_bytes(b"\xef\xbb\xbfDATAJUD_API_KEY=abc\n")
+    assert carregar_env(caminho) == ["DATAJUD_API_KEY"]
+    assert os.environ["DATAJUD_API_KEY"] == "abc"
