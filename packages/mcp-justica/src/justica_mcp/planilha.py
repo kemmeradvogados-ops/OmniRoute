@@ -87,6 +87,40 @@ def _mapear_colunas(cabecalho: list[str]) -> dict[str, int]:
     return indices
 
 
+def resolver_caminho(caminho: Path) -> Path:
+    """Aceita o arquivo ou a PASTA que o contem.
+
+    Apontar a pasta e o mais natural para quem guarda a planilha num diretorio
+    proprio, e evita errar o nome do arquivo. Com mais de uma planilha na
+    pasta, a escolha volta para o operador em vez de o programa adivinhar.
+    """
+    caminho = caminho.expanduser()
+
+    if caminho.is_file():
+        return caminho
+
+    if caminho.is_dir():
+        encontrados = sorted(
+            f for f in caminho.glob("*.xls*") if not f.name.startswith("~$")
+        )
+        if not encontrados:
+            raise PlanilhaInvalida(
+                f"Nenhuma planilha (.xlsx) encontrada na pasta {caminho}"
+            )
+        if len(encontrados) > 1:
+            nomes = "\n    ".join(f.name for f in encontrados)
+            raise PlanilhaInvalida(
+                f"Ha {len(encontrados)} planilhas em {caminho}. Indique qual, "
+                f"apontando o arquivo:\n    {nomes}"
+            )
+        return encontrados[0]
+
+    raise PlanilhaInvalida(
+        f"Nao encontrei nada em {caminho}. Confira o caminho; no PowerShell, "
+        f"caminho com espaco ou acento precisa vir entre aspas."
+    )
+
+
 def importar(
     caminho: Path, cofre: Cofre, *, simular: bool = False
 ) -> list[Resultado]:
@@ -99,8 +133,7 @@ def importar(
             'pip install -e ".[dev]"'
         ) from exc
 
-    if not caminho.is_file():
-        raise PlanilhaInvalida(f"Planilha nao encontrada em {caminho}")
+    caminho = resolver_caminho(caminho)
 
     wb = openpyxl.load_workbook(caminho, data_only=True)
     linhas = list(wb.worksheets[0].iter_rows(values_only=True))

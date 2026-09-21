@@ -134,7 +134,7 @@ def test_resultado_nunca_carrega_valor_de_credencial(planilha, cofre):
 
 
 def test_planilha_inexistente_da_erro_claro(tmp_path, cofre):
-    with pytest.raises(PlanilhaInvalida, match="nao encontrada"):
+    with pytest.raises(PlanilhaInvalida, match="Nao encontrei"):
         importar(tmp_path / "nao-existe.xlsx", cofre)
 
 
@@ -145,3 +145,40 @@ def test_cabecalho_incompleto_diz_o_que_falta(tmp_path, cofre):
     wb.save(caminho)
     with pytest.raises(PlanilhaInvalida, match="login"):
         importar(caminho, cofre)
+
+
+# ---------------- caminho: arquivo ou pasta ----------------
+
+def test_aceita_a_pasta_no_lugar_do_arquivo(planilha, cofre):
+    """Apontar a pasta e o mais natural para quem guarda a planilha num
+    diretorio proprio, e evita errar o nome do arquivo."""
+    resultados = importar(planilha.parent, cofre, simular=True)
+    assert any(r.identidade for r in resultados)
+
+
+def test_ignora_arquivo_temporario_do_excel(planilha, cofre):
+    """Com a planilha aberta, o Excel cria um `~$nome.xlsx` ao lado. Tratar
+    esse arquivo como planilha faria a importacao falhar sem motivo aparente."""
+    (planilha.parent / "~$senhas_tribunais.xlsx").write_bytes(b"lixo")
+    resultados = importar(planilha.parent, cofre, simular=True)
+    assert any(r.identidade for r in resultados)
+
+
+def test_pasta_com_varias_planilhas_devolve_a_escolha_ao_operador(planilha, cofre):
+    import shutil
+
+    shutil.copy(planilha, planilha.parent / "outra_planilha.xlsx")
+    with pytest.raises(PlanilhaInvalida, match="Indique qual"):
+        importar(planilha.parent, cofre, simular=True)
+
+
+def test_pasta_sem_planilha_diz_isso(tmp_path, cofre):
+    (tmp_path / "vazia").mkdir()
+    with pytest.raises(PlanilhaInvalida, match="Nenhuma planilha"):
+        importar(tmp_path / "vazia", cofre)
+
+
+def test_caminho_inexistente_lembra_das_aspas(tmp_path, cofre):
+    """Caminho com espaco e acento sem aspas e o erro mais provavel aqui."""
+    with pytest.raises(PlanilhaInvalida, match="aspas"):
+        importar(tmp_path / "nao existe" / "x.xlsx", cofre)
