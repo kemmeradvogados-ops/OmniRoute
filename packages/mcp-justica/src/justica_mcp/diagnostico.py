@@ -164,7 +164,7 @@ async def checar_djen(oab: str, uf: str, dias: int, detalhe: bool) -> None:
 
             # ---- A pergunta decisiva: o filtro de inscricao foi aplicado? ----
             print("\n  >>> O FILTRO DE INSCRICAO NA ORDEM FOI APLICADO?")
-            alvo = "".join(c for c in oab if c.isdigit()).lstrip("0")
+            alvo = alvo_num = "".join(c for c in oab if c.isdigit()).lstrip("0")
             com_oab = 0
             for it in itens:
                 bruto = json.dumps(it.get("destinatarioadvogados") or [], ensure_ascii=False)
@@ -184,9 +184,49 @@ async def checar_djen(oab: str, uf: str, dias: int, detalhe: bool) -> None:
             advogados = (itens[0] or {}).get("destinatarioadvogados") or []
             if advogados and isinstance(advogados[0], dict):
                 print(f"      campos de destinatarioadvogados[0]: {list(advogados[0].keys())}")
+                aninhado = advogados[0].get("advogado")
+                if isinstance(aninhado, dict):
+                    print(f"      campos de ...['advogado']:          {list(aninhado.keys())}")
+                    print("      conteudo (nome omitido):")
+                    for k, v in aninhado.items():
+                        if "nome" in k.lower():
+                            v = "<omitido>"
+                        print(f"          {k:22s} = {str(v)[:50]}")
             destinatarios = (itens[0] or {}).get("destinatarios") or []
             if destinatarios and isinstance(destinatarios[0], dict):
                 print(f"      campos de destinatarios[0]:         {list(destinatarios[0].keys())}")
+
+            # ---- A pergunta que ficou em aberto: a unidade federativa confere? ----
+            # O numero 218174 pode existir em varias seccionais. Se a consulta
+            # filtra so pelo numero, chegam publicacoes de OUTROS advogados, e o
+            # monitoramento da banca passa a carregar processo alheio.
+            print("\n  >>> A UNIDADE FEDERATIVA DA INSCRICAO CONFERE?")
+            alvo_uf = uf.strip().upper()
+            exatos = 0
+            for pos, it in enumerate(itens, 1):
+                pares = []
+                for vinculo in (it.get("destinatarioadvogados") or []):
+                    adv = vinculo.get("advogado") if isinstance(vinculo, dict) else None
+                    if not isinstance(adv, dict):
+                        continue
+                    num = next((str(v) for k, v in adv.items()
+                                if "oab" in k.lower() and any(c.isdigit() for c in str(v))), "?")
+                    uf_adv = next((str(v) for k, v in adv.items()
+                                   if ("uf" in k.lower() or "seccional" in k.lower())
+                                   and isinstance(v, str) and len(str(v)) <= 3), "?")
+                    pares.append(f"{num}/{uf_adv}")
+                bate = any(p.endswith(f"/{alvo_uf}") and
+                           "".join(c for c in p if c.isdigit()).lstrip("0") == alvo_num
+                           for p in pares)
+                exatos += 1 if bate else 0
+                print(f"      item {pos} ({it.get('siglaTribunal')}): {', '.join(pares) or 'sem advogado'}"
+                      f"  -> confere com {oab}/{alvo_uf}? {'SIM' if bate else 'NAO'}")
+            item(f"itens com inscricao exata {oab}/{alvo_uf}", f"{exatos} de {len(itens)}",
+                 exatos == len(itens))
+            if exatos < len(itens):
+                print("       O filtro de unidade federativa NAO esta sendo aplicado.")
+                print("       As publicacoes que nao conferem sao de OUTRO advogado")
+                print("       com o mesmo numero em outra seccional.")
         else:
             print("\n  Nenhuma publicacao na janela. Isso NAO valida os campos;")
             print("  repita com --dias 30 para aumentar a chance de retorno.")

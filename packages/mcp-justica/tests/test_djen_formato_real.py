@@ -33,6 +33,9 @@ ITEM_REAL = {
     "meiocompleto": "Diário de Justiça Eletrônico Nacional",
     "numeroprocessocommascara": "9004029-50.2025.8.23.0000",
     "destinatarios": [{"nome": "Fulano"}],
+    # ATENCAO: a estrutura interna de `advogado` ainda NAO foi confirmada em
+    # campo. Os nomes abaixo sao provisorios e o adaptador nao depende deles.
+    # A confirmacao vem na proxima execucao do diagnostico.
     "destinatarioadvogados": [{"advogado": {"numero_oab": "218174", "uf_oab": "RJ"}}],
 }
 
