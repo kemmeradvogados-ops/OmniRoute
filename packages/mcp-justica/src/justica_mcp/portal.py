@@ -62,6 +62,11 @@ class Campo:
     rotulo: Optional[str]
     texto_visivel: Optional[str]
     e_senha: bool
+    visivel: bool = True
+    na_tela: bool = True
+    habilitado: bool = True
+    formulario: Optional[str] = None
+    extras: dict[str, str] = None  # type: ignore[assignment]
 
     def linha(self) -> str:
         partes = [f"<{self.marcador}>", f"tipo={self.tipo or '-'}"]
@@ -73,8 +78,26 @@ class Campo:
             partes.append(f"rotulo={self.rotulo!r}")
         if self.texto_visivel:
             partes.append(f"texto={self.texto_visivel!r}")
+        # Visibilidade e o que distingue campo real de campo espelho: dois
+        # elementos com o mesmo nome, um visivel e outro nao, sao um par de
+        # exibicao e armazenamento, e preencher o errado quebra em silencio.
+        if not self.visivel:
+            partes.append("OCULTO")
+        elif not self.na_tela:
+            # Campo com caixa, porem posicionado fora da area visivel. E o
+            # padrao classico de campo espelho: o advogado digita num, o script
+            # da pagina copia para o outro. Preencher o errado falha calado.
+            partes.append("FORA DA TELA (provavel campo espelho)")
+        else:
+            partes.append("na tela")
+        if not self.habilitado:
+            partes.append("desabilitado")
+        if self.formulario:
+            partes.append(f"form={self.formulario}")
         if self.e_senha:
-            partes.append("** CAMPO DE SENHA **")
+            partes.append("** SENHA **")
+        for chave, valor in (self.extras or {}).items():
+            partes.append(f"{chave}={valor}")
         return "  ".join(partes)
 
 
@@ -98,31 +121,66 @@ def permissao_efemera(url: str) -> Permissao:
     )
 
 
+def _na_tela(elemento: Any, largura: int, altura: int) -> bool:
+    """`is_visible` do Playwright aceita elemento jogado para fora da tela,
+    porque so exige caixa nao vazia. Aqui a posicao importa: campo empurrado
+    para `left:-9999px` e o padrao de campo espelho, e confundi-lo com o campo
+    real faz o preenchimento falhar sem mensagem."""
+    caixa = elemento.bounding_box()
+    if caixa is None:
+        return False
+    return not (
+        caixa["x"] + caixa["width"] <= 0
+        or caixa["y"] + caixa["height"] <= 0
+        or caixa["x"] >= largura
+        or caixa["y"] >= altura
+    )
+
+
 def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
     """Le a estrutura do formulario. Somente leitura do DOM."""
+    janela = pagina.viewport_size or {"width": 1280, "height": 720}
+    largura, altura = janela["width"], janela["height"]
     campos: list[Campo] = []
     for elemento in pagina.query_selector_all("input, select, textarea"):
-        tipo = (elemento.get_attribute("type") or elemento.evaluate("e => e.tagName.toLowerCase()") or "").lower()
-        if tipo == "hidden":
+        marcador = elemento.evaluate("e => e.tagName.toLowerCase()")
+        tipo = (elemento.get_attribute("type") or marcador or "").lower()
+        # Botoes aparecem na outra lista; repetir aqui so polui.
+        if tipo in ("hidden", "button", "submit", "reset", "image"):
             continue
+
         identificador = elemento.get_attribute("id")
         rotulo = None
         if identificador:
             alvo = pagina.query_selector(f'label[for="{identificador}"]')
             if alvo:
                 rotulo = (alvo.inner_text() or "").strip()[:60]
+
+        extras: dict[str, str] = {}
+        for atributo in ("maxlength", "autocomplete", "inputmode", "required"):
+            valor = elemento.get_attribute(atributo)
+            if valor is not None:
+                extras[atributo] = valor or "sim"
+
         campos.append(Campo(
-            marcador=elemento.evaluate("e => e.tagName.toLowerCase()"),
+            marcador=marcador,
             tipo=tipo,
             nome=elemento.get_attribute("name"),
             identificador=identificador,
             rotulo=rotulo or elemento.get_attribute("aria-label") or elemento.get_attribute("placeholder"),
             texto_visivel=None,
             e_senha=tipo == "password",
+            visivel=elemento.is_visible(),
+            na_tela=_na_tela(elemento, largura, altura),
+            habilitado=elemento.is_enabled(),
+            formulario=elemento.evaluate("e => e.form ? (e.form.id || e.form.name || 'sem-nome') : null"),
+            extras=extras,
         ))
 
     botoes: list[Campo] = []
-    for elemento in pagina.query_selector_all("button, input[type=submit], input[type=button], a[role=button]"):
+    for elemento in pagina.query_selector_all(
+        "button, input[type=submit], input[type=button], a[role=button]"
+    ):
         texto = (elemento.inner_text() or elemento.get_attribute("value") or "").strip()
         botoes.append(Campo(
             marcador=elemento.evaluate("e => e.tagName.toLowerCase()"),
@@ -132,8 +190,42 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             rotulo=None,
             texto_visivel=texto[:50] or None,
             e_senha=False,
+            visivel=elemento.is_visible(),
+            na_tela=_na_tela(elemento, largura, altura),
+            habilitado=elemento.is_enabled(),
+            formulario=elemento.evaluate("e => e.form ? (e.form.id || e.form.name || 'sem-nome') : null"),
+            extras={},
         ))
     return campos, botoes
+
+
+def _formularios(pagina: Any) -> list[str]:
+    saida = []
+    for f in pagina.query_selector_all("form"):
+        saida.append(
+            f"id={f.get_attribute('id') or '-'}  name={f.get_attribute('name') or '-'}  "
+            f"action={(f.get_attribute('action') or '-')[:70]}  "
+            f"method={(f.get_attribute('method') or 'get').lower()}"
+        )
+    return saida
+
+
+def _sobreposicoes(pagina: Any) -> list[str]:
+    """Janela sobreposta visivel ao carregar precisa ser fechada antes do
+    login, e fechar e um clique, que a trava barra por padrao. Melhor saber
+    que ela existe agora do que descobrir travando."""
+    saida = []
+    seletores = (
+        "[role=dialog]", ".modal.show", ".modal.in", ".ui-dialog",
+        "[aria-modal=true]", ".swal2-container",
+    )
+    for seletor in seletores:
+        for elemento in pagina.query_selector_all(seletor):
+            if not elemento.is_visible():
+                continue
+            texto = re.sub(r"\s+", " ", (elemento.inner_text() or "")).strip()
+            saida.append(f"{seletor}: {texto[:110] or '(sem texto)'}")
+    return saida
 
 
 def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
@@ -188,7 +280,19 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
             print(f"  Titulo da pagina: {pagina.title()!r}\n")
             campos, botoes = _coletar(pagina)
 
-            print(f"  CAMPOS DE FORMULARIO ({len(campos)}):")
+            formularios = _formularios(pagina)
+            print(f"  FORMULARIOS ({len(formularios)}):")
+            for f in formularios:
+                print(f"    {f}")
+
+            sobreposicoes = _sobreposicoes(pagina)
+            if sobreposicoes:
+                print(f"\n  JANELAS SOBREPOSTAS VISIVEIS ({len(sobreposicoes)}):")
+                for o in sobreposicoes:
+                    print(f"    {o}")
+                print("    Precisam ser fechadas antes do login, e fechar e um clique.")
+
+            print(f"\n  CAMPOS DE FORMULARIO ({len(campos)}):")
             for c in campos:
                 print(f"    {c.linha()}")
             if not campos:

@@ -66,3 +66,57 @@ def test_clique_continua_bloqueado_mesmo_na_tela_autorizada():
 
 def test_leitura_de_estrutura_e_permitida():
     assert _guarda().avaliar(Acao.LER, "formulario").permitido is True
+
+
+# ---------------- campo real contra campo espelho ----------------
+
+class _Elemento:
+    """Dublê do elemento do Playwright, com apenas a caixa delimitadora."""
+
+    def __init__(self, caixa):
+        self._caixa = caixa
+
+    def bounding_box(self):
+        return self._caixa
+
+
+def _caixa(x, y, largura=120, altura=24):
+    return {"x": x, "y": y, "width": largura, "height": altura}
+
+
+def test_campo_dentro_da_tela():
+    from justica_mcp.portal import _na_tela
+
+    assert _na_tela(_Elemento(_caixa(10, 200)), 1280, 720) is True
+
+
+def test_campo_empurrado_para_fora_da_tela():
+    """Padrao classico de campo espelho: `position:absolute; left:-9999px`.
+    O `is_visible` do Playwright devolve verdadeiro nesse caso, porque so exige
+    caixa nao vazia, entao confiar nele confundiria o espelho com o campo real
+    e o preenchimento falharia sem mensagem. Defeito encontrado ao testar o
+    reconhecimento contra uma pagina que reproduz a estrutura do eproc."""
+    from justica_mcp.portal import _na_tela
+
+    assert _na_tela(_Elemento(_caixa(-9999, 200)), 1280, 720) is False
+
+
+def test_campo_acima_ou_abaixo_da_area_visivel():
+    from justica_mcp.portal import _na_tela
+
+    assert _na_tela(_Elemento(_caixa(10, -500)), 1280, 720) is False
+    assert _na_tela(_Elemento(_caixa(10, 5000)), 1280, 720) is False
+    assert _na_tela(_Elemento(_caixa(5000, 200)), 1280, 720) is False
+
+
+def test_elemento_sem_caixa_nao_esta_na_tela():
+    """`display:none` nao produz caixa."""
+    from justica_mcp.portal import _na_tela
+
+    assert _na_tela(_Elemento(None), 1280, 720) is False
+
+
+def test_campo_na_borda_ainda_conta_como_na_tela():
+    from justica_mcp.portal import _na_tela
+
+    assert _na_tela(_Elemento(_caixa(-10, 200)), 1280, 720) is True, "parcialmente visivel"
