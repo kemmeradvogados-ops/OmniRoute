@@ -751,3 +751,99 @@ def test_tela_ilegivel_nao_conta_como_autenticada(monkeypatch):
 
     monkeypatch.setattr("justica_mcp.portal._coletar", explode)
     assert _ja_autenticado(object()) is False
+
+
+# --------------------------------------------------------------------------
+# Desafio "Confirme que e humano" do Cloudflare
+#
+# Visto no eproc do Tribunal Regional Federal da 2a Regiao em 21/09/2026.
+# Este projeto NAO resolve nem contorna o desafio: e protecao do tribunal, e
+# automatiza-la seria contorna-la em nome do advogado, com o risco sendo dele.
+# O programa so espera a pessoa marcar a caixa na janela aberta.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _aguardar_desafio_humano, _ha_desafio_humano
+
+
+class _TelaComDesafio:
+    """Pagina falsa que comeca com o desafio e libera o login apos N consultas,
+    simulando o operador marcando a caixa."""
+
+    def __init__(self, libera_apos=2, marca='iframe[src*="challenges.cloudflare.com"]'):
+        self.consultas = 0
+        self.libera_apos = libera_apos
+        self.marca = marca
+        self.esperas = 0
+
+    def query_selector(self, seletor):
+        if seletor == self.marca:
+            return object() if self.consultas < self.libera_apos else None
+        if seletor == "#txtUsuario":
+            self.consultas += 1
+            return _CampoVisivel() if self.consultas > self.libera_apos else None
+        return None
+
+    def wait_for_timeout(self, ms):
+        self.esperas += 1
+
+
+class _CampoVisivel:
+    def is_visible(self):
+        return True
+
+
+def test_reconhece_o_desafio_do_cloudflare():
+    class Tela:
+        def query_selector(self, seletor):
+            return object() if "challenges.cloudflare.com" in seletor else None
+
+    assert _ha_desafio_humano(Tela()) is True
+
+
+def test_reconhece_o_campo_de_resposta_do_desafio():
+    class Tela:
+        def query_selector(self, seletor):
+            return object() if seletor == 'input[name="cf-turnstile-response"]' else None
+
+    assert _ha_desafio_humano(Tela()) is True
+
+
+def test_tela_sem_desafio_nao_e_confundida():
+    class Tela:
+        def query_selector(self, seletor):
+            return None
+
+    assert _ha_desafio_humano(Tela()) is False
+
+
+def test_sem_desafio_a_espera_nao_atrapalha():
+    class Tela:
+        def query_selector(self, seletor):
+            return None
+
+    assert _aguardar_desafio_humano(Tela(), "#txtUsuario", 5, oculto=False) is True
+
+
+def test_espera_ate_o_operador_resolver(capsys):
+    tela = _TelaComDesafio(libera_apos=2)
+    assert _aguardar_desafio_humano(tela, "#txtUsuario", 30, oculto=False) is True
+    saida = capsys.readouterr().out
+    assert "DESAFIO DO CLOUDFLARE" in saida
+    assert "nao resolve o desafio" in saida
+    assert tela.esperas >= 1
+
+
+def test_navegador_oculto_recusa_em_vez_de_fingir(capsys):
+    """Sem janela visivel ninguem pode responder. Ficar esperando em silencio
+    ate o tempo acabar esconderia do operador o que precisa ser feito."""
+    tela = _TelaComDesafio(libera_apos=99)
+    assert _aguardar_desafio_humano(tela, "#txtUsuario", 30, oculto=True) is False
+    saida = capsys.readouterr().out
+    assert "SEM --oculto" in saida
+    assert tela.esperas == 0
+
+
+def test_tempo_esgotado_devolve_falso_sem_enviar_nada(capsys):
+    tela = _TelaComDesafio(libera_apos=9999)
+    assert _aguardar_desafio_humano(tela, "#txtUsuario", 0, oculto=False) is False
+    assert "Nada foi enviado" in capsys.readouterr().out

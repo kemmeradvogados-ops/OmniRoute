@@ -629,6 +629,34 @@ do operador, não do servidor; registro aqui para ficar explícito.
 Cada cópia entra na auditoria, agora com a faixa de folhas no lugar do tamanho
 em bytes: "fls. 241/252" diz algo ao advogado, "31244 bytes" não.
 
+### Desafio "Confirme que é humano" do Cloudflare
+
+Verificado em campo em 21 de setembro de 2026: o eproc do Tribunal Regional
+Federal da 2ª Região passou a exibir o desafio do Cloudflare antes da tela de
+login.
+
+**Este projeto não resolve, não contorna e não disfarça esse desafio.** Ele é um
+controle de segurança do tribunal. Automatizá-lo seria contornar proteção de
+terceiro em nome do advogado, com o risco recaindo sobre a inscrição dele, e
+nenhuma comodidade compensa isso.
+
+O caminho oferecido é o honesto e é o único: o programa **detecta** o desafio,
+**avisa** e **espera** o operador marcar a caixa na janela já aberta. Verificação
+humana feita por um humano.
+
+```powershell
+justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --espera-humana 240
+```
+
+O padrão são 180 segundos. É espera de pessoa caminhando até a janela, não
+espera de rede, por isso é generosa.
+
+Com `--oculto` não há janela onde responder, então o comando **recusa e explica**
+em vez de esperar em silêncio até o tempo acabar. Pela mesma razão, a ferramenta
+do servidor, que roda sempre oculta, não passa por telas com desafio: quando ele
+aparece, o acesso tem de ser feito pela linha de comando, com o advogado
+presente.
+
 ### O que ainda falta na Fase 2
 
 Já em campo, contra o eproc do Tribunal Regional Federal da 2ª Região:

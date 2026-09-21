@@ -21,6 +21,7 @@ import argparse
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -59,6 +60,10 @@ NAVEGADOR_AUSENTE = (
 class PortalIndisponivel(RuntimeError):
     pass
 
+
+# Tempo que o operador tem para marcar a caixa do desafio. Generoso de
+# proposito: e uma pessoa indo ate a janela, nao uma espera de rede.
+ESPERA_HUMANA_PADRAO = 180
 
 @dataclass
 class Campo:
@@ -357,6 +362,7 @@ def ensaiar_login(
     campo_senha_oculto: str = "input[name=pwdSenha]",
     oculto: bool = False,
     segundos: int = 30,
+    espera_humana: int = ESPERA_HUMANA_PADRAO,
     cofre: Optional[Cofre] = None,
 ) -> int:
     """Preenche o formulario de login e CONFERE o efeito, sem enviar.
@@ -423,6 +429,14 @@ def ensaiar_login(
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
             pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+
+            # O eproc passou a exibir o desafio "Confirme que e humano" do
+            # Cloudflare antes do login. O programa nao o resolve: quem marca
+            # a caixa e o operador, na janela aberta.
+            if not _aguardar_desafio_humano(
+                pagina, campo_usuario, espera_humana, oculto
+            ):
+                return 1
 
             botoes_antes = len(pagina.query_selector_all("button, input[type=button]"))
 
@@ -538,6 +552,7 @@ def entrar(
     botao_entrar: str = "#sbmEntrar",
     oculto: bool = False,
     segundos: int = 45,
+    espera_humana: int = ESPERA_HUMANA_PADRAO,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
 ) -> int:
@@ -610,6 +625,14 @@ def entrar(
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
             pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+
+            # O eproc passou a exibir o desafio "Confirme que e humano" do
+            # Cloudflare antes do login. O programa nao o resolve: quem marca
+            # a caixa e o operador, na janela aberta.
+            if not _aguardar_desafio_humano(
+                pagina, campo_usuario, espera_humana, oculto
+            ):
+                return 1
 
             for seletor, valor, rotulo in (
                 (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
@@ -767,6 +790,7 @@ def autenticar(
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
+    espera_humana: int = ESPERA_HUMANA_PADRAO,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
     apos_autenticar: Optional[Any] = None,
@@ -858,6 +882,14 @@ def autenticar(
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
             pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+
+            # O eproc passou a exibir o desafio "Confirme que e humano" do
+            # Cloudflare antes do login. O programa nao o resolve: quem marca
+            # a caixa e o operador, na janela aberta.
+            if not _aguardar_desafio_humano(
+                pagina, campo_usuario, espera_humana, oculto
+            ):
+                return 1
 
             # ---------- etapa 1: credencial ----------
             for seletor, valor, rotulo in (
@@ -1071,6 +1103,72 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
 
 
 BOTAO_INTEGRA = "#btnDownloadCompletoRS"
+
+
+# Marcadores do desafio "Confirme que e humano" do Cloudflare, visto no eproc
+# do Tribunal Regional Federal da 2a Regiao em 21 de setembro de 2026.
+MARCAS_DESAFIO = (
+    'iframe[src*="challenges.cloudflare.com"]',
+    'input[name="cf-turnstile-response"]',
+    ".cf-turnstile",
+    "#cf-challenge-running",
+)
+
+
+def _ha_desafio_humano(pagina) -> bool:
+    for marca in MARCAS_DESAFIO:
+        try:
+            if pagina.query_selector(marca) is not None:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _aguardar_desafio_humano(pagina, seletor_esperado: str, segundos: int, oculto: bool) -> bool:
+    """Espera o OPERADOR resolver o desafio do Cloudflare, na janela aberta.
+
+    Este projeto NAO resolve, contorna nem disfarca o desafio. Ele e um
+    controle de seguranca do tribunal, e automatiza-lo seria contornar protecao
+    de terceiro em nome do advogado, com o risco recaindo sobre ele. O caminho
+    honesto e o unico oferecido: a pessoa marca a caixa, e o programa espera.
+
+    Por isso tambem nao funciona com `--oculto`: sem janela visivel nao ha como
+    um humano responder, e fingir que ha seria mentir para o operador.
+
+    Devolve True quando o caminho esta livre, False quando o tempo acabou.
+    """
+    if not _ha_desafio_humano(pagina):
+        return True
+
+    print("\n  DESAFIO DO CLOUDFLARE NA TELA (\"Confirme que e humano\").")
+    if oculto:
+        print("  O navegador esta oculto, entao ninguem pode responder.")
+        print("  Repita o comando SEM --oculto para resolver o desafio a mao.")
+        return False
+    print("  Este programa nao resolve o desafio: ele e protecao do tribunal, e")
+    print("  automatiza-lo seria contorna-la em seu nome, com o risco sendo seu.")
+    print(f"\n  >>> Va ate a janela do navegador, marque a caixa e, se houver botao,")
+    print(f"  >>> clique em Enviar. Aguardando ate {segundos}s.")
+
+    limite = time.monotonic() + segundos
+    avisado = 0
+    while time.monotonic() < limite:
+        try:
+            alvo = pagina.query_selector(seletor_esperado)
+            if alvo is not None and alvo.is_visible():
+                print("  Desafio resolvido; a tela de login apareceu. Seguindo.")
+                return True
+        except Exception:
+            pass
+        restante = int(limite - time.monotonic())
+        if restante // 30 != avisado // 30 and restante > 0:
+            print(f"    aguardando... {restante}s")
+        avisado = restante
+        pagina.wait_for_timeout(1500)
+
+    print("  Tempo esgotado e a tela de login nao apareceu. Nada foi enviado.")
+    return False
 
 
 def _ja_autenticado(pagina) -> bool:
@@ -1291,6 +1389,7 @@ def consultar_processo(
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
+    espera_humana: int = ESPERA_HUMANA_PADRAO,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
 ) -> int:
@@ -1539,8 +1638,8 @@ def consultar_processo(
 
     return autenticar(
         url, tribunal, sistema, confirmado=confirmado, perfil=perfil,
-        oculto=oculto, segundos=segundos, cofre=cofre, estado=estado,
-        apos_autenticar=depois,
+        oculto=oculto, segundos=segundos, espera_humana=espera_humana,
+        cofre=cofre, estado=estado, apos_autenticar=depois,
     )
 
 
@@ -1595,6 +1694,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
     e.add_argument("--oculto", action="store_true")
     e.add_argument("--segundos", type=int, default=30)
+    e.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
+                     help="segundos para o operador marcar a caixa do desafio do Cloudflare")
 
     t = sub.add_parser("entrar", help="envia o login UMA vez e le a tela seguinte")
     t.add_argument("--url", default=None, help=AJUDA_URL)
@@ -1608,6 +1709,8 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--botao-entrar", default="#sbmEntrar")
     t.add_argument("--oculto", action="store_true")
     t.add_argument("--segundos", type=int, default=45)
+    t.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
+                     help="segundos para o operador marcar a caixa do desafio do Cloudflare")
 
     a = sub.add_parser("autenticar", help="credencial e segundo fator, numa sessao so")
     a.add_argument("--url", default=None, help=AJUDA_URL)
@@ -1621,6 +1724,8 @@ def main(argv: list[str] | None = None) -> int:
                         "por exemplo RJ168943")
     a.add_argument("--oculto", action="store_true")
     a.add_argument("--segundos", type=int, default=45)
+    a.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
+                     help="segundos para o operador marcar a caixa do desafio do Cloudflare")
 
     cp = sub.add_parser("consultar", help="autentica e consulta um processo pela busca rapida")
     cp.add_argument("--url", default=None, help=AJUDA_URL)
@@ -1634,6 +1739,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
     cp.add_argument("--oculto", action="store_true")
     cp.add_argument("--segundos", type=int, default=45)
+    cp.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
+                      help="segundos para o operador marcar a caixa do desafio do Cloudflare")
 
     args = p.parse_args(argv)
 
@@ -1652,12 +1759,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.url, args.tribunal, args.sistema, args.processo,
                 documentos=args.documentos, confirmado=args.confirmado,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
+                espera_humana=args.espera_humana,
             )
         if args.comando == "autenticar":
             return autenticar(
                 args.url, args.tribunal, args.sistema, confirmado=args.confirmado,
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
+                espera_humana=args.espera_humana,
             )
         if args.comando == "entrar":
             return entrar(
@@ -1665,6 +1774,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_usuario=args.campo_usuario, campo_senha=args.campo_senha,
                 campo_senha_oculto=args.campo_senha_oculto, botao_entrar=args.botao_entrar,
                 oculto=args.oculto, segundos=args.segundos,
+                espera_humana=args.espera_humana,
             )
         if args.comando == "ensaiar-login":
             return ensaiar_login(
@@ -1673,6 +1783,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_senha=args.campo_senha,
                 campo_senha_oculto=args.campo_senha_oculto,
                 oculto=args.oculto, segundos=args.segundos,
+                espera_humana=args.espera_humana,
             )
     except (PortalIndisponivel, PortalNaoConfigurado) as exc:
         print(str(exc), file=sys.stderr)
