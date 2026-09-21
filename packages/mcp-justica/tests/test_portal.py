@@ -846,7 +846,11 @@ def test_navegador_oculto_recusa_em_vez_de_fingir(capsys):
 def test_tempo_esgotado_devolve_falso_sem_enviar_nada(capsys):
     tela = _TelaComDesafio(libera_apos=9999)
     assert _aguardar_desafio_humano(tela, "#txtUsuario", 0, oculto=False) is False
-    assert "Nada foi enviado" in capsys.readouterr().out
+    saida = capsys.readouterr().out
+    assert "Tempo esgotado" in saida
+    # A mensagem precisa dizer se o desafio continua na tela: sem isso o
+    # operador nao sabe se a caixa nao foi marcada ou se o portal mudou de tela.
+    assert "Desafio ainda na tela: sim" in saida
 
 
 def test_espera_aceita_criterio_proprio_de_conclusao():
@@ -881,7 +885,7 @@ def test_criterio_proprio_que_nunca_conclui_respeita_o_tempo(capsys):
     assert _aguardar_desafio_humano(
         Tela(), "#txtAcessoCodigo", 0, False, lambda _: False
     ) is False
-    assert "Nada foi enviado" in capsys.readouterr().out
+    assert "Tempo esgotado" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------
@@ -963,3 +967,29 @@ def test_valor_invalido_na_variavel_mantem_o_perfil_persistente(tmp_path, monkey
     p = _Playwright()
     abrir_navegador(p, True, None)
     assert p.chromium.efemero is False
+
+
+def test_tempo_esgotado_distingue_desafio_que_saiu_da_tela(capsys):
+    """Se o desafio sumiu mas a tela seguinte nao foi reconhecida, a causa e
+    outra: provavelmente o portal voltou ao login. Dizer apenas 'tempo
+    esgotado' mandava o operador procurar no lugar errado."""
+    class Tela:
+        """Desafio presente na entrada, ausente quando o tempo acaba: e o que
+        acontece quando a pessoa marca a caixa e o portal muda de tela."""
+
+        def __init__(self):
+            self.consultas = 0
+
+        def query_selector(self, seletor):
+            self.consultas += 1
+            if "challenges.cloudflare.com" in seletor and self.consultas == 1:
+                return object()
+            return None
+
+        def wait_for_timeout(self, ms):
+            pass
+
+    assert _aguardar_desafio_humano(Tela(), "#x", 0, False, lambda _: False) is False
+    saida = capsys.readouterr().out
+    assert "Desafio ainda na tela: nao" in saida
+    assert "voltado ao login" in saida

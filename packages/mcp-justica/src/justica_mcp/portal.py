@@ -986,15 +986,39 @@ def autenticar(
             # A espera so rodava na abertura, entao o comando desistia de um
             # login que apenas aguardava a pessoa, e gastava a tentativa a toa.
             if pagina.query_selector(campo_codigo) is None and _ha_desafio_humano(pagina):
+                # Tres desfechos possiveis depois que a pessoa responde, e os
+                # tres precisam ser reconhecidos. Reconhecer so o segundo fator
+                # fazia o comando esperar os 180 segundos inteiros e desistir de
+                # um desafio que ja tinha sido resolvido.
                 def _passou(p):
                     alvo = p.query_selector(campo_codigo)
                     if alvo is not None and alvo.is_visible():
-                        return True
-                    return _ja_autenticado(p)
+                        return True          # foi direto ao segundo fator
+                    if _ja_autenticado(p):
+                        return True          # foi direto a selecao de perfil
+                    if _ha_desafio_humano(p):
+                        return False         # ainda no desafio
+                    usuario = p.query_selector(campo_usuario)
+                    return usuario is not None and usuario.is_visible()
 
                 _aguardar_desafio_humano(
                     pagina, campo_codigo, espera_humana, oculto, pronto=_passou
                 )
+                # Se o portal devolveu o formulario de login, a credencial
+                # precisa ser reenviada. Este comando NAO reenvia sozinho: uma
+                # credencial recusada tambem devolve o formulario, e reenviar as
+                # cegas e como se bloqueia uma conta. O relato abaixo diz o que
+                # apareceu, e a decisao de repetir fica com o operador.
+                voltou = pagina.query_selector(campo_usuario)
+                if (pagina.query_selector(campo_codigo) is None
+                        and not _ha_desafio_humano(pagina)
+                        and voltou is not None and voltou.is_visible()):
+                    print("\n  O portal voltou ao formulario de login apos o desafio.")
+                    print("  A credencial precisa ser enviada de novo, e este comando")
+                    print("  nao faz isso sozinho: credencial recusada devolve a mesma")
+                    print("  tela, e reenviar as cegas e como se bloqueia uma conta.")
+                    print("  Se nao houver mensagem de erro abaixo, repita o comando:")
+                    print("  a liberacao do desafio fica guardada no perfil do navegador.")
 
             erros = _mensagens_de_erro(pagina)
             campo = pagina.query_selector(campo_codigo)
@@ -1261,7 +1285,13 @@ def _aguardar_desafio_humano(
         avisado = restante
         pagina.wait_for_timeout(1500)
 
-    print("  Tempo esgotado e a tela de login nao apareceu. Nada foi enviado.")
+    ainda = "sim" if _ha_desafio_humano(pagina) else "nao"
+    print(f"  Tempo esgotado. Desafio ainda na tela: {ainda}.")
+    if ainda == "nao":
+        print("  O desafio saiu, mas a tela seguinte nao foi reconhecida.")
+        print("  Veja o relato abaixo: pode ser que o portal tenha voltado ao login.")
+    else:
+        print("  A caixa continua por marcar, ou a resposta nao foi aceita.")
     return False
 
 
