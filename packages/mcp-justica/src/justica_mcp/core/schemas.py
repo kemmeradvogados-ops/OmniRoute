@@ -85,6 +85,16 @@ class RespostaProcesso(BaseModel):
     nivel_sigilo: Optional[int] = None
     ultimo_andamento: Optional[dict[str, Any]] = None
     total_movimentos: int = 0
+    id_datajud: Optional[str] = None
+    # Quando a base nacional recebeu esta ficha do tribunal. E a medida honesta
+    # do atraso da fonte: sem isso o agente nao sabe se olha dado de hoje ou
+    # de tres semanas atras.
+    atualizado_em_na_fonte: Optional[str] = None
+    # Sistema conforme a propria base nacional declara. Distinto de
+    # `sistema_resolvido`, que e a conclusao do resolvedor. Repassado cru ate a
+    # estrutura interna ser confirmada em campo.
+    sistema_informado_pela_fonte: Optional[dict[str, Any]] = None
+    formato: Optional[dict[str, Any]] = None
     # Campos que a fonte publica nao entrega. Declarados como indisponiveis em
     # vez de omitidos, para o agente nao concluir que o processo nao os tem.
     partes: Optional[list[dict[str, Any]]] = Field(

@@ -52,3 +52,34 @@ def test_chave_ausente_vira_erro_de_configuracao_nao_erro_interno():
     resposta = json.loads(_tratar(ChaveDataJudAusente()))
     assert resposta["codigo"] == "configuracao_ausente"
     assert "DATAJUD_API_KEY" in resposta["erro"]
+
+
+def test_chave_vazia_explicita_nao_cai_no_ambiente(monkeypatch):
+    """Regressao encontrada em campo em 21 de setembro de 2026.
+
+    Com a chave presente no ambiente, `chave=""` passava a usar a chave
+    ambiente por causa do encadeamento com `or`. Quem passasse uma configuracao
+    vazia esperando ficar sem chave acabava consultando com a chave de outro
+    contexto, sem nenhum aviso.
+    """
+    monkeypatch.setenv("DATAJUD_API_KEY", "chave-do-ambiente")
+    assert AdaptadorDataJud(chave="").configurado is False
+    assert AdaptadorDataJud(chave="   ").configurado is False, "so espacos tambem e vazio"
+
+
+def test_chave_none_le_do_ambiente(monkeypatch):
+    """`None` continua significando 'leia do ambiente'."""
+    monkeypatch.setenv("DATAJUD_API_KEY", "chave-do-ambiente")
+    assert AdaptadorDataJud().configurado is True
+    assert AdaptadorDataJud(chave=None).configurado is True
+
+
+def test_sem_chave_no_ambiente_e_sem_argumento(monkeypatch):
+    monkeypatch.delenv("DATAJUD_API_KEY", raising=False)
+    assert AdaptadorDataJud().configurado is False
+
+
+def test_chave_explicita_vence_o_ambiente(monkeypatch):
+    monkeypatch.setenv("DATAJUD_API_KEY", "do-ambiente")
+    a = AdaptadorDataJud(chave="explicita")
+    assert a._cabecalhos()["Authorization"] == "APIKey explicita"

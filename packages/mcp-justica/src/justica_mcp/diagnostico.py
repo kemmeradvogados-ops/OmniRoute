@@ -299,11 +299,22 @@ async def checar_datajud(numero_exemplo: Optional[str], detalhe: bool) -> None:
                 item(f"{t.codigo} ({t.alias_datajud})", f"alias responde, {len(acertos)} registro(s)", True)
                 if acertos and t.codigo == "TJRJ":
                     print("\n  >>> CAMPOS DE _source (preciso para conferir o mapeamento):")
-                    for chave_campo, valor in (acertos[0].get("_source") or {}).items():
+                    fonte = acertos[0].get("_source") or {}
+                    for chave_campo, valor in fonte.items():
                         tipo = type(valor).__name__
                         amostra = (f"{tipo} com {len(valor)} elemento(s)"
                                    if isinstance(valor, (dict, list)) else str(valor)[:60])
                         print(f"      {chave_campo:28s} ({tipo:5s}) = {amostra}")
+                    # `sistema` pode permitir resolver o sistema do processo por
+                    # evidencia da propria base, em vez de pista de migracao.
+                    print("\n  >>> DICIONARIOS ANINHADOS (podem melhorar o resolvedor):")
+                    for nome in ("sistema", "formato", "classe", "orgaoJulgador"):
+                        if isinstance(fonte.get(nome), dict):
+                            print(f"      {nome:16s} = {fonte[nome]}")
+                    movs = fonte.get("movimentos") or []
+                    if movs and isinstance(movs[0], dict):
+                        print(f"      movimentos[0]    = {list(movs[0].keys())}")
+                        print(f"                         {str(movs[0])[:160]}")
                     print()
             except httpx.HTTPError as exc:
                 item(f"{t.codigo} ({t.alias_datajud})", f"erro: {type(exc).__name__}", False)

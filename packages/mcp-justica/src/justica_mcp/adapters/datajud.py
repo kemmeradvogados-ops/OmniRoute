@@ -48,7 +48,12 @@ class AdaptadorDataJud(AdaptadorBase):
 
     def __init__(self, chave: Optional[str] = None, **kw: Any) -> None:
         super().__init__(**kw)
-        self._chave = chave or os.environ.get("DATAJUD_API_KEY") or ""
+        # `None` significa "leia do ambiente"; `""` significa "sem chave, de
+        # proposito". O encadeamento com `or` confundia os dois: quem passasse
+        # uma configuracao vazia esperando ficar sem chave acabava usando
+        # silenciosamente a chave que estivesse no ambiente.
+        bruta = os.environ.get("DATAJUD_API_KEY", "") if chave is None else chave
+        self._chave = bruta.strip()
 
     @property
     def configurado(self) -> bool:
@@ -107,6 +112,10 @@ class AdaptadorDataJud(AdaptadorBase):
             nivel_sigilo=f.get("nivelSigilo"),
             ultimo_andamento=movimentos[0] if movimentos else None,
             total_movimentos=len(movimentos),
+            id_datajud=f.get("id"),
+            atualizado_em_na_fonte=f.get("dataHoraUltimaAtualizacao"),
+            sistema_informado_pela_fonte=f.get("sistema"),
+            formato=f.get("formato"),
             partes=None,
             advogados=None,
             documentos=None,
@@ -114,7 +123,12 @@ class AdaptadorDataJud(AdaptadorBase):
                 "partes", "advogados", "documentos", "valor_da_causa",
             ],
             proveniencia=self.proveniencia(
-                endpoint=f"{BASE}/{tribunal.alias_datajud}/_search", observacao=_OBS_FONTE
+                endpoint=f"{BASE}/{tribunal.alias_datajud}/_search",
+                observacao=(
+                    f"{_OBS_FONTE} Ultima atualizacao desta ficha na base nacional: "
+                    f"{f.get('dataHoraUltimaAtualizacao')}."
+                    if f.get("dataHoraUltimaAtualizacao") else _OBS_FONTE
+                ),
             ),
         )
 

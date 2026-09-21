@@ -251,11 +251,46 @@ Cinco correções nasceram dessa execução:
    código só consultava variáveis de ambiente do sistema. Quem seguisse a
    instrução ficaria sem a chave sem entender por quê.
 
+## Validação do DataJud, 21 de setembro de 2026
+
+Consulta autenticada executada na máquina do escritório, com a chave pública
+do Conselho Nacional de Justiça.
+
+- Os quatro alias respondem: `api_publica_tjrj`, `api_publica_tjsp`,
+  `api_publica_trt1` e `api_publica_trf2`. **A pendência do alias federal está
+  resolvida**: a Justiça Federal da 2ª Região responde sob `api_publica_trf2`.
+- Consulta a um processo real do Rio devolveu classe, órgão julgador, grau,
+  nível de sigilo e 81 movimentos.
+- **Confirmado que não há campo de partes**, como a matriz de capacidades já
+  declarava. A recusa de `buscar_por_parte` está correta.
+
+Campos de `_source` observados: `id`, `tribunal`, `grau`, `numeroProcesso`,
+`dataAjuizamento`, `nivelSigilo`, `orgaoJulgador`, `classe`, `sistema`,
+`formato`, `dataHoraUltimaAtualizacao`, `movimentos`, `assuntos`.
+
+Dois deles mudam o projeto:
+
+- **`dataHoraUltimaAtualizacao`** informa quando a base nacional recebeu a ficha
+  do tribunal. Passa a integrar a proveniência: sem isso, o agente não sabia se
+  olhava dado de hoje ou de semanas atrás, e o aviso de que "o DataJud atrasa"
+  era genérico. Agora é mensurável por processo.
+- **`sistema`** pode permitir que `resolver_sistema` decida por evidência da
+  própria base, em vez de cair na pista de migração. O conteúdo ainda não foi
+  observado, então o campo viaja cru como `sistema_informado_pela_fonte` e
+  **não** alimenta o resolvedor até ser confirmado.
+
+Um defeito real apareceu por causa dessa execução: com a chave presente no
+ambiente, `AdaptadorDataJud(chave="")` passava a usar a chave do ambiente, por
+causa de um encadeamento com `or`. Quem passasse configuração vazia esperando
+ficar sem chave consultaria silenciosamente com a chave de outro contexto.
+Corrigido: `None` significa "leia do ambiente", `""` significa "sem chave".
+A correção foi validada revertendo-a e confirmando que o teste falha.
+
 ## Pendências que dependem do operador
 
 1. Confirmar a natureza do campo de três caracteres do DCP na planilha.
 2. Credencial de e-SAJ para São Paulo: sem ela, o acervo não migrado fica sem
    acesso autenticado.
-3. Conferir o alias do DataJud do primeiro grau da Justiça Federal do Rio de
-   Janeiro em produção.
+3. Observar o conteúdo de `sistema` no DataJud e, se servir, ligá-lo ao
+   resolvedor.
 4. Testar, tribunal a tribunal, se as intimações da banca aparecem no Diário.
