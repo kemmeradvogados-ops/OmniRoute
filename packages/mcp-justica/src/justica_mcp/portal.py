@@ -742,6 +742,7 @@ def autenticar(
     segundos: int = 45,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
+    apos_autenticar: Optional[Any] = None,
 ) -> int:
     """Autenticacao completa: credencial, segundo fator, perfil, e para ali.
 
@@ -974,6 +975,16 @@ def autenticar(
                 print(f"  Titulo: {pagina.title()!r}")
                 campos, botoes = _coletar(pagina)
 
+            if apos_autenticar is not None:
+                # Quem precisa continuar dentro da sessao recebe a pagina ja
+                # autenticada. Evita duplicar o fluxo de login, que e a parte
+                # mais delicada e ja validada em campo.
+                resultado = apos_autenticar(pagina, guarda, estado, identidade)
+                print("\n  RELATO DA TRAVA:")
+                for linha in guarda.relato():
+                    print(f"    {linha}")
+                return resultado if isinstance(resultado, int) else 0
+
             print(f"\n  ESTRUTURA DA TELA ONDE PAROU ({len(campos)} campos, {len(botoes)} botoes):")
             for c in campos[:15]:
                 print(f"    {c.linha()}")
@@ -991,6 +1002,129 @@ def autenticar(
     print("  A caixa de dispositivo confiavel NAO foi marcada.")
     print("  Nada foi navegado, aberto ou baixado alem da tela de chegada.")
     return 0
+
+
+
+
+BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
+BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
+
+
+def consultar_processo(
+    url: str,
+    tribunal: str,
+    sistema: str,
+    numero_processo: str,
+    *,
+    confirmado: bool = False,
+    perfil: Optional[str] = None,
+    oculto: bool = False,
+    segundos: int = 45,
+    cofre: Optional[Cofre] = None,
+    estado: Optional[Estado] = None,
+) -> int:
+    """Autentica e consulta um processo pela busca rapida do portal.
+
+    Usa a barra de busca que o eproc mantem em TODAS as telas. Isso contorna a
+    tela de atualizacao cadastral em que a autenticacao desemboca quando o
+    portal a exige: o campo de busca vive em `formPesquisaRapida`, formulario
+    distinto do `frmPessoaAlteracao`, entao consultar nao encosta no cadastro.
+
+    Somente leitura. Preenche o numero, envia a busca e relata a tela. Nao abre
+    documento, nao baixa nada, nao toca em expediente.
+    """
+    from .core.cnj import NumeroCNJInvalido, parse_numero
+
+    try:
+        numero = parse_numero(numero_processo)
+    except NumeroCNJInvalido as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
+    def depois(pagina, guarda, estado_local, identidade):
+        atual = pagina.url
+        print(f"\n  CONSULTA DO PROCESSO {numero.formatado}")
+
+        campo = elemento_visivel(pagina, BUSCA_RAPIDA)
+        if campo is None:
+            print("  [FALHA] Campo de busca rapida nao encontrado na tela.")
+            return 1
+        botao = elemento_visivel(pagina, BOTAO_BUSCA)
+        if botao is None:
+            print("  [FALHA] Botao de busca nao encontrado na tela.")
+            return 1
+
+        # Autorizacao estreita: so a busca, so nesta tela. O formulario de
+        # cadastro que divide a pagina continua inteiramente barrado.
+        guarda.permissoes.append(Permissao(
+            padrao_url=permissao_efemera(atual).padrao_url,
+            descricao="busca rapida de processo, somente leitura",
+            conferido_em="execucao atual",
+            seletores_clicaveis=(BOTAO_BUSCA,),
+            seletores_preenchiveis=(BUSCA_RAPIDA,),
+        ))
+
+        guarda.pode_executar(Acao.PREENCHER, BUSCA_RAPIDA, url=atual)
+        campo.click()
+        campo.fill(numero.formatado)
+        conferido = campo.evaluate("e => (e.value || '').length")
+        if not conferido:
+            print("  [ABORTADO] O numero nao entrou no campo. Nada foi enviado.")
+            return 1
+
+        guarda.pode_executar(Acao.CLICAR, BOTAO_BUSCA, url=atual)
+        estado_local.registrar(
+            acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado, resultado="enviada",
+        )
+        botao.click()
+        try:
+            pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+        except Exception:
+            pass
+
+        final = pagina.url
+        print(f"  Endereco: {final}")
+        print(f"  Titulo: {pagina.title()!r}")
+
+        termo = guarda._termo_de_risco(final)
+        if termo is not None:
+            print(f"\n  TRAVA: o destino contem o termo de risco {termo!r}.")
+            print("  A leitura foi interrompida. Informe este endereco.")
+            return 1
+
+        erros = _mensagens_de_erro(pagina)
+        if erros:
+            print("\n  MENSAGENS NA TELA:")
+            for e in erros:
+                print(f"    {e}")
+
+        campos, botoes = _coletar(pagina)
+        print(f"\n  ESTRUTURA DA TELA DO PROCESSO ({len(campos)} campos, {len(botoes)} botoes):")
+        for c in campos[:12]:
+            print(f"    {c.linha()}")
+        for b in botoes[:25]:
+            print(f"    {b.linha()}")
+
+        tabelas = pagina.query_selector_all("table")
+        print(f"\n  TABELAS NA TELA: {len(tabelas)}")
+        for i, tabela in enumerate(tabelas[:6]):
+            linhas = len(tabela.query_selector_all("tr"))
+            identificador = tabela.get_attribute("id") or "-"
+            cabecalhos = [
+                (c.inner_text() or "").strip()[:22]
+                for c in tabela.query_selector_all("th")[:8]
+            ]
+            print(f"    tabela {i}: id={identificador}  {linhas} linha(s)")
+            if cabecalhos:
+                print(f"      colunas: {cabecalhos}")
+        return 0
+
+    return autenticar(
+        url, tribunal, sistema, confirmado=confirmado, perfil=perfil,
+        oculto=oculto, segundos=segundos, cofre=cofre, estado=estado,
+        apos_autenticar=depois,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1044,11 +1178,27 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--oculto", action="store_true")
     a.add_argument("--segundos", type=int, default=45)
 
+    cp = sub.add_parser("consultar", help="autentica e consulta um processo pela busca rapida")
+    cp.add_argument("--url", required=True)
+    cp.add_argument("--tribunal", required=True)
+    cp.add_argument("--sistema", required=True)
+    cp.add_argument("--processo", required=True, help="numero no padrao da numeracao unica")
+    cp.add_argument("--perfil", default=None)
+    cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
+    cp.add_argument("--oculto", action="store_true")
+    cp.add_argument("--segundos", type=int, default=45)
+
     args = p.parse_args(argv)
 
     try:
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "consultar":
+            return consultar_processo(
+                args.url, args.tribunal, args.sistema, args.processo,
+                confirmado=args.confirmado, perfil=args.perfil,
+                oculto=args.oculto, segundos=args.segundos,
+            )
         if args.comando == "autenticar":
             return autenticar(
                 args.url, args.tribunal, args.sistema, confirmado=args.confirmado,

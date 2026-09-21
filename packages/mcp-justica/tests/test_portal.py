@@ -419,3 +419,53 @@ def test_botao_de_salvar_cadastro_e_termo_de_risco():
     g = _guarda_autenticacao()
     for seletor in ("button[name=btnSalvar]", "#btnExcluir", "#btnGravarDados"):
         assert g.avaliar(Acao.CLICAR, seletor, url=ENDERECO).permitido is False
+
+
+# ---------------- consulta autenticada de processo ----------------
+
+def _permissao_busca(url=ENDERECO):
+    from justica_mcp.core.guarda_navegacao import Permissao
+    from justica_mcp.portal import BOTAO_BUSCA, BUSCA_RAPIDA
+
+    return Permissao(
+        padrao_url=permissao_efemera(url).padrao_url,
+        descricao="busca rapida de processo, somente leitura",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(BOTAO_BUSCA,),
+        seletores_preenchiveis=(BUSCA_RAPIDA,),
+    )
+
+
+def test_busca_libera_somente_o_campo_e_o_botao_de_pesquisa():
+    from justica_mcp.portal import BOTAO_BUSCA, BUSCA_RAPIDA
+
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[_permissao_busca()])
+    assert g.avaliar(Acao.PREENCHER, BUSCA_RAPIDA, url=ENDERECO).permitido is True
+    assert g.avaliar(Acao.CLICAR, BOTAO_BUSCA, url=ENDERECO).permitido is True
+
+
+def test_busca_nao_encosta_no_formulario_de_cadastro():
+    """A consulta acontece na mesma pagina em que o portal exibe "Alterar
+    Cadastro", porque a barra de busca vive em formulario separado. O cadastro
+    tem de continuar inteiramente barrado."""
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[_permissao_busca()])
+    for seletor in ("#txtRgNum", "#txtIdentPrinc", "#txtDataEmissao"):
+        assert g.avaliar(Acao.PREENCHER, seletor, url=ENDERECO).permitido is False
+    for seletor in ("button[name=btnSalvar]", "#btnIncDoc", "#btnVoltar"):
+        assert g.avaliar(Acao.CLICAR, seletor, url=ENDERECO).permitido is False
+
+
+def test_consulta_recusa_numero_invalido():
+    """Numero com digito errado nao vai a rede: consultar assim devolveria
+    "nao encontrado" e o agente concluiria que o processo nao existe."""
+    from justica_mcp.portal import consultar_processo
+
+    assert consultar_processo(ENDERECO, "TRF2", "eproc", "0000001-99.2026.4.02.5101",
+                              confirmado=True) == 1
+
+
+def test_consulta_recusa_sem_confirmacao():
+    from justica_mcp.portal import consultar_processo
+
+    numero = "5001234-54.2023.4.02.5101"
+    assert consultar_processo(ENDERECO, "TRF2", "eproc", numero, confirmado=False) == 1

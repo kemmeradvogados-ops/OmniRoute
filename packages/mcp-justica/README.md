@@ -459,6 +459,26 @@ está de fato na tela.
 **A busca rápida está em todas as telas.** `#txtNumProcessoPesquisaRapida` com
 `btnPesquisaRapidaSubmit` é o caminho para a consulta de processo autenticada.
 
+### Consulta autenticada de processo
+
+```powershell
+justica-portal consultar --url "..." --tribunal TRF2 --sistema eproc --perfil RJ168943 --processo "5001234-54.2023.4.02.5101" --confirmo-tentativa-unica
+```
+
+Autentica e consulta pela barra de busca rápida que o eproc mantém em **todas**
+as telas. Isso contorna a tela de atualização cadastral em que a autenticação
+desemboca quando o portal a exige: o campo de busca vive em
+`formPesquisaRapida`, formulário distinto do `frmPessoaAlteracao`, então
+consultar não encosta no cadastro. Um teste garante que os campos de identidade
+e o botão `Salvar` continuam barrados enquanto a busca é usada.
+
+Somente leitura: preenche o número, envia a busca e relata a tela, com as
+tabelas encontradas e suas colunas. Não abre documento, não baixa nada, não
+toca em expediente.
+
+O número é validado antes de qualquer ida à rede. Número com dígito errado
+devolveria "não encontrado", e o agente concluiria que o processo não existe.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
