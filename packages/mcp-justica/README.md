@@ -384,6 +384,36 @@ de setembro de 2026: o valor preenchido no campo visível chega ao campo oculto,
 então o receio de teclado virtual, levantado pelo `inputmode=none`, não se
 confirmou.
 
+### Autenticação completa
+
+```powershell
+justica-portal autenticar --url "<tela de login>" --tribunal TRF2 --sistema eproc --confirmo-tentativa-unica
+```
+
+Credencial e segundo fator numa execução só, porque a tela do código só existe
+dentro da sessão aberta pelo login. Uma tentativa em cada etapa: código errado
+também conta como tentativa falha.
+
+O código é gerado pelo cofre com **janela útil mínima**. Um código gerado a dois
+segundos do fim expira entre o preenchimento e o envio, e o portal registraria
+falha por um motivo que não é culpa da credencial. Esperar a próxima janela
+custa segundos; a tentativa perdida custa mais.
+
+O que a tela de segundo fator do eproc revelou, em 21 de setembro de 2026:
+o campo é `#txtAcessoCodigo` e o botão `#btnValidar`, mas ao lado deles ficam
+**`Desativar 2FA`**, **`Cancelar Dispositivos Liberados`** e a caixa **"Não usar
+o 2FA neste dispositivo e navegador"**.
+
+Nenhum dos três é tocado. A caixa, em particular, **nunca é marcada**: marcá-la
+facilitaria as próximas execuções, e é exatamente por isso que não se marca,
+porque o cofre já gera o código sozinho e não há ganho, só perda de proteção da
+conta. Os três ficam barrados duas vezes, por não estarem na lista de permissão
+e por casarem com termo de risco.
+
+Essa tela obrigou a ampliar os termos de risco para uma segunda classe: ações
+que **enfraquecem a segurança da conta**. Não consomem prazo, mas o dano é
+duradouro e silencioso.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
@@ -391,8 +421,8 @@ confirmou.
   sonda registrada.
 - Conferência em campo das telas do eproc, com `justica-portal reconhecer`,
   para preencher a lista de permissão, que hoje está vazia e bloqueia tudo.
-- O passo de autenticação, que só será escrito depois que o reconhecimento
-  mostrar a estrutura real da tela de login.
+- Consulta autenticada de processo e listagem de intimações pendentes, a partir
+  da sessão que `autenticar` abre.
 - Listagem de intimações pendentes **sem abrir**. Decisão do operador: listar
   sim, abrir não. A primeira execução precisa ser assistida, porque a premissa
   de que listar não dispara ciência ainda não foi confirmada para o eproc.

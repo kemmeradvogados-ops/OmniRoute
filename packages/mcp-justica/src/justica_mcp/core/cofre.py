@@ -220,7 +220,9 @@ class Cofre:
             raise CredencialAusente(identidade, "Senha")
         return valor
 
-    def _codigo_segundo_fator(self, identidade: Identidade) -> str:
+    def _codigo_segundo_fator(
+        self, identidade: Identidade, *, minimo_segundos: int = 0
+    ) -> str:
         """Gera o codigo de seis digitos a partir da semente guardada.
 
         O portal exige segundo fator para usuario externo. Com a semente no
@@ -228,12 +230,30 @@ class Cofre:
         Isso AUMENTA a responsabilidade sobre o cofre, nao diminui: quem tiver
         a semente e a senha tem a conta inteira.
         """
+        import time
+
         import pyotp
 
         semente = self._ler(SERVICO_SEMENTE, identidade.chave)
         if semente is None:
             raise CredencialAusente(identidade, "Semente de segundo fator")
-        return pyotp.TOTP(semente).now()
+
+        totp = pyotp.TOTP(semente)
+        if minimo_segundos:
+            # O codigo vale 30 segundos. Gerado a dois segundos do fim, expira
+            # entre o preenchimento e o envio, e o portal registra tentativa
+            # falha por um motivo que nao e culpa da credencial. Esperar a
+            # proxima janela custa segundos; a tentativa perdida custa mais.
+            restante = totp.interval - (int(time.time()) % totp.interval)
+            if restante < minimo_segundos:
+                time.sleep(restante + 1)
+        return totp.now()
+
+    def segundos_restantes_do_codigo(self) -> int:
+        """Quanto tempo o codigo atual ainda vale."""
+        import time
+
+        return 30 - (int(time.time()) % 30)
 
     def __repr__(self) -> str:  # evita que um repr descuidado exponha o backend
         return f"<Cofre backend={type(self._backend).__name__}>"

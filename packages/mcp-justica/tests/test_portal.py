@@ -236,3 +236,65 @@ def test_envio_recusa_sem_confirmacao_do_operador():
     from justica_mcp.portal import entrar
 
     assert entrar(ENDERECO, "TRF2", "eproc", confirmado=False) == 1
+
+
+# ---------------- autenticacao completa ----------------
+
+def _permissao_autenticacao(url=ENDERECO):
+    from justica_mcp.core.guarda_navegacao import Permissao
+
+    base = permissao_efemera(url)
+    return Permissao(
+        padrao_url=base.padrao_url,
+        descricao="autenticacao completa autorizada pelo operador",
+        conferido_em="execucao atual",
+        seletores_clicaveis=("#sbmEntrar", "#btnValidar"),
+        seletores_preenchiveis=("#txtUsuario", "#pwdSenha", "#txtAcessoCodigo"),
+    )
+
+
+def _guarda_autenticacao():
+    return GuardaNavegacao(modo=Modo.LEITURA, permissoes=[_permissao_autenticacao()])
+
+
+def test_autenticacao_libera_so_o_necessario():
+    g = _guarda_autenticacao()
+    for seletor in ("#txtUsuario", "#pwdSenha", "#txtAcessoCodigo"):
+        assert g.avaliar(Acao.PREENCHER, seletor, url=ENDERECO).permitido is True
+    for seletor in ("#sbmEntrar", "#btnValidar"):
+        assert g.avaliar(Acao.CLICAR, seletor, url=ENDERECO).permitido is True
+
+
+def test_caixa_de_dispositivo_confiavel_nunca_e_marcada():
+    """Marca-la facilitaria as proximas execucoes, e e por isso que nao se
+    marca: o cofre ja gera o codigo, entao nao ha ganho, so perda de protecao.
+    Bloqueada duas vezes: nao esta na lista, e o nome casa com termo de risco."""
+    g = _guarda_autenticacao()
+    d = g.avaliar(Acao.CLICAR, "#chkLiberarDispositivo", url=ENDERECO)
+    assert d.permitido is False
+
+
+def test_botoes_destrutivos_da_tela_de_segundo_fator_sao_barrados():
+    """A tela de segundo fator do eproc traz "Desativar 2FA" e "Cancelar
+    Dispositivos Liberados" ao lado do campo do codigo. Um clique errado ali
+    enfraquece a conta de forma duradoura."""
+    g = _guarda_autenticacao()
+    for seletor in ("#btnDesativar2FA", "#btnCancelarDispositivos", "a[href*=desativar]"):
+        assert g.avaliar(Acao.CLICAR, seletor, url=ENDERECO).permitido is False
+
+
+def test_autenticacao_recusa_sem_confirmacao():
+    from justica_mcp.portal import autenticar
+
+    assert autenticar(ENDERECO, "TRF2", "eproc", confirmado=False) == 1
+
+
+def test_caixa_de_selecao_nao_e_campo_de_codigo():
+    """Falso positivo encontrado em campo: a caixa "Nao usar o 2FA neste
+    dispositivo" era apontada como campo do autenticador, que e o oposto do
+    que ela faz."""
+    from justica_mcp.portal import _parece_segundo_fator
+
+    caixa = _campo(tipo="checkbox", nome="chkLiberarDispositivo",
+                   rotulo="Não usar o 2FA neste dispositivo e navegador")
+    assert _parece_segundo_fator(caixa) is False

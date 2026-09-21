@@ -57,6 +57,12 @@ TERMOS_DE_RISCO = (
     "intimacao/abrir", "expediente/abrir",
     "peticionar", "protocolar", "assinar",
     "confirmar-leitura", "registrar-leitura",
+    # Segunda classe de risco, descoberta na tela de segundo fator do eproc em
+    # 21 de setembro de 2026: acoes que enfraquecem a seguranca da conta.
+    # Nao consomem prazo, mas o dano e duradouro e silencioso.
+    "desativar", "desabilitar",
+    "liberardispositivo", "liberar-dispositivo",
+    "cancelardispositivo", "cancelar-dispositivo",
 )
 
 # Acoes que jamais sao executadas na versao somente leitura, em nenhum modo.

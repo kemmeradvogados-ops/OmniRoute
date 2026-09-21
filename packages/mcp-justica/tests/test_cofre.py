@@ -151,3 +151,34 @@ def test_prontidao_nao_exige_segundo_fator(cofre, tjrj):
     situacao = cofre.situacao(tjrj)
     assert situacao["pronta_para_uso"] is True
     assert situacao["semente_guardada"] is False
+
+
+def test_codigo_espera_a_proxima_janela_quando_esta_acabando(cofre, tjrj, monkeypatch):
+    """O codigo vale 30 segundos. Gerado a dois segundos do fim, expira entre o
+    preenchimento e o envio, e o portal registra tentativa falha por um motivo
+    que nao e culpa da credencial. Esperar custa segundos; a tentativa perdida
+    custa mais."""
+    import time as modulo_tempo
+
+    cofre.guardar_semente(tjrj, SEMENTE)
+    dormiu = []
+    monkeypatch.setattr(modulo_tempo, "sleep", lambda s: dormiu.append(s))
+    # Instante escolhido para cair no fim da janela: 1000000018 % 30 == 28,
+    # logo restam 2 segundos dos 30.
+    monkeypatch.setattr(modulo_tempo, "time", lambda: 1_000_000_018)
+
+    cofre._codigo_segundo_fator(tjrj, minimo_segundos=8)
+    assert dormiu, "deveria ter aguardado a proxima janela"
+
+
+def test_codigo_nao_espera_com_janela_folgada(cofre, tjrj, monkeypatch):
+    import time as modulo_tempo
+
+    cofre.guardar_semente(tjrj, SEMENTE)
+    dormiu = []
+    monkeypatch.setattr(modulo_tempo, "sleep", lambda s: dormiu.append(s))
+    # 1000000001 % 30 == 11, logo restam 19 segundos: folga suficiente.
+    monkeypatch.setattr(modulo_tempo, "time", lambda: 1_000_000_001)
+
+    cofre._codigo_segundo_fator(tjrj, minimo_segundos=8)
+    assert not dormiu

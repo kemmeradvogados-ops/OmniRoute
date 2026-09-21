@@ -471,6 +471,11 @@ _PISTAS_SEGUNDO_FATOR = ("one-time-code", "otp", "token", "codigo", "código", "
 
 
 def _parece_segundo_fator(campo: "Campo") -> bool:
+    # Caixa de selecao e botao de opcao nunca sao campo de codigo. Sem esta
+    # linha, a caixa "Nao usar o 2FA neste dispositivo" do eproc era apontada
+    # como campo do autenticador, que e o oposto do que ela faz.
+    if campo.tipo in ("checkbox", "radio"):
+        return False
     texto = " ".join(
         str(v).lower() for v in
         (campo.nome, campo.identificador, campo.rotulo, (campo.extras or {}).get("autocomplete"))
@@ -674,6 +679,225 @@ def entrar(
     return 0
 
 
+
+
+def autenticar(
+    url: str,
+    tribunal: str,
+    sistema: str,
+    *,
+    confirmado: bool = False,
+    campo_usuario: str = "#txtUsuario",
+    campo_senha: str = "#pwdSenha",
+    campo_senha_oculto: str = "input[name=pwdSenha]",
+    botao_entrar: str = "#sbmEntrar",
+    campo_codigo: str = "#txtAcessoCodigo",
+    botao_validar: str = "#btnValidar",
+    oculto: bool = False,
+    segundos: int = 45,
+    cofre: Optional[Cofre] = None,
+    estado: Optional[Estado] = None,
+) -> int:
+    """Autenticacao completa: credencial, segundo fator, e para por ali.
+
+    A tela do segundo fator so existe dentro da sessao aberta pelo login, entao
+    os dois passos ocorrem numa execucao so.
+
+    Mesma disciplina do envio unico, agora em dois pontos: UMA tentativa de
+    credencial e UMA de codigo. Codigo errado tambem conta como tentativa falha.
+
+    Nunca marca a caixa "Nao usar o 2FA neste dispositivo". Marca-la facilitaria
+    as proximas execucoes, e e exatamente por isso que nao se marca: o cofre ja
+    gera o codigo sozinho, entao nao ha ganho, so perda de protecao da conta.
+    Os botoes "Desativar 2FA" e "Cancelar Dispositivos Liberados", que dividem a
+    mesma tela, ficam barrados pela lista de permissao e pelos termos de risco.
+
+    Ao final apenas LE a tela onde parou. Nao navega, nao baixa, nao abre nada.
+    """
+    if not confirmado:
+        print(
+            "Este comando AUTENTICA de verdade no portal: envia a credencial e o\n"
+            "codigo do segundo fator.\n\n"
+            "Tentativas falhas repetidas bloqueiam a conta do advogado, entao ele\n"
+            "so roda com confirmacao expressa, e tenta uma unica vez em cada etapa:\n\n"
+            "    --confirmo-tentativa-unica\n",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(INSTRUCAO_INSTALACAO, file=sys.stderr)
+        return 2
+
+    identidade = Identidade(tribunal, sistema)
+    cofre = cofre or Cofre()
+    estado = estado or Estado()
+    try:
+        login = cofre._login(identidade)
+        senha = cofre._senha(identidade)
+    except CredencialAusente as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+    if not cofre.tem_semente(identidade):
+        print(f"  Sem semente de segundo fator para {identidade.rotulo}.", file=sys.stderr)
+        print("  Grave com: justica-credenciais guardar --so-semente", file=sys.stderr)
+        return 1
+
+    base = permissao_efemera(url)
+    permissao = Permissao(
+        padrao_url=base.padrao_url,
+        descricao="autenticacao completa autorizada pelo operador",
+        conferido_em="execucao atual",
+        # Apenas o necessario. A caixa de liberar dispositivo e os botoes de
+        # desativar ficam de fora de proposito.
+        seletores_clicaveis=(botao_entrar, botao_validar),
+        seletores_preenchiveis=(campo_usuario, campo_senha, campo_codigo),
+    )
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[permissao])
+
+    print("=" * LARGURA)
+    print("AUTENTICACAO COMPLETA".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Endereco: {url}")
+    print(f"Credencial: {identidade.rotulo} (lida do cofre, nunca impressa)")
+    print("Uma tentativa de credencial e uma de codigo. Nao marca dispositivo confiavel.\n")
+
+    executavel = os.environ.get("JUSTICA_CHROMIUM") or None
+    with sync_playwright() as p:
+        try:
+            navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+        except Exception as exc:
+            if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
+                print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
+                return 2
+            raise
+        pagina = navegador.new_page()
+        try:
+            guarda.pode_executar(Acao.NAVEGAR, url)
+            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+
+            # ---------- etapa 1: credencial ----------
+            for seletor, valor, rotulo in (
+                (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
+            ):
+                elemento = pagina.query_selector(seletor)
+                if elemento is None:
+                    print(f"  [FALHA] Campo de {rotulo} nao encontrado. Nada enviado.")
+                    return 1
+                guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
+                elemento.click()
+                elemento.fill(valor)
+
+            alvo = pagina.query_selector(campo_senha_oculto)
+            if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
+                print("  [ABORTADO] A senha nao chegou ao campo enviado. Nada enviado.")
+                return 1
+
+            guarda.pode_executar(Acao.CLICAR, botao_entrar, url=url)
+            estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
+                             sistema=identidade.sistema, resultado="enviado")
+            print("  Etapa 1: credencial enviada (uma vez).")
+            pagina.query_selector(botao_entrar).click()
+            try:
+                pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+            except Exception:
+                pass
+
+            erros = _mensagens_de_erro(pagina)
+            campo = pagina.query_selector(campo_codigo)
+            if campo is None:
+                print("\n  [PARADO] A tela do segundo fator nao apareceu.")
+                if erros:
+                    print("  Mensagens na tela:")
+                    for e in erros:
+                        print(f"    {e}")
+                    print("\n  NAO repita o comando. Confira a credencial no cofre.")
+                estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
+                                 sistema=identidade.sistema, resultado="sem_tela_de_codigo")
+                return 1
+
+            # ---------- etapa 2: segundo fator ----------
+            # Exige janela util: codigo gerado no fim da validade expira entre o
+            # preenchimento e o envio, e o portal registra falha por um motivo
+            # que nao e culpa da credencial.
+            restante = cofre.segundos_restantes_do_codigo()
+            if restante < 8:
+                print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
+            codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
+
+            guarda.pode_executar(Acao.PREENCHER, campo_codigo, url=url)
+            campo.click()
+            campo.fill(codigo)
+            conferido = campo.evaluate("e => (e.value || '').length")
+            if conferido != len(codigo):
+                print(f"  [ABORTADO] O codigo nao entrou no campo ({conferido} de {len(codigo)}).")
+                print("             Nada foi enviado, para nao gastar tentativa.")
+                return 1
+            print(f"  Etapa 2: codigo preenchido, valido por mais "
+                  f"{cofre.segundos_restantes_do_codigo()}s.")
+
+            guarda.pode_executar(Acao.CLICAR, botao_validar, url=url)
+            estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                             sistema=identidade.sistema, resultado="enviado")
+            pagina.query_selector(botao_validar).click()
+            try:
+                pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+            except Exception:
+                pass
+
+            # ---------- resultado ----------
+            final = pagina.url
+            print(f"\n  Endereco final: {final}")
+            print(f"  Titulo: {pagina.title()!r}\n")
+
+            erros = _mensagens_de_erro(pagina)
+            if erros:
+                print("  MENSAGENS NA TELA:")
+                for e in erros:
+                    print(f"    {e}")
+                print()
+
+            ainda_pede_codigo = pagina.query_selector(campo_codigo) is not None
+            if ainda_pede_codigo:
+                print("  A tela ainda pede o codigo: a validacao NAO passou.")
+                print("  NAO repita o comando. Confira a semente com:")
+                print("    justica-credenciais testar --tribunal "
+                      f"{identidade.tribunal} --sistema {identidade.sistema}")
+                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                 sistema=identidade.sistema, resultado="recusado")
+            else:
+                print("  AUTENTICADO. A sessao esta aberta neste navegador.")
+                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                 sistema=identidade.sistema, resultado="autenticado")
+
+            termo = guarda._termo_de_risco(final)
+            if termo is not None:
+                print(f"\n  TRAVA: o endereco final contem o termo de risco {termo!r}.")
+                print("  A leitura da tela foi interrompida.")
+                return 0
+
+            campos, botoes = _coletar(pagina)
+            print(f"\n  ESTRUTURA DA TELA ONDE PAROU ({len(campos)} campos, {len(botoes)} botoes):")
+            for c in campos[:15]:
+                print(f"    {c.linha()}")
+            for b in botoes[:20]:
+                print(f"    {b.linha()}")
+
+            print("\n  RELATO DA TRAVA:")
+            for linha in guarda.relato():
+                print(f"    {linha}")
+        finally:
+            navegador.close()
+
+    print("\n" + "=" * LARGURA)
+    print("  Uma tentativa em cada etapa. Nada foi repetido.")
+    print("  A caixa de dispositivo confiavel NAO foi marcada.")
+    print("  Nada foi navegado, aberto ou baixado alem da tela de chegada.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="justica-portal",
@@ -712,11 +936,27 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--oculto", action="store_true")
     t.add_argument("--segundos", type=int, default=45)
 
+    a = sub.add_parser("autenticar", help="credencial e segundo fator, numa sessao so")
+    a.add_argument("--url", required=True)
+    a.add_argument("--tribunal", required=True)
+    a.add_argument("--sistema", required=True)
+    a.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
+    a.add_argument("--campo-codigo", default="#txtAcessoCodigo")
+    a.add_argument("--botao-validar", default="#btnValidar")
+    a.add_argument("--oculto", action="store_true")
+    a.add_argument("--segundos", type=int, default=45)
+
     args = p.parse_args(argv)
 
     try:
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "autenticar":
+            return autenticar(
+                args.url, args.tribunal, args.sistema, confirmado=args.confirmado,
+                campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
+                oculto=args.oculto, segundos=args.segundos,
+            )
         if args.comando == "entrar":
             return entrar(
                 args.url, args.tribunal, args.sistema, confirmado=args.confirmado,
