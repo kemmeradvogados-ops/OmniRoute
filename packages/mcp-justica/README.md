@@ -231,15 +231,45 @@ Confirmado que a semente da planilha é de segundo fator: 39 caracteres com
 espaços viram 32 em base32 e geram código de seis dígitos válido, que é o que
 o eproc pede desde que passou a exigir segundo fator para usuário externo.
 
+### Trava de navegação
+
+Construída **antes** do adaptador, de propósito: é ela que impede o clique que
+consome prazo.
+
+**Nega por padrão.** Nada é permitido a menos que esteja explicitamente na
+lista de permissão, e a lista começa **vazia**. Uma tela só entra depois de
+conferida em campo, com o advogado olhando. A consequência é intencional:
+enquanto ninguém confirmou uma tela como segura, o adaptador não chega nela.
+
+A alternativa, listar o que é perigoso, exigiria conhecer de antemão todas as
+telas perigosas do portal. Errar nessa direção custa um prazo; errar na direção
+de negar custa uma linha de configuração.
+
+**Segunda camada.** Mesmo que uma tela entre na lista por engano durante a
+conferência, termos de risco no endereço ou no seletor bloqueiam assim mesmo.
+Um seletor `#dar-ciencia` deliberadamente liberado continua bloqueado. É
+heurística, reforço do desenho principal, nunca a proteção em si.
+
+**Modo ensaio.** Todo adaptador nasce em ensaio e roda assim a primeira vez:
+registra o que faria e não executa nada. O advogado lê o relato antes de o
+código ganhar permissão de agir. Ensaio não é modo permissivo, é modo que não
+executa: o que seria bloqueado em produção também aparece como bloqueado no
+relato.
+
+Download está proibido em qualquer modo nesta versão.
+
+Trinta testes cobrem a trava, incluindo cada termo de risco individualmente.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
 - Sondagem real de sistema, via `registrar_sonda`, que hoje não tem nenhuma
   sonda registrada.
-- Listagem de intimações pendentes **sem abrir**, com bloqueio físico no clique
-  de abertura. Decisão do operador: listar sim, abrir não. A primeira execução
-  precisa ser assistida, porque a premissa de que listar não dispara ciência
-  ainda não foi confirmada para o eproc.
+- Conferência em campo das telas do eproc, para preencher a lista de permissão,
+  que hoje está vazia e por isso bloqueia tudo.
+- Listagem de intimações pendentes **sem abrir**. Decisão do operador: listar
+  sim, abrir não. A primeira execução precisa ser assistida, porque a premissa
+  de que listar não dispara ciência ainda não foi confirmada para o eproc.
 - Download de documentos e da íntegra.
 
 ## Próximas fases
