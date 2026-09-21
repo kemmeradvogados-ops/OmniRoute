@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .adapters import AdaptadorDataJud, AdaptadorDJEN, CapacidadeIndisponivel
 from .adapters.datajud import ChaveDataJudAusente
 from .core.capabilities import matriz_serializavel
+from .core.cofre import Cofre, CofreIndisponivel
 from .core.cnj import NumeroCNJInvalido, parse_numero
 from .core.estado import Estado
 from .core.resolver import resolver_sistema
@@ -278,6 +279,39 @@ def registrar(mcp: Any) -> None:
             "adaptadores": matriz_serializavel(),
             "datajud_configurado": _datajud.configurado,
         })
+
+    @mcp.tool(name="justica_credenciais_situacao", annotations=somente_leitura("Situacao das credenciais"))
+    async def justica_credenciais_situacao() -> str:
+        """Diz para quais tribunais e sistemas ha credencial guardada no cofre.
+
+        Devolve apenas PRESENCA, jamais senha, semente ou codigo de segundo
+        fator: credencial nunca entra no contexto do modelo. Quem grava e o
+        advogado, pelo comando `justica-credenciais` no terminal da propria
+        maquina.
+
+        Consulte antes de prometer acesso autenticado. Se o par aparecer como
+        incompleto, diga isso ao advogado em vez de tentar o acesso.
+        """
+        from .credenciais import _pares_esperados
+
+        try:
+            cofre = Cofre()
+            if not cofre.disponivel():
+                raise CofreIndisponivel(RuntimeError("sonda negativa"))
+            return _json({
+                "fase": "2 (acesso autenticado) ainda em construcao",
+                "cofre": "Gerenciador de Credenciais do sistema operacional",
+                "pares": [cofre.situacao(i) for i in _pares_esperados()],
+                "observacao": (
+                    "Somente presenca. Nenhum valor de credencial e exposto por "
+                    "esta ou por qualquer outra ferramenta."
+                ),
+            })
+        except CofreIndisponivel as exc:
+            return _erro(str(exc), "cofre_indisponivel",
+                         "O advogado precisa verificar o Gerenciador de Credenciais.")
+        except Exception as exc:
+            return _tratar(exc)
 
     @mcp.tool(name="justica_auditoria_recente", annotations=somente_leitura("Auditoria recente"))
     async def justica_auditoria_recente(limite: int = 50) -> str:

@@ -195,11 +195,54 @@ Regras para a Fase 2, quando as credenciais entrarem:
   semente em base32, de modo que o servidor consegue produzi-los sem intervenção
   humana. Isso **aumenta** a responsabilidade sobre o cofre, não diminui.
 
-## Próximas fases
+## Fase 2: cofre de credenciais
 
-- **Fase 2**: adaptadores autenticados de eproc para o Tribunal de Justiça do
-  Estado do Rio de Janeiro e para a Justiça Federal da 2ª Região, com cofre de
-  segredos, sondagem real de sistema (`registrar_sonda`) e download de documentos.
+Em construção. O que já existe:
+
+O cofre guarda senha de portal e semente de segundo fator no **Gerenciador de
+Credenciais do Windows** (Chaveiro no macOS, Secret Service no Linux), cifrado
+pelo próprio sistema, por usuário. Decisão do operador em 21 de setembro de 2026.
+
+**A regra que governa o módulo: o segredo nunca chega ao modelo.** O adaptador
+lê do cofre no instante da chamada ao portal. Nenhuma ferramenta devolve senha,
+semente ou código de segundo fator, e nada disso aparece em log, em auditoria
+ou em mensagem de erro. A ferramenta `justica_credenciais_situacao` responde
+apenas se a credencial existe, e um teste trava esse formato.
+
+Senha e semente ficam em **entradas separadas**. Juntas equivalem à conta
+inteira: o segundo fator deixa de ser segundo fator quando viaja ao lado da
+senha, que foi exatamente o defeito da planilha que originou o projeto.
+
+Quem carrega o cofre é o advogado, pelo terminal da própria máquina:
+
+```powershell
+justica-credenciais listar
+justica-credenciais guardar --tribunal TJRJ --sistema eproc
+justica-credenciais testar  --tribunal TJRJ --sistema eproc
+justica-credenciais remover --tribunal TJRJ --sistema eproc
+```
+
+O valor digitado não aparece na tela e não passa por chat nem por arquivo.
+O comando `guardar` gera um código logo após gravar a semente, para conferência
+imediata contra o aplicativo autenticador; se não bater, a transcrição está
+errada e nada mais adianta.
+
+Confirmado que a semente da planilha é de segundo fator: 39 caracteres com
+espaços viram 32 em base32 e geram código de seis dígitos válido, que é o que
+o eproc pede desde que passou a exigir segundo fator para usuário externo.
+
+### O que ainda falta na Fase 2
+
+- Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
+- Sondagem real de sistema, via `registrar_sonda`, que hoje não tem nenhuma
+  sonda registrada.
+- Listagem de intimações pendentes **sem abrir**, com bloqueio físico no clique
+  de abertura. Decisão do operador: listar sim, abrir não. A primeira execução
+  precisa ser assistida, porque a premissa de que listar não dispara ciência
+  ainda não foi confirmada para o eproc.
+- Download de documentos e da íntegra.
+
+## Próximas fases
 - **Fase 3**: PJe do Rio de Janeiro e do Tribunal Regional do Trabalho da 1ª
   Região; depois São Paulo. O DCP é legado em extinção pela migração ao eproc e
   provavelmente não merece adaptador de documentos.

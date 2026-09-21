@@ -36,3 +36,38 @@ def test_busca_por_parte_nao_e_prometida_por_ninguem():
 
 def test_integra_nao_e_prometida_na_fase_1():
     assert adaptadores_para(Capacidade.BAIXAR_INTEGRA) == []
+
+
+def test_ferramenta_de_credenciais_nao_pode_devolver_segredo():
+    """A ferramenta de situacao do cofre alimenta o contexto do modelo.
+    Se algum dia passar a devolver valor, a credencial vaza para o chat.
+    Este teste trava o formato: apenas presenca."""
+    import json
+
+    from justica_mcp.core.cofre import Cofre, Identidade
+
+    class Memoria:
+        def __init__(self):
+            self.d = {}
+
+        def get_password(self, s, u):
+            return self.d.get((s, u))
+
+        def set_password(self, s, u, p):
+            self.d[(s, u)] = p
+
+        def delete_password(self, s, u):
+            self.d.pop((s, u), None)
+
+    cofre = Cofre(Memoria())
+    identidade = Identidade("TJRJ", "eproc")
+    cofre.guardar_senha(identidade, "SenhaSecreta123!")
+    cofre.guardar_semente(identidade, "ABCD EFGH IJKL MNOP QRST UVWX YZ23 4567")
+
+    saida = json.dumps([cofre.situacao(identidade)])
+    assert "SenhaSecreta123!" not in saida
+    assert "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" not in saida
+    # E so pode conter estas chaves.
+    assert set(cofre.situacao(identidade)) == {
+        "identidade", "senha_guardada", "semente_guardada", "pronta_para_uso",
+    }
