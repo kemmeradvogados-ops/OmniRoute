@@ -40,7 +40,8 @@ Por isso:
 - `identificar_tribunal` é determinístico, derivado do próprio número, e valida
   o dígito verificador (ISO 7064 MOD 97-10, Resolução nº. 65/2008).
 - `resolver_sistema` é empírico e cacheado, nunca tabelado. Ordem de decisão:
-  cache válido, sondagem autenticada (Fase 2), pista de migração, indeterminado.
+  cache válido, sondagem autenticada (Fase 2), **declaração da base nacional**,
+  pista de migração, indeterminado. Evidência sempre vence heurística.
 - Toda resposta traz `sistema_resolvido`, `origem_da_resolucao` e `valido_ate`,
   para o cache envelhecer em voz alta em vez de levar o agente ao adaptador
   errado em silêncio.
@@ -274,10 +275,22 @@ Dois deles mudam o projeto:
   do tribunal. Passa a integrar a proveniência: sem isso, o agente não sabia se
   olhava dado de hoje ou de semanas atrás, e o aviso de que "o DataJud atrasa"
   era genérico. Agora é mensurável por processo.
-- **`sistema`** pode permitir que `resolver_sistema` decida por evidência da
-  própria base, em vez de cair na pista de migração. O conteúdo ainda não foi
-  observado, então o campo viaja cru como `sistema_informado_pela_fonte` e
-  **não** alimenta o resolvedor até ser confirmado.
+- **`sistema`** traz `{'codigo': 1, 'nome': 'PJe'}`, ou seja, a base declara em
+  qual sistema o processo tramita. **Passou a alimentar o resolvedor**, na
+  frente da pista de migração: um processo de 2019 no Rio que antes voltava
+  `indeterminado` agora resolve, e um de 2026 onde a heurística chutaria
+  `eproc` responde `PJe` se for isso que a base diz.
+
+  Duas salvaguardas, porque a base pode atrasar:
+
+  - O casamento é feito pelo **nome normalizado**, nunca pelo `codigo`. Só o
+    código 1 foi observado, e montar uma tabela de códigos a partir de uma
+    amostra seria chute com aparência de mapeamento. Nome desconhecido devolve
+    `indeterminado` dizendo o que a fonte respondeu, em vez de forçar um palpite.
+  - Tribunal com mais de um sistema candidato (Rio de Janeiro e São Paulo, ambos
+    em migração) **nunca** recebe confiança alta, por mais recente que seja a
+    ficha. É exatamente onde a base pode não ter registrado uma migração já
+    ocorrida, e onde errar custa mais caro.
 
 Um defeito real apareceu por causa dessa execução: com a chave presente no
 ambiente, `AdaptadorDataJud(chave="")` passava a usar a chave do ambiente, por
@@ -291,6 +304,7 @@ A correção foi validada revertendo-a e confirmando que o teste falha.
 1. Confirmar a natureza do campo de três caracteres do DCP na planilha.
 2. Credencial de e-SAJ para São Paulo: sem ela, o acervo não migrado fica sem
    acesso autenticado.
-3. Observar o conteúdo de `sistema` no DataJud e, se servir, ligá-lo ao
-   resolvedor.
+3. Observar os nomes de sistema devolvidos para eproc, e-SAJ e DCP. Só `PJe`
+   foi visto em campo; os demais estão no mapa como rótulo esperado, ainda não
+   confirmado.
 4. Testar, tribunal a tribunal, se as intimações da banca aparecem no Diário.

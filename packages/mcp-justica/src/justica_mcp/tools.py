@@ -125,7 +125,17 @@ def registrar(mcp: Any) -> None:
         try:
             numero = parse_numero(params.numero)
             tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
-            resolvido = await resolver_sistema(numero, _estado)
+            documento = None
+            if _datajud.configurado:
+                try:
+                    documento = await _datajud.buscar_documento(numero, tribunal)
+                except Exception:
+                    # A base nacional e um reforco aqui, nao um requisito: sem
+                    # ela o resolvedor cai na pista de migracao normalmente.
+                    documento = None
+            resolvido = await resolver_sistema(
+                numero, _estado, documento_datajud=documento
+            )
             _estado.registrar(acao="resolver_sistema", solicitante=params.solicitante,
                               tribunal=tribunal.codigo, sistema=resolvido.sistema,
                               numero=numero.formatado, resultado=resolvido.origem_da_resolucao)
@@ -145,8 +155,11 @@ def registrar(mcp: Any) -> None:
         try:
             numero = parse_numero(params.numero)
             tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
-            sistema = await resolver_sistema(numero, _estado)
-            resposta = await _datajud.consultar_processo(numero, tribunal, sistema)
+            # Uma consulta so: o mesmo documento serve para montar a ficha e
+            # para resolver o sistema pela declaracao da propria base.
+            documento = await _datajud.buscar_documento(numero, tribunal)
+            sistema = await resolver_sistema(numero, _estado, documento_datajud=documento)
+            resposta = _datajud.montar_resposta(numero, tribunal, sistema, documento)
             _estado.registrar(acao="consultar_processo", solicitante=params.solicitante,
                               tribunal=tribunal.codigo, sistema=sistema.sistema,
                               numero=numero.formatado, resultado="ok")

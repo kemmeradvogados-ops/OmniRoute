@@ -80,9 +80,15 @@ class AdaptadorDataJud(AdaptadorBase):
         resposta.raise_for_status()
         return resposta.json()
 
-    async def consultar_processo(
-        self, numero: NumeroCNJ, tribunal: Tribunal, sistema: SistemaResolvido
-    ) -> RespostaProcesso:
+    async def buscar_documento(
+        self, numero: NumeroCNJ, tribunal: Tribunal
+    ) -> dict[str, Any]:
+        """Devolve o `_source` cru do processo na base nacional.
+
+        Separado de `montar_resposta` para que quem chama consulte UMA vez e
+        reaproveite o documento tanto para a ficha quanto para resolver o
+        sistema, em vez de ir duas vezes a rede pelo mesmo dado.
+        """
         self.exigir_capacidade(Capacidade.CONSULTAR_PROCESSO)
         dados = await self._buscar(
             tribunal,
@@ -95,7 +101,15 @@ class AdaptadorDataJud(AdaptadorBase):
                 f"{tribunal.codigo}. Pode ser processo sigiloso, recem distribuido "
                 f"(a base nacional atrasa) ou numero de outro tribunal."
             )
-        f = acertos[0].get("_source", {})
+        return acertos[0].get("_source", {})
+
+    def montar_resposta(
+        self,
+        numero: NumeroCNJ,
+        tribunal: Tribunal,
+        sistema: SistemaResolvido,
+        f: dict[str, Any],
+    ) -> RespostaProcesso:
         movimentos = sorted(
             f.get("movimentos", []) or [], key=lambda m: m.get("dataHora") or "", reverse=True
         )
@@ -132,6 +146,14 @@ class AdaptadorDataJud(AdaptadorBase):
             ),
         )
 
+    async def consultar_processo(
+        self, numero: NumeroCNJ, tribunal: Tribunal, sistema: SistemaResolvido
+    ) -> RespostaProcesso:
+        """Caminho curto: uma chamada, sem reaproveitar o documento."""
+        return self.montar_resposta(
+            numero, tribunal, sistema, await self.buscar_documento(numero, tribunal)
+        )
+
     async def listar_andamentos(
         self, numero: NumeroCNJ, tribunal: Tribunal, limite: int = 50
     ) -> dict[str, Any]:
@@ -158,6 +180,7 @@ class AdaptadorDataJud(AdaptadorBase):
                     "codigo": m.get("codigo"),
                     "nome": m.get("nome"),
                     "complementos": m.get("complementosTabelados") or [],
+                    "orgao_julgador": m.get("orgaoJulgador"),
                 }
                 for m in movimentos[:limite]
             ],
