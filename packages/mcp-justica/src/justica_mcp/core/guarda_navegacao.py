@@ -69,8 +69,12 @@ TERMOS_DE_RISCO = (
     "salvar", "gravar", "excluir", "remover",
 )
 
-# Acoes que jamais sao executadas na versao somente leitura, em nenhum modo.
-ACOES_PROIBIDAS = frozenset({Acao.BAIXAR})
+# Baixar documento foi proibido em qualquer modo ate 21 de setembro de 2026,
+# quando o operador decidiu habilitar a copia dos autos. Continua NEGADO POR
+# PADRAO: so passa quando quem monta a guarda liga `permitir_download`, e ainda
+# assim apenas para alvos explicitamente liberados. A mudanca foi de "nunca"
+# para "mediante autorizacao", nao para "livre".
+ACOES_PROIBIDAS = frozenset()
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,7 @@ class GuardaNavegacao:
     modo: Modo = Modo.ENSAIO
     permissoes: list[Permissao] = field(default_factory=list)
     registro: list[dict] = field(default_factory=list)
+    permitir_download: bool = False
 
     # ---------------- avaliacao ----------------
 
@@ -138,8 +143,16 @@ class GuardaNavegacao:
         if acao in ACOES_PROIBIDAS:
             return self._registrar(Decisao(
                 False,
-                f"A acao {acao.value!r} nao existe na versao somente leitura. "
+                f"A acao {acao.value!r} nao existe nesta versao. "
                 f"Habilita-la exige decisao expressa do operador.",
+                acao, alvo,
+            ))
+
+        if acao is Acao.BAIXAR and not self.permitir_download:
+            return self._registrar(Decisao(
+                False,
+                "Download nao autorizado nesta operacao. Baixar autos e ato de "
+                "outra natureza e so ocorre em comando que o pede explicitamente.",
                 acao, alvo,
             ))
 
@@ -150,6 +163,19 @@ class GuardaNavegacao:
                 f"Termo de risco {termo!r} no alvo. Abrir expediente dispara a "
                 f"ciencia e inicia o prazo (lei nº. 11.419/06, artigo 5º, §3º). "
                 f"Bloqueio nao contornavel por configuracao.",
+                acao, alvo,
+            ))
+
+        if acao is Acao.BAIXAR:
+            # Mesmo autorizado, o download obedece a lista de permissao: o alvo
+            # precisa estar liberado na tela, como qualquer outra acao.
+            permissao_download = self._permissao_para(contexto)
+            if permissao_download is None:
+                return self._registrar(Decisao(
+                    False, "Endereco do documento fora da lista de permissao.", acao, alvo,
+                ))
+            return self._registrar(Decisao(
+                True, f"Download autorizado nesta operacao ({permissao_download.descricao}).",
                 acao, alvo,
             ))
 

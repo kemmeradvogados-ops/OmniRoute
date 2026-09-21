@@ -531,6 +531,40 @@ idempotente**, para o agente saber que repetir custa.
 estão configurados e quantas tentativas ainda cabem, para o agente não gastar
 tentativa à toa nem prometer o que o servidor não pode fazer.
 
+### Cópia de documentos
+
+```powershell
+justica-portal consultar --url "..." --processo "..." --documentos ultimos:5   # padrao
+justica-portal consultar --url "..." --processo "..." --documentos integra
+justica-portal consultar --url "..." --processo "..." --documentos nenhum
+```
+
+Baixar autos esteve **proibido em qualquer modo** até 21 de setembro de 2026,
+quando o operador decidiu habilitar a cópia. A mudança foi de "nunca" para
+"mediante autorização", **não** para "livre": o download continua negado por
+padrão e só passa no comando que o pede, com o alvo dentro da lista de permissão
+e com os termos de risco valendo.
+
+**Os arquivos são buscados pelo endereço, reaproveitando a sessão, e não
+clicando nos links.** Clicar seria o caminho óbvio e é o pior: pode abrir aba,
+disparar script ou cair em elemento vizinho, e este projeto existe porque
+clique errado no portal custa caro. Buscar pelo endereço não clica, não navega
+e não muda a página. A única exceção é a cópia integral, cujo botão não tem
+endereço próprio.
+
+Os arquivos vão para `~/.justica-mcp/processos/<numero>/`, com nome ordenável
+(`ev0068-PET1.pdf`), e cada cópia entra na auditoria.
+
+Documento vindo de evento de comunicação processual é **sinalizado** no
+relatório, não bloqueado: documento de evento é parte dos autos. Mas o aviso
+existe para o advogado conferir o que foi copiado.
+
+[Não verificado] Se baixar documento do próprio processo produz algum registro
+de ciência no eproc. A leitura do artigo 5º, §3º, da lei nº. 11.419/06 é que a
+ciência se dá pela consulta ao teor da **comunicação**, no painel de
+expedientes, e não pela leitura dos autos, e esse painel nunca é tocado. Ainda
+assim, a primeira execução merece conferência do advogado no próprio portal.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).

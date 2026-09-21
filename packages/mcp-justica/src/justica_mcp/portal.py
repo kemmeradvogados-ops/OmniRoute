@@ -106,6 +106,28 @@ class Campo:
         return "  ".join(partes)
 
 
+def permissao_de_origem(url: str, descricao: str) -> Permissao:
+    """Permissao para a ORIGEM do portal, nao para um caminho.
+
+    Usada apenas durante a copia de documentos. Os arquivos de um processo
+    ficam em caminhos proprios do mesmo portal, fora do endereco da tela, e a
+    permissao ancorada no caminho exato os barrava: a trava estava certa e a
+    suposicao e que era estreita demais.
+
+    O alargamento e o minimo: mesma origem, e nada alem. Documento servido por
+    outro dominio continua barrado, os termos de risco seguem valendo, e a
+    autorizacao vale so enquanto `permitir_download` estiver ligado.
+    """
+    partes = urlparse(url)
+    if partes.scheme not in ("http", "https") or not partes.netloc:
+        raise PortalIndisponivel(f"Endereco invalido para origem: {url!r}")
+    return Permissao(
+        padrao_url=f"^{re.escape(f'{partes.scheme}://{partes.netloc}')}/",
+        descricao=descricao,
+        conferido_em="execucao atual",
+    )
+
+
 def permissao_efemera(url: str) -> Permissao:
     """Autoriza apenas o endereco que o operador digitou, nada alem dele.
 
@@ -1033,6 +1055,38 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
     return destino
 
 
+BOTAO_INTEGRA = "#btnDownloadCompletoRS"
+
+
+def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optional[str]:
+    """Copia integral pelo botao do proprio portal.
+
+    Unico download que exige clique: o botao nao tem endereco proprio, o
+    arquivo e montado pelo servidor sob demanda. Por isso o alvo e liberado
+    nominalmente, e so nesta operacao.
+    """
+    from pathlib import Path
+
+    botao = elemento_visivel(pagina, BOTAO_INTEGRA)
+    if botao is None:
+        return None
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="copia integral pelo botao do portal",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(BOTAO_INTEGRA,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, BOTAO_INTEGRA, url=pagina.url)
+    with pagina.expect_download(timeout=segundos * 1000) as info:
+        botao.click()
+    baixado = info.value
+    destino.mkdir(parents=True, exist_ok=True)
+    sugerido = baixado.suggested_filename or f"{chave}-integra.zip"
+    arquivo = Path(destino) / f"integra-{sugerido}"
+    baixado.save_as(str(arquivo))
+    return str(arquivo)
+
+
 BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
 BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
 
@@ -1130,6 +1184,7 @@ def consultar_processo(
     sistema: str,
     numero_processo: str,
     *,
+    documentos: str = "ultimos:5",
     confirmado: bool = False,
     perfil: Optional[str] = None,
     oculto: bool = False,
@@ -1246,6 +1301,60 @@ def consultar_processo(
         else:
             print("\n    Sem mudanca desde a consulta anterior.")
 
+        # ---------- copias dos documentos ----------
+        if documentos and documentos != "nenhum":
+            from pathlib import Path
+
+            from .core.estado import diretorio_estado
+            from .documentos import baixar_documentos_dos_eventos
+
+            pasta = Path(diretorio_estado()) / "processos" / numero.apenas_digitos
+            guarda.permissoes.append(permissao_de_origem(
+                pagina.url, "documentos do processo, mesma origem do portal"
+            ))
+            guarda.permitir_download = True
+            print()
+            if documentos == "integra":
+                print("  COPIA INTEGRAL (pelo botao do portal)...")
+                try:
+                    arquivo = _baixar_integra(
+                        pagina, guarda, pasta, numero.apenas_digitos, segundos
+                    )
+                except Exception as exc:
+                    arquivo = None
+                    print(f"    falhou: {type(exc).__name__}: {exc}")
+                if arquivo:
+                    print(f"    gravada em: {arquivo}")
+                    estado_local.registrar(
+                        acao="copia_integral", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, numero=numero.formatado,
+                        documento=arquivo, resultado="gravada",
+                    )
+                elif arquivo is None:
+                    print("    botao de copia integral nao encontrado nesta tela.")
+            else:
+                quantos = 5
+                if documentos.startswith("ultimos:"):
+                    try:
+                        quantos = max(int(documentos.split(":", 1)[1]), 1)
+                    except ValueError:
+                        quantos = 5
+                print(f"  COPIAS DOS {quantos} EVENTO(S) MAIS RECENTES...")
+                copia = baixar_documentos_dos_eventos(
+                    pagina, guarda, dados["eventos"], pasta, quantos_eventos=quantos
+                )
+                for linha in copia.resumo():
+                    print(f"    {linha}")
+                if copia.gravadas:
+                    print(f"    pasta: {copia.pasta}")
+                for c in copia.gravadas:
+                    estado_local.registrar(
+                        acao="copia_documento", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, numero=numero.formatado,
+                        documento=c.arquivo, resultado=f"{c.bytes_gravados} bytes",
+                    )
+            guarda.permitir_download = False
+
         print(f"\n  Conteudo completo em: {destino}")
         print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
         estado_local.registrar(
@@ -1319,6 +1428,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--sistema", required=True)
     cp.add_argument("--processo", required=True, help="numero no padrao da numeracao unica")
     cp.add_argument("--perfil", default=None)
+    cp.add_argument("--documentos", default="ultimos:5",
+                    help="'ultimos:N' (padrao 5), 'integra' ou 'nenhum'")
     cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
     cp.add_argument("--oculto", action="store_true")
     cp.add_argument("--segundos", type=int, default=45)
@@ -1331,8 +1442,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.comando == "consultar":
             return consultar_processo(
                 args.url, args.tribunal, args.sistema, args.processo,
-                confirmado=args.confirmado, perfil=args.perfil,
-                oculto=args.oculto, segundos=args.segundos,
+                documentos=args.documentos, confirmado=args.confirmado,
+                perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
             )
         if args.comando == "autenticar":
             return autenticar(

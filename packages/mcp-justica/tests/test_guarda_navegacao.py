@@ -83,10 +83,26 @@ def test_termo_de_risco_ignora_caixa_e_sublinhado():
     assert g.avaliar(Acao.NAVEGAR, "https://eproc.tjrj.jus.br/painel/Peticionar").permitido is False
 
 
-def test_download_nunca_e_permitido_na_versao_somente_leitura():
+def test_download_negado_por_padrao():
+    """Baixar autos foi proibido em qualquer modo ate 21 de setembro de 2026,
+    quando o operador decidiu habilitar a copia. Continua NEGADO POR PADRAO: a
+    mudanca foi de "nunca" para "mediante autorizacao", nao para "livre"."""
     d = _guarda().avaliar(Acao.BAIXAR, "doc.pdf", url="https://eproc.tjrj.jus.br/painel")
     assert d.permitido is False
-    assert "decisao expressa" in d.motivo
+    assert "nao autorizado nesta operacao" in d.motivo
+
+
+def test_download_autorizado_so_vale_na_tela_liberada():
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[PAINEL], permitir_download=True)
+    assert g.avaliar(Acao.BAIXAR, "https://eproc.tjrj.jus.br/painel/doc/1").permitido is True
+    assert g.avaliar(Acao.BAIXAR, "https://outro.tribunal.jus.br/doc/1").permitido is False
+
+
+def test_termo_de_risco_bloqueia_download_mesmo_autorizado():
+    """A autorizacao de download nao desliga a segunda camada."""
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[PAINEL], permitir_download=True)
+    alvo = "https://eproc.tjrj.jus.br/painel/dar-ciencia/9"
+    assert g.avaliar(Acao.BAIXAR, alvo).permitido is False
 
 
 # ---------------- seletores ----------------

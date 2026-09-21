@@ -166,7 +166,10 @@ def test_ensaio_nao_preenche_campo_fora_da_lista():
 
 
 def test_ensaio_nao_baixa_nada():
+    """O ensaio de login nao autoriza download; so o comando de consulta o faz,
+    e apenas enquanto copia os documentos."""
     g = _guarda_ensaio()
+    assert g.permitir_download is False
     assert g.avaliar(Acao.BAIXAR, "autos.pdf", url=ENDERECO).permitido is False
 
 
@@ -469,3 +472,49 @@ def test_consulta_recusa_sem_confirmacao():
 
     numero = "5001234-54.2023.4.02.5101"
     assert consultar_processo(ENDERECO, "TRF2", "eproc", numero, confirmado=False) == 1
+
+
+# ---------------- permissao de origem, para documentos ----------------
+
+def test_permissao_de_origem_cobre_outros_caminhos_do_portal():
+    """Os arquivos de um processo ficam em caminhos proprios do portal, fora do
+    endereco da tela. A permissao ancorada no caminho exato os barrava, e a
+    trava estava certa: a suposicao e que era estreita demais."""
+    from justica_mcp.core.guarda_navegacao import Acao, GuardaNavegacao, Modo
+    from justica_mcp.portal import permissao_de_origem
+
+    g = GuardaNavegacao(
+        modo=Modo.LEITURA,
+        permissoes=[permissao_de_origem(ENDERECO, "documentos")],
+        permitir_download=True,
+    )
+    assert g.avaliar(Acao.BAIXAR, "https://eproc1g.tjrj.jus.br/doc/123.pdf").permitido is True
+    assert g.avaliar(Acao.BAIXAR, "https://eproc1g.tjrj.jus.br/outro/x.pdf").permitido is True
+
+
+def test_permissao_de_origem_nao_cobre_outro_dominio():
+    """O alargamento e o minimo: mesma origem, e nada alem."""
+    from justica_mcp.core.guarda_navegacao import Acao, GuardaNavegacao, Modo
+    from justica_mcp.portal import permissao_de_origem
+
+    g = GuardaNavegacao(
+        modo=Modo.LEITURA,
+        permissoes=[permissao_de_origem(ENDERECO, "documentos")],
+        permitir_download=True,
+    )
+    assert g.avaliar(Acao.BAIXAR, "https://outro.jus.br/doc/1.pdf").permitido is False
+    assert g.avaliar(Acao.BAIXAR, "https://eproc1g.tjrj.jus.br.mau.site/x").permitido is False
+
+
+def test_permissao_de_origem_nao_libera_clique_nem_preenchimento():
+    """Autorizar download na origem nao autoriza agir nas telas dela."""
+    from justica_mcp.core.guarda_navegacao import Acao, GuardaNavegacao, Modo
+    from justica_mcp.portal import permissao_de_origem
+
+    g = GuardaNavegacao(
+        modo=Modo.LEITURA,
+        permissoes=[permissao_de_origem(ENDERECO, "documentos")],
+        permitir_download=True,
+    )
+    assert g.avaliar(Acao.CLICAR, "#btnQualquer", url=ENDERECO).permitido is False
+    assert g.avaliar(Acao.PREENCHER, "#campo", url=ENDERECO).permitido is False
