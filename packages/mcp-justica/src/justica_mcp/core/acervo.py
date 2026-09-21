@@ -41,6 +41,37 @@ def pasta_do_processo(numero_digitos: str) -> Path:
     return pasta_de_copias() / numero_digitos
 
 
+def garantir_pasta(numero_digitos: str) -> Path:
+    """Cria a pasta do processo quando ainda nao existe, e a devolve.
+
+    Antes a pasta so nascia no instante de gravar o primeiro arquivo. Uma
+    consulta que nao copiasse nada nao deixava pasta nenhuma, e o advogado ia
+    procurar no Drive um lugar que nunca foi criado. A pasta passa a existir
+    desde a consulta, mesmo vazia: ela e o endereco do processo no acervo, nao
+    um efeito colateral do download.
+    """
+    pasta = pasta_do_processo(numero_digitos)
+    pasta.mkdir(parents=True, exist_ok=True)
+    return pasta
+
+
+def pdfs_fora_do_indice(indice: "Indice") -> list[str]:
+    """Arquivos PDF na pasta que o indice nao conhece.
+
+    A pasta de copias e do escritorio, compartilhada, e pode ja conter copias
+    que alguem baixou a mao. Sem o indice nao ha como saber o que elas cobrem,
+    e tratar a pasta como vazia por causa disso seria concluir demais a partir
+    da ausencia de um arquivo de controle.
+    """
+    if not indice.pasta.is_dir():
+        return []
+    conhecidos = {Path(i.arquivo).name for i in indice.itens}
+    return sorted(
+        a.name for a in indice.pasta.iterdir()
+        if a.is_file() and a.suffix.lower() == ".pdf" and a.name not in conhecidos
+    )
+
+
 def contar_paginas(arquivo: Path) -> Optional[int]:
     """Paginas de um PDF. Devolve None quando nao da para saber.
 

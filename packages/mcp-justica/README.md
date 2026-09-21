@@ -611,6 +611,16 @@ JUSTICA_PASTA_COPIAS=G:\Meu Drive\4.Processos\Cópias
 Cada processo ganha uma subpasta com o número sem pontuação, e dentro dela ficam
 os PDF com nome ordenável (`ev0068-PET1.pdf`) mais o `indice.json`.
 
+A subpasta é criada **na consulta**, e não no instante de gravar o primeiro
+arquivo. Uma consulta que não copiasse nada não deixava pasta alguma, e o
+advogado iria procurar no Drive um lugar que nunca foi criado. A pasta é o
+endereço do processo no acervo, não um efeito colateral do download.
+
+A pasta de cópias é do escritório e pode já conter arquivos que alguém baixou à
+mão. PDF que não esteja no índice é **sinalizado na tela**, não contado como
+cópia: sem o índice não há como saber quais folhas ele cobre, e tratá-lo como
+cobertura seria concluir demais a partir da ausência de um arquivo de controle.
+
 [Inferência] Apontar para uma pasta do Google Drive sincronizada localmente faz
 o Drive subir as cópias sozinho, o que é o comportamento desejado, mas também
 significa que **os autos saem da máquina** para a nuvem do escritório. É decisão

@@ -1306,12 +1306,22 @@ def consultar_processo(
         # ---------- copias dos documentos ----------
         if documentos and documentos != "nenhum":
             from .core.acervo import (
-                carregar_indice, decidir_estrategia, pasta_do_processo,
+                carregar_indice, decidir_estrategia, garantir_pasta,
+                pdfs_fora_do_indice,
             )
             from .documentos import baixar_documentos_dos_eventos
 
             indice = carregar_indice(numero.apenas_digitos, numero.formatado)
-            pasta = pasta_do_processo(numero.apenas_digitos)
+            # A pasta nasce aqui, e nao no instante de gravar o primeiro
+            # arquivo: ela e o endereco do processo no acervo, e precisa
+            # existir mesmo que a consulta nao copie nada.
+            pasta = garantir_pasta(numero.apenas_digitos)
+            print(f"  Pasta do processo: {pasta}")
+            avulsos = pdfs_fora_do_indice(indice)
+            if avulsos:
+                print(f"  ATENCAO: {len(avulsos)} arquivo(s) na pasta fora do indice, "
+                      f"por exemplo {avulsos[0]}.")
+                print("  Nao da para saber o que eles cobrem, entao nao contam como copia.")
             guarda.permissoes.insert(0, permissao_de_origem(
                 pagina.url, "documentos do processo, mesma origem do portal"
             ))

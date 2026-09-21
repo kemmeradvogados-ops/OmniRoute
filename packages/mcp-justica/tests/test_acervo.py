@@ -15,8 +15,9 @@ import pytest
 from pypdf import PdfWriter
 
 from justica_mcp.core.acervo import (
-    Indice, Item, carregar_indice, contar_paginas, decidir_estrategia,
-    maior_evento, numero_do_evento,
+    VARIAVEL_PASTA, Indice, Item, carregar_indice, contar_paginas,
+    decidir_estrategia, garantir_pasta, maior_evento, numero_do_evento,
+    pdfs_fora_do_indice,
 )
 
 
@@ -167,3 +168,54 @@ def test_gravacao_registra_o_total_de_folhas(tmp_path, monkeypatch):
     indice.acrescentar(_pdf(tmp_path / "999" / "a.pdf", 12), "integra", evento_ate=3)
     destino = indice.gravar()
     assert json.loads(destino.read_text(encoding="utf-8"))["folhas_totais"] == 12
+
+
+# --------------------------------------------------------------------------
+# Pasta do processo
+# --------------------------------------------------------------------------
+
+def test_cria_a_pasta_do_processo_quando_nao_existe(tmp_path, monkeypatch):
+    """A pasta so nascia ao gravar o primeiro arquivo. Uma consulta que nao
+    copiasse nada nao deixava pasta nenhuma, e o advogado procuraria no Drive
+    um lugar que nunca foi criado."""
+    monkeypatch.setenv(VARIAVEL_PASTA, str(tmp_path))
+    pasta = garantir_pasta("50684566820254025101")
+    assert pasta.is_dir()
+    assert pasta.name == "50684566820254025101"
+    assert pasta.parent == tmp_path
+
+
+def test_criar_a_pasta_duas_vezes_nao_quebra_nem_apaga(tmp_path, monkeypatch):
+    monkeypatch.setenv(VARIAVEL_PASTA, str(tmp_path))
+    pasta = garantir_pasta("123")
+    (pasta / "ja-existia.pdf").write_bytes(b"x")
+    assert garantir_pasta("123") == pasta
+    assert (pasta / "ja-existia.pdf").is_file()
+
+
+def test_pdf_solto_na_pasta_e_sinalizado(tmp_path, monkeypatch):
+    """A pasta de copias e do escritorio e pode ja conter copias baixadas a
+    mao. Elas nao contam como copia, porque nao ha como saber o que cobrem,
+    mas o advogado precisa ser avisado de que estao ali."""
+    monkeypatch.setenv(VARIAVEL_PASTA, str(tmp_path))
+    pasta = garantir_pasta("123")
+    (pasta / "peticao-do-estagiario.pdf").write_bytes(b"x")
+    (pasta / "anotacoes.txt").write_bytes(b"x")
+    indice = carregar_indice("123", "0000123-00.0000.0.00.0000")
+    assert pdfs_fora_do_indice(indice) == ["peticao-do-estagiario.pdf"]
+
+
+def test_arquivo_ja_no_indice_nao_e_sinalizado(tmp_path, monkeypatch):
+    monkeypatch.setenv(VARIAVEL_PASTA, str(tmp_path))
+    pasta = garantir_pasta("123")
+    arquivo = pasta / "ev0070-DESP70.pdf"
+    arquivo.write_bytes(b"x")
+    indice = carregar_indice("123", "0000123-00.0000.0.00.0000")
+    indice.acrescentar(arquivo, "documento", evento="70", rotulo="DESP70")
+    assert pdfs_fora_do_indice(indice) == []
+
+
+def test_pasta_inexistente_nao_quebra_a_varredura(tmp_path, monkeypatch):
+    monkeypatch.setenv(VARIAVEL_PASTA, str(tmp_path / "nunca-criada"))
+    indice = carregar_indice("123", "0000123-00.0000.0.00.0000")
+    assert pdfs_fora_do_indice(indice) == []
