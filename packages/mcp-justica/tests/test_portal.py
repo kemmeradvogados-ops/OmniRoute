@@ -168,3 +168,71 @@ def test_ensaio_nao_preenche_campo_fora_da_lista():
 def test_ensaio_nao_baixa_nada():
     g = _guarda_ensaio()
     assert g.avaliar(Acao.BAIXAR, "autos.pdf", url=ENDERECO).permitido is False
+
+
+# ---------------- envio unico de login ----------------
+
+def _campo(**kw):
+    from justica_mcp.portal import Campo
+
+    base = dict(marcador="input", tipo="text", nome=None, identificador=None,
+                rotulo=None, texto_visivel=None, e_senha=False, extras={})
+    base.update(kw)
+    return Campo(**base)
+
+
+def test_reconhece_campo_de_segundo_fator_por_autocomplete():
+    from justica_mcp.portal import _parece_segundo_fator
+
+    assert _parece_segundo_fator(_campo(extras={"autocomplete": "one-time-code"})) is True
+
+
+def test_reconhece_campo_de_segundo_fator_por_rotulo_e_nome():
+    from justica_mcp.portal import _parece_segundo_fator
+
+    assert _parece_segundo_fator(_campo(rotulo="Código de verificação")) is True
+    assert _parece_segundo_fator(_campo(nome="txtToken")) is True
+    assert _parece_segundo_fator(_campo(identificador="campo2fa")) is True
+
+
+def test_reconhece_campo_de_segundo_fator_por_tamanho_curto():
+    from justica_mcp.portal import _parece_segundo_fator
+
+    assert _parece_segundo_fator(_campo(extras={"maxlength": "6"})) is True
+
+
+def test_campo_comum_nao_e_confundido_com_segundo_fator():
+    from justica_mcp.portal import _parece_segundo_fator
+
+    assert _parece_segundo_fator(_campo(nome="txtUsuario", extras={"maxlength": "30"})) is False
+    assert _parece_segundo_fator(_campo(rotulo="Senha", extras={"maxlength": "40"})) is False
+
+
+def _permissao_do_envio(url=ENDERECO):
+    from justica_mcp.core.guarda_navegacao import Permissao
+
+    base = permissao_efemera(url)
+    return Permissao(
+        padrao_url=base.padrao_url,
+        descricao="tela de login, envio unico autorizado pelo operador",
+        conferido_em="execucao atual",
+        seletores_clicaveis=("#sbmEntrar",),
+        seletores_preenchiveis=("#txtUsuario", "#pwdSenha"),
+    )
+
+
+def test_envio_libera_apenas_o_botao_entrar():
+    """Autorizar o envio nao autoriza o resto da tela. O botao de certificado
+    digital, por exemplo, segue barrado."""
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[_permissao_do_envio()])
+    assert g.avaliar(Acao.CLICAR, "#sbmEntrar", url=ENDERECO).permitido is True
+    assert g.avaliar(Acao.CLICAR, "#btnCertificado", url=ENDERECO).permitido is False
+    assert g.avaliar(Acao.BAIXAR, "autos.pdf", url=ENDERECO).permitido is False
+
+
+def test_envio_recusa_sem_confirmacao_do_operador():
+    """A confirmacao fica na linha de comando porque tentativa falha repetida
+    bloqueia a conta do advogado."""
+    from justica_mcp.portal import entrar
+
+    assert entrar(ENDERECO, "TRF2", "eproc", confirmado=False) == 1

@@ -26,6 +26,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from .core.cofre import Cofre, CredencialAusente, Identidade
+from .core.estado import Estado
 from .core.guarda_navegacao import (
     Acao, GuardaNavegacao, Modo, NavegacaoBloqueada, Permissao,
 )
@@ -463,6 +464,216 @@ def ensaiar_login(
     return 0
 
 
+
+
+# Pistas de que um campo pede o codigo de seis digitos do autenticador.
+_PISTAS_SEGUNDO_FATOR = ("one-time-code", "otp", "token", "codigo", "código", "2fa", "duplo")
+
+
+def _parece_segundo_fator(campo: "Campo") -> bool:
+    texto = " ".join(
+        str(v).lower() for v in
+        (campo.nome, campo.identificador, campo.rotulo, (campo.extras or {}).get("autocomplete"))
+        if v
+    )
+    if any(p in texto for p in _PISTAS_SEGUNDO_FATOR):
+        return True
+    tamanho = (campo.extras or {}).get("maxlength")
+    return tamanho in ("4", "6", "8")
+
+
+def _mensagens_de_erro(pagina: Any) -> list[str]:
+    saida = []
+    for seletor in (".alert", ".erro", ".error", "[role=alert]", ".infraAviso", ".msgErro"):
+        for elemento in pagina.query_selector_all(seletor):
+            if not elemento.is_visible():
+                continue
+            texto = re.sub(r"\s+", " ", (elemento.inner_text() or "")).strip()
+            if texto:
+                saida.append(texto[:160])
+    return saida
+
+
+def entrar(
+    url: str,
+    tribunal: str,
+    sistema: str,
+    *,
+    confirmado: bool = False,
+    campo_usuario: str = "#txtUsuario",
+    campo_senha: str = "#pwdSenha",
+    campo_senha_oculto: str = "input[name=pwdSenha]",
+    botao_entrar: str = "#sbmEntrar",
+    oculto: bool = False,
+    segundos: int = 45,
+    cofre: Optional[Cofre] = None,
+    estado: Optional[Estado] = None,
+) -> int:
+    """Envia o login UMA vez e relata a tela seguinte. Nao passa disso.
+
+    Primeiro comando do projeto que pratica um ato no portal. Duas travas, pelo
+    mesmo motivo: tentativa de login falha repetida bloqueia a conta do
+    advogado.
+
+    1. Exige confirmacao explicita do operador na linha de comando.
+    2. Clica UMA vez. Nao ha repeticao, nem em caso de falha. Se falhar, para e
+       relata; a decisao de tentar de novo e do advogado, nunca do codigo.
+
+    Depois do envio apenas LE a tela seguinte. Nao preenche o codigo do segundo
+    fator, nao navega para lugar nenhum, nao baixa nada.
+    """
+    if not confirmado:
+        print(
+            "Este comando ENVIA uma tentativa de login real ao portal.\n\n"
+            "Tentativas falhas repetidas bloqueiam a conta do advogado, entao ele\n"
+            "so roda com confirmacao expressa, e clica uma unica vez:\n\n"
+            "    --confirmo-tentativa-unica\n",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(INSTRUCAO_INSTALACAO, file=sys.stderr)
+        return 2
+
+    identidade = Identidade(tribunal, sistema)
+    cofre = cofre or Cofre()
+    estado = estado or Estado()
+    try:
+        login = cofre._login(identidade)
+        senha = cofre._senha(identidade)
+    except CredencialAusente as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
+    base = permissao_efemera(url)
+    permissao = Permissao(
+        padrao_url=base.padrao_url,
+        descricao="tela de login, envio unico autorizado pelo operador",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(botao_entrar,),
+        seletores_preenchiveis=(campo_usuario, campo_senha),
+    )
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[permissao])
+
+    print("=" * LARGURA)
+    print("ENVIO UNICO DE LOGIN".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Endereco: {url}")
+    print(f"Credencial: {identidade.rotulo} (lida do cofre, nunca impressa)")
+    print("Clica UMA vez e le a tela seguinte. Sem repeticao, sem segundo fator.\n")
+
+    executavel = os.environ.get("JUSTICA_CHROMIUM") or None
+    with sync_playwright() as p:
+        try:
+            navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+        except Exception as exc:
+            if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
+                print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
+                return 2
+            raise
+        pagina = navegador.new_page()
+        try:
+            guarda.pode_executar(Acao.NAVEGAR, url)
+            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+
+            for seletor, valor, rotulo in (
+                (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
+            ):
+                elemento = pagina.query_selector(seletor)
+                if elemento is None:
+                    print(f"  [FALHA] Campo de {rotulo} nao encontrado: {seletor}.")
+                    print("          Nada foi enviado. Rode `reconhecer` de novo.")
+                    return 1
+                guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
+                elemento.click()
+                elemento.fill(valor)
+
+            # Conferencia ANTES de enviar: sem isso o clique viraria tentativa
+            # falha por campo vazio, que e justamente o que bloqueia a conta.
+            alvo = pagina.query_selector(campo_senha_oculto)
+            if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
+                print("  [ABORTADO] A senha nao chegou ao campo enviado.")
+                print("             NADA foi enviado, para nao gerar tentativa falha.")
+                return 1
+            print("  Campos preenchidos e conferidos.")
+
+            botao = pagina.query_selector(botao_entrar)
+            if botao is None:
+                print(f"  [FALHA] Botao {botao_entrar} nao encontrado. Nada enviado.")
+                return 1
+
+            guarda.pode_executar(Acao.CLICAR, botao_entrar, url=url)
+            estado.registrar(
+                acao="login_tentativa_unica", tribunal=identidade.tribunal,
+                sistema=identidade.sistema, resultado="enviado",
+                detalhe="clique unico autorizado pelo operador",
+            )
+            print("  >>> ENVIANDO (uma unica vez) <<<\n")
+            botao.click()
+            try:
+                pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+            except Exception:
+                pass
+
+            final = pagina.url
+            print(f"  Endereco apos o envio: {final}")
+            print(f"  Titulo: {pagina.title()!r}\n")
+
+            erros = _mensagens_de_erro(pagina)
+            if erros:
+                print("  MENSAGENS NA TELA:")
+                for e in erros:
+                    print(f"    {e}")
+                print("\n  Se indicar credencial invalida, NAO repita o comando.")
+                print("  Confira a senha no cofre antes de qualquer nova tentativa.\n")
+
+            termo = guarda._termo_de_risco(final)
+            if termo is not None:
+                print(f"  TRAVA: o destino contem o termo de risco {termo!r}.")
+                print("  A leitura foi interrompida. Informe este endereco.")
+                estado.registrar(
+                    acao="login_tentativa_unica", tribunal=identidade.tribunal,
+                    sistema=identidade.sistema, resultado="destino_bloqueado", detalhe=termo,
+                )
+                return 1
+
+            campos, botoes = _coletar(pagina)
+            print(f"  CAMPOS NA TELA SEGUINTE ({len(campos)}):")
+            for c in campos:
+                marca = "  <-- PARECE SER O CODIGO DO AUTENTICADOR" if _parece_segundo_fator(c) else ""
+                print(f"    {c.linha()}{marca}")
+
+            print(f"\n  BOTOES ({len(botoes)}):")
+            for b in botoes:
+                print(f"    {b.linha()}")
+
+            candidatos = [c for c in campos if _parece_segundo_fator(c) and c.na_tela]
+            print()
+            if candidatos:
+                print(f"  Encontrado(s) {len(candidatos)} campo(s) com cara de segundo fator.")
+                print("  Proximo passo: preencher o codigo gerado pelo cofre.")
+            elif erros:
+                print("  Nenhum campo de segundo fator, e ha mensagem de erro na tela:")
+                print("  o envio provavelmente nao passou da autenticacao.")
+            else:
+                print("  Nenhum campo com cara de segundo fator. Ou o portal nao pediu")
+                print("  nesta sessao, ou a tela seguinte e outra. Veja o titulo acima.")
+
+            print("\n  RELATO DA TRAVA:")
+            for linha in guarda.relato():
+                print(f"    {linha}")
+        finally:
+            navegador.close()
+
+    print("\n" + "=" * LARGURA)
+    print("  Uma tentativa, e so uma. O comando nao repete em nenhuma hipotese.")
+    print("  Nenhum codigo de segundo fator foi digitado. Nada foi baixado.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="justica-portal",
@@ -488,11 +699,31 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--oculto", action="store_true")
     e.add_argument("--segundos", type=int, default=30)
 
+    t = sub.add_parser("entrar", help="envia o login UMA vez e le a tela seguinte")
+    t.add_argument("--url", required=True)
+    t.add_argument("--tribunal", required=True)
+    t.add_argument("--sistema", required=True)
+    t.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado",
+                   help="confirma que autoriza UMA tentativa de login real")
+    t.add_argument("--campo-usuario", default="#txtUsuario")
+    t.add_argument("--campo-senha", default="#pwdSenha")
+    t.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
+    t.add_argument("--botao-entrar", default="#sbmEntrar")
+    t.add_argument("--oculto", action="store_true")
+    t.add_argument("--segundos", type=int, default=45)
+
     args = p.parse_args(argv)
 
     try:
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "entrar":
+            return entrar(
+                args.url, args.tribunal, args.sistema, confirmado=args.confirmado,
+                campo_usuario=args.campo_usuario, campo_senha=args.campo_senha,
+                campo_senha_oculto=args.campo_senha_oculto, botao_entrar=args.botao_entrar,
+                oculto=args.oculto, segundos=args.segundos,
+            )
         if args.comando == "ensaiar-login":
             return ensaiar_login(
                 args.url, args.tribunal, args.sistema,

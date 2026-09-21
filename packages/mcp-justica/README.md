@@ -355,6 +355,35 @@ em `#pwdSenha` (tipo texto) e campo enviado em `input[name=pwdSenha]` (tipo
 senha, oculto). Não há campo de segundo fator nessa tela, então o código de seis
 dígitos deve ser pedido numa segunda tela, ainda não observada.
 
+### Envio único de login
+
+Primeiro comando do projeto que pratica um ato no portal.
+
+```powershell
+justica-portal entrar --url "<tela de login>" --tribunal TRF2 --sistema eproc --confirmo-tentativa-unica
+```
+
+Duas travas, pelo mesmo motivo: tentativa de login falha repetida **bloqueia a
+conta do advogado**.
+
+1. Exige confirmação expressa na linha de comando. Sem a opção, recusa e explica.
+2. Clica **uma vez**. Não há repetição, nem em caso de falha. Se falhar, para e
+   relata; decidir tentar de novo é do advogado, nunca do código.
+
+Antes de clicar, confere que a senha chegou ao campo enviado. Sem essa
+conferência, um espelhamento que falhasse produziria clique com campo vazio, que
+é justamente o que consome tentativa e leva ao bloqueio.
+
+Depois do envio apenas **lê** a tela seguinte, marcando o campo que tem cara de
+segundo fator. Não preenche o código, não navega, não baixa. O destino do
+redirecionamento passa pela trava: termo de risco no endereço interrompe a
+leitura. A tentativa fica registrada na auditoria local.
+
+O espelhamento do eproc da Justiça Federal do Rio foi confirmado em campo em 21
+de setembro de 2026: o valor preenchido no campo visível chega ao campo oculto,
+então o receio de teclado virtual, levantado pelo `inputmode=none`, não se
+confirmou.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
