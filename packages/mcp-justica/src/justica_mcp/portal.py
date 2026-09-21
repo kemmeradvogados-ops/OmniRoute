@@ -1006,6 +1006,22 @@ def autenticar(
 
 
 
+def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
+    """Grava a consulta em arquivo local, no diretorio de estado do servidor."""
+    import json
+    import pathlib
+    from datetime import datetime, timezone
+
+    from .core.estado import diretorio_estado
+
+    pasta = diretorio_estado() / "consultas"
+    pasta.mkdir(parents=True, exist_ok=True)
+    marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destino = pasta / f"{chave}-{marca}.json"
+    destino.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    return destino
+
+
 BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
 BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
 
@@ -1099,25 +1115,46 @@ def consultar_processo(
             for e in erros:
                 print(f"    {e}")
 
-        campos, botoes = _coletar(pagina)
-        print(f"\n  ESTRUTURA DA TELA DO PROCESSO ({len(campos)} campos, {len(botoes)} botoes):")
-        for c in campos[:12]:
-            print(f"    {c.linha()}")
-        for b in botoes[:25]:
-            print(f"    {b.linha()}")
+        from .extracao import extrair_processo, resumo
 
-        tabelas = pagina.query_selector_all("table")
-        print(f"\n  TABELAS NA TELA: {len(tabelas)}")
-        for i, tabela in enumerate(tabelas[:6]):
-            linhas = len(tabela.query_selector_all("tr"))
-            identificador = tabela.get_attribute("id") or "-"
-            cabecalhos = [
-                (c.inner_text() or "").strip()[:22]
-                for c in tabela.query_selector_all("th")[:8]
-            ]
-            print(f"    tabela {i}: id={identificador}  {linhas} linha(s)")
-            if cabecalhos:
-                print(f"      colunas: {cabecalhos}")
+        dados = extrair_processo(pagina, numero.formatado)
+        if not dados["eventos"]:
+            print("\n  [ATENCAO] Nenhum evento extraido. A tela pode ter outra")
+            print("  estrutura, ou o processo pode estar em segredo de justica.")
+            print(f"  Tabelas na pagina: "
+                  f"{[t.get_attribute('id') or '-' for t in pagina.query_selector_all('table')]}")
+            return 1
+
+        # O conteudo vai para arquivo; o terminal recebe so o resumo. Despejar
+        # dezenas de eventos na tela convida a colar dado de cliente onde nao
+        # deve, e o arquivo e o que o restante do sistema vai consumir.
+        destino = _gravar_consulta(dados, numero.apenas_digitos)
+        print("\n  EXTRAIDO:")
+        for linha in resumo(dados):
+            print(f"    {linha}")
+
+        # Alimenta o mesmo mecanismo de comparacao da Fase 1, de modo que
+        # `verificar_novos_andamentos` passe a enxergar tambem o autenticado.
+        registro = estado_local.gravar_snapshot(
+            numero.apenas_digitos,
+            [{"data_hora": e["data_hora"], "codigo": e["evento"], "nome": e["descricao"]}
+             for e in dados["eventos"]],
+        )
+        if registro.get("primeiro"):
+            print("\n    Referencia inicial gravada para comparacao futura.")
+        elif registro["mudou"]:
+            print(f"\n    Houve mudanca desde a consulta anterior "
+                  f"({registro['coletado_em']}).")
+        else:
+            print("\n    Sem mudanca desde a consulta anterior.")
+
+        print(f"\n  Conteudo completo em: {destino}")
+        print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
+        estado_local.registrar(
+            acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado,
+            resultado=f"{dados['totais']['eventos']} evento(s)",
+        )
         return 0
 
     return autenticar(

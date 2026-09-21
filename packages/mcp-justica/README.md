@@ -479,6 +479,33 @@ toca em expediente.
 O número é validado antes de qualquer ida à rede. Número com dígito errado
 devolveria "não encontrado", e o agente concluiria que o processo não existe.
 
+### Extração dos dados do processo
+
+A consulta autenticada foi executada contra o eproc real em 21 de setembro de
+2026 e a tela de processo revelou a estrutura:
+
+| Tabela | Colunas |
+| --- | --- |
+| `#tblEventos` | Evento, Data/Hora, Descrição, Usuário, Documentos |
+| `#tblPartesERepresentantes` | AUTOR, RÉU (como **cabeçalho**, não como valor) |
+| sem identificador | Código, Descrição, Principal (assuntos) |
+
+Os polos vêm do cabeçalho das colunas, e não de uma coluna de valor. Ler ao
+contrário inverteria autor e réu, que é um erro grave num resumo processual.
+
+A coluna Documentos traz os links dos arquivos. Eles são apenas **listados**,
+com rótulo e endereço. Abrir é outro ato e outra decisão.
+
+Duas escolhas sobre o destino do que sai daqui:
+
+**O conteúdo vai para arquivo, o terminal recebe só um resumo.** São dezenas de
+eventos por processo, e despejá-los na tela convida a colar dado de cliente
+onde não deve. O arquivo fica em `~/.justica-mcp/consultas/`.
+
+**Os eventos alimentam o mecanismo de comparação da Fase 1.** Cada consulta
+grava um snapshot, então `verificar_novos_andamentos` passa a enxergar também
+o acervo autenticado, e não só o que a base nacional publica.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
