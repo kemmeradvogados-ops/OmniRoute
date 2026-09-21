@@ -363,7 +363,22 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
                     print("  Nada foi lido. Informe este endereco de destino.", file=sys.stderr)
                     return 1
 
-            print(f"  Titulo da pagina: {pagina.title()!r}\n")
+            print(f"  Titulo da pagina: {pagina.title()!r}")
+
+            # Primeira pergunta do reconhecimento desde 21 de setembro de 2026,
+            # quando o eproc reprovou o navegador automatizado: este portal tem
+            # o mesmo controle? A resposta decide se vale escrever adaptador
+            # autenticado para ele, e custa uma leitura de tela, nao uma
+            # tentativa de login.
+            if _desafio_reprovado(pagina):
+                print("  VERIFICACAO HUMANA: presente e JA REPROVOU o navegador automatizado.")
+                print("    Adaptador autenticado nao e viavel aqui enquanto isso valer.")
+            elif _ha_desafio_humano(pagina):
+                print("  VERIFICACAO HUMANA: presente, aguardando resposta.")
+                print("    Pode ou nao reprovar o navegador automatizado; so tentando se sabe.")
+            else:
+                print("  VERIFICACAO HUMANA: nenhuma nesta tela.")
+            print()
             campos, botoes = _coletar(pagina)
 
             formularios = _formularios(pagina)

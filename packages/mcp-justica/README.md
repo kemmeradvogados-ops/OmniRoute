@@ -695,6 +695,25 @@ pasta de estado, junto da auditoria, e não em lugar temporário.
 `JUSTICA_NAVEGADOR_EFEMERO=1` devolve o descarte a cada execução, para quem
 preferir pagar o desafio toda vez.
 
+#### Reconhecer primeiro, escrever adaptador depois
+
+Desde 21 de setembro de 2026, a primeira pergunta de todo reconhecimento é se o
+portal tem verificação humana, porque a resposta decide se vale escrever
+adaptador autenticado para ele. Custa uma leitura de tela, não uma tentativa de
+login.
+
+```powershell
+justica-portal reconhecer --url "<endereço de login do portal>"
+```
+
+A saída traz uma das três linhas:
+
+| Linha | Significado |
+| --- | --- |
+| `nenhuma nesta tela` | Caminho livre; vale escrever o adaptador |
+| `presente, aguardando resposta` | Pode ou não reprovar o navegador automatizado; só tentando se sabe |
+| `presente e JÁ REPROVOU o navegador automatizado` | Adaptador autenticado não é viável enquanto isso valer |
+
 #### O desafio reprova o navegador automatizado
 
 **Verificado em campo em 21 de setembro de 2026, e é a conclusão mais importante
