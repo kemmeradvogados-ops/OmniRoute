@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -146,8 +147,11 @@ async def checar_djen(oab: str, uf: str, dias: int, detalhe: bool) -> None:
         item("total informado", dados.get("count") if isinstance(dados, dict) else "n/d")
         item("itens nesta pagina", len(itens or []))
 
+        if isinstance(dados, dict) and isinstance(dados.get("count"), int) and dados["count"] >= 10000:
+            item("ATENCAO no total", "contagem saturada em 10000, o total real e maior ou igual", False)
+
         if itens:
-            print("\n  >>> CAMPOS DE UM ITEM (o que eu preciso para ajustar o adaptador):")
+            print("\n  >>> CAMPOS DE UM ITEM:")
             for chave, valor in (itens[0] or {}).items():
                 tipo = type(valor).__name__
                 if chave in ("texto",):
@@ -157,6 +161,32 @@ async def checar_djen(oab: str, uf: str, dias: int, detalhe: bool) -> None:
                 else:
                     amostra = str(valor)[:70]
                 print(f"      {chave:32s} ({tipo:5s}) = {amostra}")
+
+            # ---- A pergunta decisiva: o filtro de inscricao foi aplicado? ----
+            print("\n  >>> O FILTRO DE INSCRICAO NA ORDEM FOI APLICADO?")
+            alvo = "".join(c for c in oab if c.isdigit()).lstrip("0")
+            com_oab = 0
+            for it in itens:
+                bruto = json.dumps(it.get("destinatarioadvogados") or [], ensure_ascii=False)
+                digitos = "".join(c if c.isdigit() else " " for c in bruto).split()
+                if any(d.lstrip("0") == alvo for d in digitos):
+                    com_oab += 1
+            item(f"itens que citam a inscricao {oab}", f"{com_oab} de {len(itens)}", com_oab == len(itens))
+            if com_oab < len(itens):
+                print("       O filtro pode nao estar sendo aplicado como esperado.")
+
+            tribunais = {}
+            for it in itens:
+                sigla = it.get("siglaTribunal") or "?"
+                tribunais[sigla] = tribunais.get(sigla, 0) + 1
+            item("tribunais nesta amostra", ", ".join(f"{k}={v}" for k, v in sorted(tribunais.items())))
+
+            advogados = (itens[0] or {}).get("destinatarioadvogados") or []
+            if advogados and isinstance(advogados[0], dict):
+                print(f"      campos de destinatarioadvogados[0]: {list(advogados[0].keys())}")
+            destinatarios = (itens[0] or {}).get("destinatarios") or []
+            if destinatarios and isinstance(destinatarios[0], dict):
+                print(f"      campos de destinatarios[0]:         {list(destinatarios[0].keys())}")
         else:
             print("\n  Nenhuma publicacao na janela. Isso NAO valida os campos;")
             print("  repita com --dias 30 para aumentar a chance de retorno.")
@@ -180,11 +210,19 @@ async def checar_siglas_djen() -> None:
                     item(f"{t.codigo} (sigla {t.sigla_djen})", f"HTTP {r.status_code}", False)
                     continue
                 d = r.json()
-                total = d.get("count", 0) if isinstance(d, dict) else 0
-                item(f"{t.codigo} (sigla {t.sigla_djen})",
-                     f"{total} publicacao(oes) em 3 dias", total > 0)
-                if total == 0:
+                itens_t = (d.get("items") or []) if isinstance(d, dict) else []
+                if not itens_t:
+                    item(f"{t.codigo} (sigla {t.sigla_djen})", "nenhum item devolvido", False)
                     print("         sigla possivelmente errada ou periodo sem publicacao")
+                else:
+                    # A contagem satura em 10000 e por isso nao valida nada.
+                    # O que valida e a sigla do item que voltou.
+                    devolvida = itens_t[0].get("siglaTribunal")
+                    confere = devolvida == t.sigla_djen
+                    item(f"{t.codigo} (sigla {t.sigla_djen})",
+                         f"item devolvido e do tribunal {devolvida}", confere)
+                    if not confere:
+                        print(f"         FILTRO NAO APLICADO: pedi {t.sigla_djen}, veio {devolvida}")
             except httpx.HTTPError as exc:
                 item(f"{t.codigo} (sigla {t.sigla_djen})", f"erro: {type(exc).__name__}", False)
             await asyncio.sleep(0.5)  # respeita o espacamento recomendado

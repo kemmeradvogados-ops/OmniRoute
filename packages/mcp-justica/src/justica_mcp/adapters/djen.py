@@ -44,6 +44,9 @@ BASE = "https://comunicaapi.pje.jus.br/api/v1/comunicacao"
 # [Nao verificado em documentacao oficial]
 MAX_POR_PAGINA = 50
 
+# Teto de saturacao do campo `count`, observado em campo em 2026-09-21.
+TETO_CONTAGEM = 10000
+
 AVISO_SEM_CIENCIA = (
     "Leitura de publicacao no Diario de Justica Eletronico Nacional. Canal "
     "publico: NAO dispara ciencia nem inicia prazo processual. Nao confundir "
@@ -77,20 +80,75 @@ class AdaptadorDJEN(AdaptadorBase):
         return resposta.json()
 
     @staticmethod
-    def _normalizar(item: dict[str, Any]) -> dict[str, Any]:
+    def _cancelada(item: dict[str, Any]) -> bool:
+        """Publicacao cancelada nao gera prazo.
+
+        Derivado apenas de sinais explicitos. O campo `status` traz codigos de
+        uma letra cujo significado NAO foi confirmado em documentacao oficial,
+        entao ele e repassado cru e nunca interpretado aqui.
+        """
+        return (
+            item.get("ativo") is False
+            or bool(item.get("motivo_cancelamento"))
+            or bool(item.get("data_cancelamento"))
+        )
+
+    @classmethod
+    def _normalizar(cls, item: dict[str, Any]) -> dict[str, Any]:
+        cancelada = cls._cancelada(item)
         return {
-            "numero_processo": item.get("numero_processo") or item.get("numeroprocessocommascara"),
+            # `id` e a chave estavel de deduplicacao entre consultas.
+            "id": item.get("id"),
+            "numero_comunicacao": item.get("numeroComunicacao"),
+            "numero_processo": item.get("numero_processo"),
+            "numero_processo_formatado": item.get("numeroprocessocommascara"),
             "tribunal": item.get("siglaTribunal"),
             "orgao": item.get("nomeOrgao"),
+            "classe": item.get("nomeClasse"),
+            "codigo_classe": item.get("codigoClasse"),
             "tipo_comunicacao": item.get("tipoComunicacao"),
             "tipo_documento": item.get("tipoDocumento"),
             "data_disponibilizacao": item.get("data_disponibilizacao"),
             "meio": item.get("meio"),
+            "meio_completo": item.get("meiocompleto"),
             "texto": item.get("texto"),
             "hash": item.get("hash"),
             "link_certidao": item.get("link"),
             "destinatarios": item.get("destinatarios") or [],
             "advogados": item.get("destinatarioadvogados") or [],
+            # Sinais de cancelamento: uma publicacao cancelada NAO gera prazo,
+            # e tratar como viva produziria prazo fantasma no monitoramento.
+            "cancelada": cancelada,
+            "ativo": item.get("ativo"),
+            "status_bruto": item.get("status"),
+            "motivo_cancelamento": item.get("motivo_cancelamento"),
+            "data_cancelamento": item.get("data_cancelamento"),
+            "alerta": (
+                "PUBLICACAO CANCELADA: nao gera prazo. Confira antes de considerar."
+                if cancelada else None
+            ),
+        }
+
+    @staticmethod
+    def _resumo_total(dados: dict[str, Any], itens: list[Any]) -> dict[str, Any]:
+        """O campo `count` da API satura em 10.000.
+
+        Observado em campo: consultas por tribunal devolvem exatamente 10000,
+        valor identico para tribunais de portes muito diferentes. Reportar isso
+        como total faria o agente afirmar um numero falso e paginar ate um fim
+        que nao existe.
+        """
+        bruto = dados.get("count", len(itens)) if isinstance(dados, dict) else len(itens)
+        saturado = isinstance(bruto, int) and bruto >= TETO_CONTAGEM
+        return {
+            "total_informado": bruto,
+            "total_e_estimativa": saturado,
+            "observacao_total": (
+                f"A API satura a contagem em {TETO_CONTAGEM}. O total real e "
+                f"MAIOR OU IGUAL a esse valor, e nao deve ser citado como exato. "
+                f"Refine por tribunal, processo ou janela de datas."
+                if saturado else None
+            ),
         }
 
     async def publicacoes_por_oab(
@@ -114,11 +172,13 @@ class AdaptadorDJEN(AdaptadorBase):
             parametros["siglaTribunal"] = sigla_tribunal
         dados = await self._consultar(parametros)
         itens_brutos = dados.get("items") or []
+        publicacoes = [self._normalizar(i) for i in itens_brutos]
         return {
-            "total": dados.get("count", len(itens_brutos)),
+            **self._resumo_total(dados, itens_brutos),
             "pagina": parametros["pagina"],
             "itens_por_pagina": parametros["itensPorPagina"],
-            "publicacoes": [self._normalizar(i) for i in itens_brutos],
+            "canceladas_nesta_pagina": sum(1 for p in publicacoes if p["cancelada"]),
+            "publicacoes": publicacoes,
             "proveniencia": self.proveniencia(endpoint=BASE, observacao=AVISO_SEM_CIENCIA).model_dump(),
         }
 
@@ -140,10 +200,12 @@ class AdaptadorDJEN(AdaptadorBase):
             parametros["dataDisponibilizacaoFim"] = data_fim.isoformat()
         dados = await self._consultar(parametros)
         itens_brutos = dados.get("items") or []
+        publicacoes = [self._normalizar(i) for i in itens_brutos]
         return {
             "numero": numero.formatado,
             "tribunal": tribunal.codigo,
-            "total": dados.get("count", len(itens_brutos)),
-            "publicacoes": [self._normalizar(i) for i in itens_brutos],
+            **self._resumo_total(dados, itens_brutos),
+            "canceladas_nesta_pagina": sum(1 for p in publicacoes if p["cancelada"]),
+            "publicacoes": publicacoes,
             "proveniencia": self.proveniencia(endpoint=BASE, observacao=AVISO_SEM_CIENCIA).model_dump(),
         }

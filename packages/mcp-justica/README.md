@@ -206,6 +206,30 @@ Regras para a Fase 2, quando as credenciais entrarem:
   servidor entrega o movimento e a publicação com proveniência; a contagem exige
   calendário forense por tribunal e permanece sempre conferível, nunca automática.
 
+## Validação de campo, 21 de setembro de 2026
+
+Executado na máquina do escritório, com saída brasileira. Resultado:
+
+- Diário de Justiça Eletrônico Nacional responde HTTP 200, sem autenticação.
+- As siglas `TJRJ`, `TJSP`, `TRT1` e `TRF2` são aceitas.
+- Os 27 testes de unidade passam também no Python 3.13.
+
+Três correções nasceram dessa execução:
+
+1. **Campos que faltavam.** O adaptador tinha sido escrito a partir de
+   documentação de terceiro e ignorava `id`, `numeroComunicacao`, `nomeClasse`,
+   `codigoClasse` e `numeroprocessocommascara`.
+2. **Cancelamento.** Uma publicação pode ser cancelada (`ativo`,
+   `motivo_cancelamento`, `data_cancelamento`). O adaptador não olhava esses
+   campos, e uma publicação cancelada tratada como viva produziria prazo
+   fantasma. Agora vem com `cancelada` e um alerta explícito. O campo `status`
+   traz códigos de uma letra cujo significado não foi confirmado em fonte
+   oficial, então viaja cru e não é interpretado.
+3. **Contagem saturada.** O campo `count` satura em 10.000: os quatro tribunais
+   devolveram exatamente esse valor, o que é impossível como total real. Agora
+   a resposta traz `total_e_estimativa` e diz que o total é maior ou igual,
+   em vez de afirmar um número falso.
+
 ## Pendências que dependem do operador
 
 1. Confirmar a natureza do campo de três caracteres do DCP na planilha.
