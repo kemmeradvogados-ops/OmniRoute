@@ -110,11 +110,24 @@ escritório ou provedor nacional. Nuvem fora do Brasil está descartada.
 
 ## Instalação
 
-```bash
+Windows (PowerShell):
+
+```powershell
 python -m venv .venv
-.venv/bin/pip install -e .
-cp .env.example .env     # preencher DATAJUD_API_KEY
+.venv\Scripts\pip install -e ".[dev]"
+copy .env.example .env     # preencher DATAJUD_API_KEY
 ```
+
+macOS e Linux:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+cp .env.example .env       # preencher DATAJUD_API_KEY
+```
+
+Os comandos abaixo aparecem no formato macOS e Linux. No Windows, troque
+`.venv/bin/` por `.venv\Scripts\`.
 
 A chave do DataJud é pública, emitida pelo Departamento de Pesquisas Judiciárias
 do Conselho Nacional de Justiça. Obtenha em
@@ -126,13 +139,15 @@ Registro no cliente Model Context Protocol:
 {
   "mcpServers": {
     "justica": {
-      "command": ".venv/bin/python",
+      "command": "C:\\Users\\<usuario>\\OmniRoute\\packages\\mcp-justica\\.venv\\Scripts\\python.exe",
       "args": ["-m", "justica_mcp.server"],
       "env": { "DATAJUD_API_KEY": "..." }
     }
   }
 }
 ```
+
+Em macOS e Linux, `command` é o caminho absoluto de `.venv/bin/python`.
 
 ## Testes e diagnóstico de campo
 
