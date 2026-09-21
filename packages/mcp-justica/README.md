@@ -534,8 +534,9 @@ tentativa à toa nem prometer o que o servidor não pode fazer.
 ### Cópia de documentos
 
 ```powershell
-justica-portal consultar --url "..." --processo "..." --documentos ultimos:5   # padrao
+justica-portal consultar --url "..." --processo "..." --documentos auto        # padrao
 justica-portal consultar --url "..." --processo "..." --documentos integra
+justica-portal consultar --url "..." --processo "..." --documentos ultimos:5
 justica-portal consultar --url "..." --processo "..." --documentos nenhum
 ```
 
@@ -552,9 +553,6 @@ clique errado no portal custa caro. Buscar pelo endereço não clica, não naveg
 e não muda a página. A única exceção é a cópia integral, cujo botão não tem
 endereço próprio.
 
-Os arquivos vão para `~/.justica-mcp/processos/<numero>/`, com nome ordenável
-(`ev0068-PET1.pdf`), e cada cópia entra na auditoria.
-
 Documento vindo de evento de comunicação processual é **sinalizado** no
 relatório, não bloqueado: documento de evento é parte dos autos. Mas o aviso
 existe para o advogado conferir o que foi copiado.
@@ -565,19 +563,74 @@ ciência se dá pela consulta ao teor da **comunicação**, no painel de
 expedientes, e não pela leitura dos autos, e esse painel nunca é tocado. Ainda
 assim, a primeira execução merece conferência do advogado no próprio portal.
 
+### Acervo de cópias: íntegra na primeira vez, complemento depois
+
+`--documentos auto`, que é o padrão, olha primeiro a pasta do processo:
+
+| Pasta do processo | O que ele faz |
+| --- | --- |
+| Sem nenhuma cópia | Baixa a **íntegra** pelo botão do portal |
+| Já tem cópia | Baixa **só o que falta** e diz quais folhas o complemento cobre |
+
+A numeração de folhas é a **da cópia da banca**, contínua e crescente: a íntegra
+ocupa de 1 até N, e cada complemento segue de N+1 em diante. Não é a numeração
+do tribunal, que o eproc nem usa, porque lá são eventos. Serve para citar
+"fls. 245/250 da cópia" e achar o documento.
+
+Sem contagem confiável de páginas o índice registra a ausência em vez de chutar
+um número: folha errada em citação é pior que folha ausente.
+
+Dois filtros decidem o que entra no complemento, e os dois são necessários:
+
+1. **Eventos posteriores ao que a íntegra alcançou.** A íntegra já contém os
+   documentos dos eventos anteriores a ela. Sem este filtro, o complemento
+   recopiaria o processo inteiro a cada consulta. O índice guarda, em
+   `evento_ate`, até qual evento cada íntegra cobre.
+2. **Documentos ainda não registrados no índice**, para não repetir os
+   complementos anteriores.
+
+A memória disso é o `indice.json`, gravado na própria pasta do processo. Apagar
+o índice não apaga as cópias, mas faz a próxima execução tratar a pasta como
+nova.
+
+#### Onde os arquivos ficam
+
+Padrão: `~/.justica-mcp/processos/<numero>/`. Para apontar à pasta do
+escritório, ponha no `.env`:
+
+```ini
+JUSTICA_PASTA_COPIAS=G:\Meu Drive\4.Processos\Cópias
+```
+
+Cada processo ganha uma subpasta com o número sem pontuação, e dentro dela ficam
+os PDF com nome ordenável (`ev0068-PET1.pdf`) mais o `indice.json`.
+
+[Inferência] Apontar para uma pasta do Google Drive sincronizada localmente faz
+o Drive subir as cópias sozinho, o que é o comportamento desejado, mas também
+significa que **os autos saem da máquina** para a nuvem do escritório. É decisão
+do operador, não do servidor; registro aqui para ficar explícito.
+
+Cada cópia entra na auditoria, agora com a faixa de folhas no lugar do tamanho
+em bytes: "fls. 241/252" diz algo ao advogado, "31244 bytes" não.
+
 ### O que ainda falta na Fase 2
 
-- Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).
-- Sondagem real de sistema, via `registrar_sonda`, que hoje não tem nenhuma
-  sonda registrada.
-- Conferência em campo das telas do eproc, com `justica-portal reconhecer`,
-  para preencher a lista de permissão, que hoje está vazia e bloqueia tudo.
-- Consulta autenticada de processo e listagem de intimações pendentes, a partir
-  da sessão que `autenticar` abre.
-- Listagem de intimações pendentes **sem abrir**. Decisão do operador: listar
+Já em campo, contra o eproc do Tribunal Regional Federal da 2ª Região:
+autenticação com segundo fator, escolha de perfil, consulta de processo com
+partes e eventos, cópia de documentos e cópia integral.
+
+Falta:
+
+- **Listagem de intimações pendentes sem abrir.** Decisão do operador: listar
   sim, abrir não. A primeira execução precisa ser assistida, porque a premissa
   de que listar não dispara ciência ainda não foi confirmada para o eproc.
-- Download de documentos e da íntegra.
+- **Cópia integral contra o portal real.** A decisão íntegra/complemento foi
+  exercitada ponta a ponta, mas contra página sintética com PDF de verdade. O
+  botão `#btnDownloadCompletoRS` nunca foi acionado em campo. [Não verificado]
+- **Sondagem real de sistema**, via `registrar_sonda`, que hoje não tem nenhuma
+  sonda registrada.
+- **Os outros três tribunais do escopo**: PJe, e-SAJ e o portal legado do Rio de
+  Janeiro. Só o eproc tem adaptador autenticado.
 
 ## Próximas fases
 - **Fase 3**: PJe do Rio de Janeiro e do Tribunal Regional do Trabalho da 1ª

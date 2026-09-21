@@ -130,11 +130,19 @@ class GuardaNavegacao:
                 return termo
         return None
 
+    def _permissoes_para(self, url: str) -> list[Permissao]:
+        """TODAS as permissoes que casam, nao apenas a primeira.
+
+        Permissoes sao concessoes que SOMAM. Devolver so a primeira fazia uma
+        permissao ampla esconder as especificas: a de origem, usada para os
+        documentos, casava com o portal inteiro e nao liberava clique nenhum,
+        entao barrava o botao de copia integral que outra permissao liberava.
+        """
+        return [p for p in self.permissoes if p.regex.search(url or "")]
+
     def _permissao_para(self, url: str) -> Optional[Permissao]:
-        for p in self.permissoes:
-            if p.regex.search(url or ""):
-                return p
-        return None
+        casadas = self._permissoes_para(url)
+        return casadas[0] if casadas else None
 
     def avaliar(self, acao: Acao, alvo: str, *, url: str = "") -> Decisao:
         """Decide sem executar. Toda passagem pelo adaptador vem por aqui."""
@@ -184,7 +192,8 @@ class GuardaNavegacao:
                 True, "Extrair texto nao pratica ato no portal.", acao, alvo
             ))
 
-        permissao = self._permissao_para(contexto)
+        casadas = self._permissoes_para(contexto)
+        permissao = casadas[0] if casadas else None
         if permissao is None:
             return self._registrar(Decisao(
                 False,
@@ -203,18 +212,21 @@ class GuardaNavegacao:
                 acao, alvo,
             ))
 
-        seletores = (
-            permissao.seletores_clicaveis if acao is Acao.CLICAR
-            else permissao.seletores_preenchiveis
-        )
-        if alvo in seletores:
-            return self._registrar(Decisao(
-                True, f"Seletor liberado nesta tela ({permissao.descricao}).", acao, alvo
-            ))
+        liberados: list[str] = []
+        for candidata in casadas:
+            seletores = (
+                candidata.seletores_clicaveis if acao is Acao.CLICAR
+                else candidata.seletores_preenchiveis
+            )
+            if alvo in seletores:
+                return self._registrar(Decisao(
+                    True, f"Seletor liberado nesta tela ({candidata.descricao}).", acao, alvo
+                ))
+            liberados.extend(seletores)
         return self._registrar(Decisao(
             False,
             f"Seletor nao liberado para {acao.value} nesta tela. Liberados: "
-            f"{list(seletores) or 'nenhum'}.",
+            f"{liberados or 'nenhum'}.",
             acao, alvo,
         ))
 

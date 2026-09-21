@@ -1184,7 +1184,7 @@ def consultar_processo(
     sistema: str,
     numero_processo: str,
     *,
-    documentos: str = "ultimos:5",
+    documentos: str = "auto",
     confirmado: bool = False,
     perfil: Optional[str] = None,
     oculto: bool = False,
@@ -1303,39 +1303,24 @@ def consultar_processo(
 
         # ---------- copias dos documentos ----------
         if documentos and documentos != "nenhum":
-            from pathlib import Path
-
-            from .core.estado import diretorio_estado
+            from .core.acervo import (
+                carregar_indice, decidir_estrategia, pasta_do_processo,
+            )
             from .documentos import baixar_documentos_dos_eventos
 
-            pasta = Path(diretorio_estado()) / "processos" / numero.apenas_digitos
-            # No inicio da lista: a auditoria precisa atribuir cada download a
-            # permissao que de fato o autorizou. Ao final da lista, a permissao
-            # da busca casava primeiro e o registro saia com o motivo errado,
-            # o que enfraquece a auditoria como prova do que aconteceu.
+            indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+            pasta = pasta_do_processo(numero.apenas_digitos)
             guarda.permissoes.insert(0, permissao_de_origem(
                 pagina.url, "documentos do processo, mesma origem do portal"
             ))
             guarda.permitir_download = True
             print()
-            if documentos == "integra":
-                print("  COPIA INTEGRAL (pelo botao do portal)...")
-                try:
-                    arquivo = _baixar_integra(
-                        pagina, guarda, pasta, numero.apenas_digitos, segundos
-                    )
-                except Exception as exc:
-                    arquivo = None
-                    print(f"    falhou: {type(exc).__name__}: {exc}")
-                if arquivo:
-                    print(f"    gravada em: {arquivo}")
-                    estado_local.registrar(
-                        acao="copia_integral", tribunal=identidade.tribunal,
-                        sistema=identidade.sistema, numero=numero.formatado,
-                        documento=arquivo, resultado="gravada",
-                    )
-                elif arquivo is None:
-                    print("    botao de copia integral nao encontrado nesta tela.")
+
+            if documentos == "auto":
+                estrategia = decidir_estrategia(indice, dados["eventos"])
+                print(f"  ACERVO: {estrategia['motivo']}")
+            elif documentos == "integra":
+                estrategia = {"acao": "integra", "motivo": "Integra pedida no comando."}
             else:
                 quantos = 5
                 if documentos.startswith("ultimos:"):
@@ -1343,21 +1328,90 @@ def consultar_processo(
                         quantos = max(int(documentos.split(":", 1)[1]), 1)
                     except ValueError:
                         quantos = 5
+                estrategia = {"acao": "ultimos", "quantos": quantos}
+
+            if estrategia["acao"] == "integra":
+                print("  COPIA INTEGRAL (pelo botao do portal)...")
+                falhou = False
+                try:
+                    arquivo = _baixar_integra(
+                        pagina, guarda, pasta, numero.apenas_digitos, segundos
+                    )
+                except Exception as exc:
+                    arquivo, falhou = None, True
+                    print(f"    falhou: {type(exc).__name__}: {exc}")
+                if arquivo:
+                    from pathlib import Path as _P
+
+                    from .core.acervo import maior_evento
+
+                    item = indice.acrescentar(
+                        _P(arquivo), "integra",
+                        evento_ate=maior_evento(dados["eventos"]),
+                    )
+                    print(f"    gravada: {_P(arquivo).name}  ({item.faixa()}), "
+                          f"cobrindo ate o evento {item.evento_ate}")
+                    estado_local.registrar(
+                        acao="copia_integral", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, numero=numero.formatado,
+                        documento=arquivo, resultado=item.faixa(),
+                    )
+                elif not falhou:
+                    print("    botao de copia integral nao encontrado nesta tela.")
+
+            elif estrategia["acao"] == "complemento":
+                faltantes = estrategia["faltantes"]
+                if not faltantes:
+                    print("    Nada a complementar.")
+                else:
+                    # Um evento sintetico por documento faltante preserva o
+                    # vinculo com o evento de origem no nome do arquivo.
+                    pendentes = [
+                        {**f["evento"], "documentos": [f["documento"]]} for f in faltantes
+                    ]
+                    copia = baixar_documentos_dos_eventos(
+                        pagina, guarda, pendentes, pasta, quantos_eventos=len(pendentes)
+                    )
+                    print(f"  COMPLEMENTO: {len(copia.gravadas)} documento(s)")
+                    from pathlib import Path as _P
+
+                    for c in copia.gravadas:
+                        item = indice.acrescentar(
+                            _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
+                        )
+                        print(f"    ev{c.evento} {c.rotulo}  ->  {item.faixa()}")
+                        estado_local.registrar(
+                            acao="copia_documento", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, numero=numero.formatado,
+                            documento=c.arquivo, resultado=item.faixa(),
+                        )
+                    for c in copia.falhas:
+                        print(f"    falhou ev{c.evento} {c.rotulo}: {c.erro}")
+
+            else:
+                quantos = estrategia["quantos"]
                 print(f"  COPIAS DOS {quantos} EVENTO(S) MAIS RECENTES...")
                 copia = baixar_documentos_dos_eventos(
                     pagina, guarda, dados["eventos"], pasta, quantos_eventos=quantos
                 )
+                from pathlib import Path as _P
+
                 for linha in copia.resumo():
                     print(f"    {linha}")
-                if copia.gravadas:
-                    print(f"    pasta: {copia.pasta}")
                 for c in copia.gravadas:
+                    item = indice.acrescentar(
+                        _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
+                    )
                     estado_local.registrar(
                         acao="copia_documento", tribunal=identidade.tribunal,
                         sistema=identidade.sistema, numero=numero.formatado,
-                        documento=c.arquivo, resultado=f"{c.bytes_gravados} bytes",
+                        documento=c.arquivo, resultado=item.faixa(),
                     )
+
             guarda.permitir_download = False
+            if not indice.vazio:
+                indice.gravar()
+                print(f"\n  Acervo: {indice.ultima_folha} folha(s) em {indice.pasta}")
 
         print(f"\n  Conteudo completo em: {destino}")
         print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
@@ -1432,8 +1486,9 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--sistema", required=True)
     cp.add_argument("--processo", required=True, help="numero no padrao da numeracao unica")
     cp.add_argument("--perfil", default=None)
-    cp.add_argument("--documentos", default="ultimos:5",
-                    help="'ultimos:N' (padrao 5), 'integra' ou 'nenhum'")
+    cp.add_argument("--documentos", default="auto",
+                    help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
+                         "'integra', 'ultimos:N' ou 'nenhum'")
     cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
     cp.add_argument("--oculto", action="store_true")
     cp.add_argument("--segundos", type=int, default=45)

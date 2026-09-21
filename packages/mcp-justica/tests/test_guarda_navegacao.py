@@ -183,3 +183,38 @@ def test_decisao_e_imutavel():
     d = Decisao(True, "ok", Acao.LER, "x")
     with pytest.raises(Exception):
         d.permitido = False
+
+
+def test_permissoes_somam_em_vez_de_se_anular():
+    """Defeito encontrado ao ligar a copia integral: a permissao de origem,
+    ampla e sem seletores, escondia a permissao especifica que liberava o
+    botao, porque a trava so olhava a primeira que casava. Concessao e coisa
+    que soma."""
+    ampla = Permissao(
+        padrao_url=r"^https://eproc\.tjrj\.jus\.br/",
+        descricao="documentos, mesma origem",
+        conferido_em="2026-09-21",
+    )
+    especifica = Permissao(
+        padrao_url=r"^https://eproc\.tjrj\.jus\.br/painel",
+        descricao="copia integral pelo botao",
+        conferido_em="2026-09-21",
+        seletores_clicaveis=("#btnDownloadCompletoRS",),
+    )
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[ampla, especifica])
+    url = "https://eproc.tjrj.jus.br/painel"
+    d = g.avaliar(Acao.CLICAR, "#btnDownloadCompletoRS", url=url)
+    assert d.permitido is True
+    assert "copia integral" in d.motivo
+
+
+def test_somar_permissoes_nao_libera_o_que_nenhuma_libera():
+    ampla = Permissao(r"^https://eproc\.tjrj\.jus\.br/", "origem", "2026-09-21")
+    especifica = Permissao(
+        r"^https://eproc\.tjrj\.jus\.br/painel", "painel", "2026-09-21",
+        seletores_clicaveis=("#btnPermitido",),
+    )
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[ampla, especifica])
+    d = g.avaliar(Acao.CLICAR, "#btnQualquer", url="https://eproc.tjrj.jus.br/painel")
+    assert d.permitido is False
+    assert "#btnPermitido" in d.motivo, "o motivo lista o que de fato esta liberado"
