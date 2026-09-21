@@ -695,6 +695,34 @@ pasta de estado, junto da auditoria, e não em lugar temporário.
 `JUSTICA_NAVEGADOR_EFEMERO=1` devolve o descarte a cada execução, para quem
 preferir pagar o desafio toda vez.
 
+#### O desafio reprova o navegador automatizado
+
+**Verificado em campo em 21 de setembro de 2026, e é a conclusão mais importante
+desta fase.** O operador marcou a caixa várias vezes e o Cloudflare respondeu
+**"Falha na verificação"**.
+
+O que foi recusado não é a pessoa: é o **navegador automatizado**. O tribunal
+ligou um controle cuja finalidade exata é impedir acesso por programa, e ele está
+cumprindo essa finalidade. Marcar a caixa mais vezes não muda isso.
+
+Fazer o Turnstile aceitar exigiria **disfarçar a automação**, e este projeto não
+faz isso. Não é preciosismo: é a linha entre usar o acesso que o advogado tem e
+falsificar a natureza de quem acessa.
+
+O programa passa a reconhecer a reprovação e a dizer o que ela é, em vez de
+deixar o operador clicando em vão. O texto vive dentro do quadro do próprio
+Cloudflare, então a busca percorre os quadros da página.
+
+**Consequência para o projeto:** enquanto esse controle estiver ativo, o acesso
+autenticado ao eproc por este servidor **não é viável**, e nenhuma quantidade de
+código muda isso. O que continua valendo:
+
+| Caminho | Situação |
+| --- | --- |
+| Fontes públicas (base nacional e Diário Eletrônico) | Funcionam, sem desafio nem login |
+| Navegador do próprio advogado, à mão | Funciona, é o que as habilidades já prescrevem |
+| Via programática autorizada pelo tribunal | [Não verificado] Precisa ser perguntado ao tribunal |
+
 #### O que o eproc faz depois do desafio
 
 Confirmado em campo em 21 de setembro de 2026, com o operador diante da tela:

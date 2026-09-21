@@ -1247,6 +1247,40 @@ MARCAS_DESAFIO = (
 )
 
 
+# Texto que o Turnstile mostra quando REPROVA a verificacao. Visto em campo em
+# 21 de setembro de 2026, no eproc do Tribunal Regional Federal da 2a Regiao.
+MARCAS_DESAFIO_REPROVADO = (
+    "falha na verificacao", "falha na verificação",
+    "verification failed", "solucao de problemas", "solução de problemas",
+)
+
+
+def _desafio_reprovado(pagina) -> bool:
+    """Diz se o desafio REPROVOU a verificacao, em vez de apenas aguardar.
+
+    A diferenca importa muito para quem esta diante da tela. Aguardando, marcar
+    a caixa resolve. Reprovado, marcar a caixa nao resolve nunca: o que foi
+    recusado e o navegador automatizado, nao a pessoa. Sem distinguir, o
+    operador fica clicando numa caixa que jamais vai passar.
+
+    O texto vive dentro do quadro do proprio Cloudflare, entao a busca percorre
+    os quadros da pagina, e nao so o documento principal.
+    """
+    alvos = [pagina]
+    try:
+        alvos.extend(pagina.frames)
+    except Exception:
+        pass
+    for alvo in alvos:
+        try:
+            texto = (alvo.inner_text("body") or "").lower()
+        except Exception:
+            continue
+        if any(marca in texto for marca in MARCAS_DESAFIO_REPROVADO):
+            return True
+    return False
+
+
 def _ha_desafio_humano(pagina) -> bool:
     for marca in MARCAS_DESAFIO:
         try:
@@ -1303,6 +1337,18 @@ def _aguardar_desafio_humano(
                 return True
         except Exception:
             pass
+        if _desafio_reprovado(pagina):
+            print("\n  O DESAFIO REPROVOU A VERIFICACAO (\"Falha na verificacao\").")
+            print("  Marcar a caixa de novo nao resolve: o que foi recusado e o")
+            print("  navegador automatizado, nao o senhor. O tribunal ligou um")
+            print("  controle cuja finalidade e impedir acesso por programa.")
+            print("\n  Este projeto nao disfarca a automacao para passar por ele.")
+            print("  Caminhos que continuam valendo:")
+            print("    - as fontes publicas (base nacional e Diario Eletronico),")
+            print("      que nao tem desafio nem login;")
+            print("    - o acesso pelo navegador do proprio advogado, a mao;")
+            print("    - perguntar ao tribunal se ha via programatica autorizada.")
+            return False
         restante = int(limite - time.monotonic())
         if restante // 30 != avisado // 30 and restante > 0:
             print(f"    aguardando... {restante}s")

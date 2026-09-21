@@ -1084,3 +1084,74 @@ def test_reenvio_aborta_se_o_botao_sumiu(capsys):
     pagina = _Formulario(faltando={"#sbmEntrar"})
     assert _reenviar(pagina) is False
     assert "Nada reenviado" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Desafio REPROVADO
+#
+# Em campo, 21/09/2026: o operador marcou a caixa varias vezes e o Cloudflare
+# respondeu "Falha na verificacao". O recusado e o navegador automatizado, nao
+# a pessoa. Sem distinguir aguardando de reprovado, ele ficaria clicando numa
+# caixa que jamais vai passar.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _desafio_reprovado
+
+
+class _Quadro:
+    def __init__(self, texto):
+        self._texto = texto
+
+    def inner_text(self, _):
+        return self._texto
+
+
+class _PaginaComQuadros:
+    def __init__(self, principal="", quadros=()):
+        self._principal = principal
+        self.frames = [_Quadro(t) for t in quadros]
+
+    def inner_text(self, _):
+        return self._principal
+
+
+def test_reconhece_a_falha_dentro_do_quadro_do_cloudflare():
+    """O texto vive no quadro do proprio Cloudflare, nao no documento
+    principal: procurar so na pagina nao acharia nada."""
+    p = _PaginaComQuadros(principal="eproc", quadros=["Falha na verificação\nSolução de problemas"])
+    assert _desafio_reprovado(p) is True
+
+
+def test_reconhece_a_falha_sem_acento():
+    p = _PaginaComQuadros(quadros=["FALHA NA VERIFICACAO"])
+    assert _desafio_reprovado(p) is True
+
+
+def test_reconhece_a_falha_em_ingles():
+    p = _PaginaComQuadros(quadros=["Verification failed"])
+    assert _desafio_reprovado(p) is True
+
+
+def test_desafio_aguardando_nao_e_confundido_com_reprovado():
+    """Aguardando, marcar a caixa resolve. Confundir os dois mandaria o
+    operador desistir de um desafio que ele ainda pode passar."""
+    p = _PaginaComQuadros(quadros=["Confirme que é humano"])
+    assert _desafio_reprovado(p) is False
+
+
+def test_quadro_ilegivel_nao_vira_reprovacao():
+    class QuadroQueExplode:
+        def inner_text(self, _):
+            raise RuntimeError("quadro de outra origem")
+
+    p = _PaginaComQuadros(quadros=[])
+    p.frames = [QuadroQueExplode()]
+    assert _desafio_reprovado(p) is False
+
+
+def test_pagina_sem_quadros_nao_quebra():
+    class Simples:
+        def inner_text(self, _):
+            return "nada aqui"
+
+    assert _desafio_reprovado(Simples()) is False
