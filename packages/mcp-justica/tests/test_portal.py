@@ -360,3 +360,62 @@ def test_tela_sem_perfis_nao_inventa_nenhum():
     from justica_mcp.portal import _perfis_disponiveis
 
     assert _perfis_disponiveis([_botao("btnConsultar", "Consultar", formulario=None)]) == []
+
+
+# ---------------- duplicatas na barra superior ----------------
+
+class _PaginaFalsa:
+    """Dublê de pagina com varias ocorrencias do mesmo seletor."""
+
+    def __init__(self, elementos):
+        self._elementos = elementos
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def query_selector_all(self, seletor):
+        return self._elementos
+
+
+class _El:
+    def __init__(self, visivel, caixa, marca):
+        self._v, self._c, self.marca = visivel, caixa, marca
+
+    def is_visible(self):
+        return self._v
+
+    def bounding_box(self):
+        return self._c
+
+
+def test_escolhe_a_ocorrencia_que_esta_na_tela():
+    """O eproc monta duas barras superiores, uma para tela grande e outra para
+    telefone, com os MESMOS identificadores. Preencher a oculta falha em
+    silencio: nao levanta erro, simplesmente nao acontece nada."""
+    from justica_mcp.portal import elemento_visivel
+
+    oculta = _El(False, None, "barra-telefone")
+    visivel = _El(True, {"x": 300, "y": 20, "width": 200, "height": 30}, "barra-grande")
+    pagina = _PaginaFalsa([oculta, visivel])
+    assert elemento_visivel(pagina, "#txtNumProcessoPesquisaRapida").marca == "barra-grande"
+
+
+def test_ignora_ocorrencia_fora_da_tela():
+    from justica_mcp.portal import elemento_visivel
+
+    fora = _El(True, {"x": -9999, "y": 20, "width": 200, "height": 30}, "fora")
+    dentro = _El(True, {"x": 10, "y": 20, "width": 200, "height": 30}, "dentro")
+    assert elemento_visivel(_PaginaFalsa([fora, dentro]), "#x").marca == "dentro"
+
+
+def test_sem_ocorrencia_visivel_devolve_nada():
+    from justica_mcp.portal import elemento_visivel
+
+    assert elemento_visivel(_PaginaFalsa([_El(False, None, "a")]), "#x") is None
+
+
+def test_botao_de_salvar_cadastro_e_termo_de_risco():
+    """A autenticacao desemboca na tela "Alterar Cadastro" quando o portal
+    exige atualizacao. Um clique em Salvar alteraria o cadastro do advogado
+    no tribunal."""
+    g = _guarda_autenticacao()
+    for seletor in ("button[name=btnSalvar]", "#btnExcluir", "#btnGravarDados"):
+        assert g.avaliar(Acao.CLICAR, seletor, url=ENDERECO).permitido is False

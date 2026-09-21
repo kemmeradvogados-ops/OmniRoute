@@ -436,6 +436,29 @@ trava barrou o clique na primeira versão. Ela estava certa. A autorização foi
 feita estreita: vale só para aquela tela e só para o botão do perfil escolhido,
 como permissão separada, em vez de liberar o endereço inteiro.
 
+### O que a autenticação em campo revelou
+
+Executada com sucesso no eproc da Justiça Federal do Rio em 21 de setembro de
+2026: credencial, segundo fator e perfil, sete ações, todas autorizadas.
+
+Três descobertas que mudaram o código:
+
+**A chegada não é o painel.** Quando o portal exige atualização cadastral, a
+autenticação desemboca em `acao=pessoa_alterar`, a tela "Alterar Cadastro", com
+campos de identidade editáveis e um botão `Salvar`. Um clique ali alteraria o
+cadastro do advogado no tribunal. Os termos de risco ganharam uma terceira
+classe para isso: `salvar`, `gravar`, `excluir`, `remover`.
+
+**A barra superior é duplicada.** O eproc monta duas, uma para tela grande e
+outra para telefone, com os **mesmos identificadores**. O campo de busca rápida
+`#txtNumProcessoPesquisaRapida` aparece duas vezes, uma visível e outra oculta.
+Preencher a oculta falha em silêncio: não levanta erro, simplesmente não
+acontece nada. Daí a função `elemento_visivel`, que escolhe a ocorrência que
+está de fato na tela.
+
+**A busca rápida está em todas as telas.** `#txtNumProcessoPesquisaRapida` com
+`btnPesquisaRapidaSubmit` é o caminho para a consulta de processo autenticada.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).

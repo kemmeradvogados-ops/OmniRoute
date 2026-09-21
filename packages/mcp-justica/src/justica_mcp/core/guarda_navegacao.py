@@ -63,6 +63,10 @@ TERMOS_DE_RISCO = (
     "desativar", "desabilitar",
     "liberardispositivo", "liberar-dispositivo",
     "cancelardispositivo", "cancelar-dispositivo",
+    # Terceira classe, descoberta na tela "Alterar Cadastro" do eproc, onde a
+    # autenticacao desemboca quando o portal exige atualizacao cadastral:
+    # acoes que gravam alteracao no cadastro do advogado no tribunal.
+    "salvar", "gravar", "excluir", "remover",
 )
 
 # Acoes que jamais sao executadas na versao somente leitura, em nenhum modo.

@@ -681,6 +681,24 @@ def entrar(
 
 
 
+def elemento_visivel(pagina: Any, seletor: str) -> Optional[Any]:
+    """Devolve a primeira ocorrencia do seletor que esteja de fato na tela.
+
+    O eproc monta duas barras superiores, uma para tela grande e outra para
+    telefone, com os MESMOS identificadores. `query_selector` devolve a
+    primeira do documento, que pode ser a oculta, e preencher a oculta falha
+    em silencio: nao levanta erro, so nao acontece nada.
+    """
+    janela = pagina.viewport_size or {"width": 1280, "height": 720}
+    for elemento in pagina.query_selector_all(seletor):
+        try:
+            if elemento.is_visible() and _na_tela(elemento, janela["width"], janela["height"]):
+                return elemento
+        except Exception:
+            continue
+    return None
+
+
 def _perfis_disponiveis(botoes: list["Campo"]) -> list[tuple[str, str]]:
     """Botoes de escolha de inscricao na tela de selecao de perfil.
 
