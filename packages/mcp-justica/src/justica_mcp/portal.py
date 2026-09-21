@@ -363,6 +363,13 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
                     print("  Nada foi lido. Informe este endereco de destino.", file=sys.stderr)
                     return 1
 
+            # `domcontentloaded` dispara antes de o script montar a tela. Ler
+            # ali devolvia zero campos e zero botoes em portal que monta o
+            # formulario por script, e o relato dizia "a pagina talvez monte
+            # por script" quando na verdade o comando e que leu cedo demais.
+            # Verificado no e-SAJ de Sao Paulo em 21 de setembro de 2026.
+            _assentar(pagina, segundos)
+
             print(f"  Titulo da pagina: {pagina.title()!r}")
 
             # Primeira pergunta do reconhecimento desde 21 de setembro de 2026,
@@ -397,8 +404,29 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
             for c in campos:
                 print(f"    {c.linha()}")
             if not campos:
-                print("    (nenhum) A pagina talvez monte o formulario por script;")
-                print("    tente de novo com --segundos maior.")
+                # A mensagem antiga mandava aumentar o tempo, e isso passou a
+                # ser conselho errado: a espera de assentamento ja rodou. Uma
+                # pagina de verdade sem campo NENHUM costuma ser tela
+                # intermediaria, nao a tela de login.
+                print("    (nenhum) A espera de assentamento ja rodou, entao provavelmente")
+                print("    esta nao e a tela de login: pode ser portal de servicos, aviso")
+                print("    ou redirecionamento. Procure o link de entrar e use o endereco dele.")
+
+            if not campos:
+                try:
+                    achados = []
+                    for a in pagina.query_selector_all("a[href]"):
+                        texto = (a.inner_text() or "").strip()
+                        alvo = (a.get_attribute("href") or "")
+                        if any(termo in (texto + alvo).lower() for termo in
+                               ("login", "entrar", "acesso", "autentic", "identific", "senha")):
+                            achados.append((texto[:45], alvo[:95]))
+                    if achados:
+                        print(f"\n  LINKS QUE PARECEM LEVAR AO LOGIN ({len(achados)}):")
+                        for texto, alvo in achados[:15]:
+                            print(f"    {texto!r}  ->  {alvo}")
+                except Exception:
+                    pass
 
             print(f"\n  BOTOES E ACOES ({len(botoes)}):")
             for b in botoes:
@@ -1294,6 +1322,29 @@ def _desafio_reprovado(pagina) -> bool:
         if any(marca in texto for marca in MARCAS_DESAFIO_REPROVADO):
             return True
     return False
+
+
+def _assentar(pagina, segundos: int) -> None:
+    """Espera a pagina assentar antes de ler a estrutura.
+
+    Duas esperas, e a segunda existe porque a primeira nao basta: portais que
+    montam a tela por script terminam a rede antes de terminar o desenho, e ler
+    naquele instante devolve uma pagina vazia que parece um portal sem
+    formulario. Sem isso o relato induz ao erro oposto do util: diz que nao ha
+    nada onde ha tudo.
+    """
+    try:
+        pagina.wait_for_load_state("networkidle", timeout=min(segundos, 20) * 1000)
+    except Exception:
+        pass
+    try:
+        # Um campo ou um botao ja indica tela montada. O tempo curto e de
+        # proposito: e retoque, nao espera principal.
+        pagina.wait_for_selector(
+            "input, select, textarea, button, a[role=button]", timeout=5000
+        )
+    except Exception:
+        pass
 
 
 def _ha_desafio_humano(pagina) -> bool:

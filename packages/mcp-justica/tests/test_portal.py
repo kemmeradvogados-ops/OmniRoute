@@ -1185,3 +1185,67 @@ def test_endereco_completo_mas_processo_ausente_ainda_consulta_o_ambiente(monkey
     args = Namespace(tribunal="TJRJ", sistema="pje", url="https://x/", perfil="P", processo=None)
     _do_ambiente(args)
     assert args.processo == "0000001-02.2020.8.19.0001"
+
+
+# --------------------------------------------------------------------------
+# Assentamento da pagina antes de ler a estrutura
+#
+# No e-SAJ de Sao Paulo, 21/09/2026: o reconhecimento devolveu zero campos e
+# zero botoes numa pagina com titulo 'Portal de Servicos | E-SAJ'. A pagina nao
+# estava vazia; o comando e que leu antes de o script montar a tela.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _assentar
+
+
+class _PaginaQueAssenta:
+    def __init__(self, falha_rede=False, falha_seletor=False):
+        self.esperou_rede = False
+        self.esperou_seletor = None
+        self.falha_rede = falha_rede
+        self.falha_seletor = falha_seletor
+
+    def wait_for_load_state(self, estado, timeout=None):
+        if self.falha_rede:
+            raise RuntimeError("rede nunca ficou ociosa")
+        self.esperou_rede = (estado == "networkidle")
+
+    def wait_for_selector(self, seletor, timeout=None):
+        if self.falha_seletor:
+            raise RuntimeError("nada apareceu")
+        self.esperou_seletor = seletor
+
+
+def test_espera_a_rede_e_depois_um_elemento():
+    p = _PaginaQueAssenta()
+    _assentar(p, 45)
+    assert p.esperou_rede is True
+    assert "input" in p.esperou_seletor and "button" in p.esperou_seletor
+
+
+def test_rede_que_nunca_assenta_nao_derruba_o_reconhecimento():
+    """Portal com conexao aberta permanente nunca fica ocioso. Deixar a
+    excecao subir perderia o relato inteiro por causa de um retoque."""
+    p = _PaginaQueAssenta(falha_rede=True)
+    _assentar(p, 45)
+    assert p.esperou_seletor is not None
+
+
+def test_pagina_sem_elemento_algum_nao_derruba_o_reconhecimento():
+    p = _PaginaQueAssenta(falha_seletor=True)
+    _assentar(p, 45)
+    assert p.esperou_rede is True
+
+
+def test_espera_de_rede_e_limitada_mesmo_com_segundos_alto():
+    """Assentar e retoque: nao pode consumir o tempo todo que o operador deu
+    para o carregamento principal."""
+    registrado = {}
+
+    class Tela(_PaginaQueAssenta):
+        def wait_for_load_state(self, estado, timeout=None):
+            registrado["timeout"] = timeout
+            super().wait_for_load_state(estado, timeout)
+
+    _assentar(Tela(), 600)
+    assert registrado["timeout"] == 20_000
