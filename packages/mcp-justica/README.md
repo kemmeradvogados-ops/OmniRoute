@@ -664,6 +664,37 @@ justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --espe
 O padrão são 180 segundos. É espera de pessoa caminhando até a janela, não
 espera de rede, por isso é generosa.
 
+#### Por que o desafio aparecia em toda execução
+
+Defeito do projeto, não rigor do Cloudflare. Cada execução abria um navegador
+**vazio** (`launch` mais `new_page`), sem cookie nenhum, então o advogado era um
+visitante inédito toda vez. Cada reaparição custava uma tentativa do teto e a
+presença dele diante da tela.
+
+O navegador passa a usar **perfil persistente**, na pasta de estado
+(`~/.justica-mcp/navegador/`). Isso não resolve, não contorna e não disfarça o
+desafio: quem responde continua sendo uma pessoa, uma vez. O que muda é que a
+liberação obtida por ela deixa de ser jogada fora ao fechar o programa, que é o
+comportamento normal de qualquer navegador. Descartar o perfil não tornava nada
+mais seguro; apenas obrigava a repetir a prova já dada.
+
+Medido nesta base de código, com o Chromium do próprio Playwright:
+
+| Tipo de cookie | Sobrevive ao fechamento |
+| --- | --- |
+| Com prazo de validade, como a liberação do desafio | sim |
+| Só de sessão, como o login do portal | não |
+
+Ou seja: o desafio deve parar de aparecer a cada execução, e o **login continua
+sendo pedido**, porque o cookie de sessão do portal não fica em disco. É o
+equilíbrio desejado.
+
+O preço é real e fica registrado: a pasta passa a conter cookie do portal. Quem
+tiver acesso a ela tem acesso ao que ele cobrir, enquanto valer. Por isso fica na
+pasta de estado, junto da auditoria, e não em lugar temporário.
+`JUSTICA_NAVEGADOR_EFEMERO=1` devolve o descarte a cada execução, para quem
+preferir pagar o desafio toda vez.
+
 Com `--oculto` não há janela onde responder, então o comando **recusa e explica**
 em vez de esperar em silêncio até o tempo acabar. Pela mesma razão, a ferramenta
 do servidor, que roda sempre oculta, não passa por telas com desafio: quando ele

@@ -882,3 +882,84 @@ def test_criterio_proprio_que_nunca_conclui_respeita_o_tempo(capsys):
         Tela(), "#txtAcessoCodigo", 0, False, lambda _: False
     ) is False
     assert "Nada foi enviado" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Perfil do navegador
+#
+# Cada execucao abria um navegador vazio (`launch` + `new_page`), entao para o
+# Cloudflare o advogado era um visitante inedito TODA vez, e o desafio
+# reaparecia sempre. Cada reaparicao custava uma tentativa do teto e a presenca
+# dele diante da tela.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import VARIAVEL_PERFIL_EFEMERO, abrir_navegador, pasta_do_navegador
+
+
+class _Chromium:
+    def __init__(self):
+        self.persistente = None
+        self.efemero = False
+
+    def launch_persistent_context(self, pasta, **kw):
+        self.persistente = pasta
+        return _Contexto()
+
+    def launch(self, **kw):
+        self.efemero = True
+        return _Navegador()
+
+
+class _Contexto:
+    pages: list = []
+
+    def new_page(self):
+        return "pagina-do-contexto"
+
+
+class _Navegador:
+    def new_page(self):
+        return "pagina-efemera"
+
+
+class _Playwright:
+    def __init__(self):
+        self.chromium = _Chromium()
+
+
+def test_por_padrao_o_perfil_e_persistente(tmp_path, monkeypatch):
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path))
+    monkeypatch.delenv(VARIAVEL_PERFIL_EFEMERO, raising=False)
+    p = _Playwright()
+    abrir_navegador(p, True, None)
+    assert p.chromium.persistente == str(tmp_path / "navegador")
+    assert p.chromium.efemero is False
+
+
+def test_o_perfil_fica_na_pasta_de_estado_nao_em_temporaria(tmp_path, monkeypatch):
+    """Guarda cookie de sessao do portal: pertence a pasta de estado, junto da
+    auditoria, e nao a um lugar que qualquer limpeza apaga."""
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path))
+    assert pasta_do_navegador() == tmp_path / "navegador"
+    assert pasta_do_navegador().is_dir()
+
+
+def test_variavel_de_ambiente_devolve_o_descarte_a_cada_execucao(tmp_path, monkeypatch):
+    """Quem preferir pagar o desafio toda vez tem como."""
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path))
+    monkeypatch.setenv(VARIAVEL_PERFIL_EFEMERO, "1")
+    p = _Playwright()
+    _, pagina = abrir_navegador(p, True, None)
+    assert p.chromium.efemero is True
+    assert p.chromium.persistente is None
+    assert pagina == "pagina-efemera"
+
+
+def test_valor_invalido_na_variavel_mantem_o_perfil_persistente(tmp_path, monkeypatch):
+    """Erro de digitacao no .env nao pode desligar em silencio a persistencia e
+    devolver o desafio a cada execucao, sem ninguem entender por que."""
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path))
+    monkeypatch.setenv(VARIAVEL_PERFIL_EFEMERO, "talvez")
+    p = _Playwright()
+    abrir_navegador(p, True, None)
+    assert p.chromium.efemero is False

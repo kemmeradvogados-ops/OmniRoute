@@ -65,6 +65,59 @@ class PortalIndisponivel(RuntimeError):
 # proposito: e uma pessoa indo ate a janela, nao uma espera de rede.
 ESPERA_HUMANA_PADRAO = 180
 
+VARIAVEL_PERFIL_EFEMERO = "JUSTICA_NAVEGADOR_EFEMERO"
+
+
+def pasta_do_navegador() -> "Path":
+    """Perfil persistente do navegador, na pasta de estado.
+
+    Guarda cookie de sessao do portal. Nao e pasta descartavel: quem apagar
+    perde a liberacao do desafio e a sessao aberta, e volta a marcar a caixa.
+    """
+    from pathlib import Path as _P
+
+    from .core.estado import diretorio_estado
+
+    destino = _P(diretorio_estado()) / "navegador"
+    destino.mkdir(parents=True, exist_ok=True)
+    return destino
+
+
+def _perfil_efemero() -> bool:
+    return os.environ.get(VARIAVEL_PERFIL_EFEMERO, "").strip().lower() in ("1", "true", "sim")
+
+
+def abrir_navegador(p, oculto: bool, executavel):
+    """Abre o navegador com PERFIL PERSISTENTE e devolve (contexto, pagina).
+
+    Antes, cada execucao abria um navegador vazio: `launch()` mais `new_page()`.
+    Para o Cloudflare isso e um visitante inedito toda vez, entao o desafio
+    "Confirme que e humano" reaparecia em TODA execucao, e cada reaparicao
+    custava uma tentativa do teto e a presenca do advogado.
+
+    Guardar o perfil nao resolve, contorna nem disfarca o desafio: quem o
+    responde continua sendo uma pessoa, uma vez. O que muda e que a liberacao
+    obtida por ela deixa de ser jogada fora ao fechar o programa, que e o
+    comportamento normal de qualquer navegador. Descartar o perfil nao tornava
+    nada mais seguro; so obrigava a pessoa a repetir a prova ja dada.
+
+    O preco e real e fica registrado: a pasta passa a conter cookie de sessao do
+    portal. Quem tiver acesso a ela tem acesso a sessao enquanto ela valer. Por
+    isso fica na pasta de estado, junto da auditoria, e nao em lugar temporario.
+    `JUSTICA_NAVEGADOR_EFEMERO=1` volta ao descarte a cada execucao, para quem
+    preferir pagar o desafio toda vez.
+    """
+    if _perfil_efemero():
+        navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+        return navegador, navegador.new_page()
+
+    contexto = p.chromium.launch_persistent_context(
+        str(pasta_do_navegador()), headless=oculto, executable_path=executavel
+    )
+    pagina = contexto.pages[0] if contexto.pages else contexto.new_page()
+    return contexto, pagina
+
+
 @dataclass
 class Campo:
     marcador: str
@@ -289,13 +342,12 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
 
     with sync_playwright() as p:
         try:
-            navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+            navegador, pagina = abrir_navegador(p, oculto, executavel)
         except Exception as exc:
             if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
                 print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
                 return 2
             raise
-        pagina = navegador.new_page()
         try:
             pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
             final = pagina.url
@@ -419,13 +471,12 @@ def ensaiar_login(
     executavel = os.environ.get("JUSTICA_CHROMIUM") or None
     with sync_playwright() as p:
         try:
-            navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+            navegador, pagina = abrir_navegador(p, oculto, executavel)
         except Exception as exc:
             if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
                 print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
                 return 2
             raise
-        pagina = navegador.new_page()
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
             pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
@@ -624,13 +675,12 @@ def entrar(
     executavel = os.environ.get("JUSTICA_CHROMIUM") or None
     with sync_playwright() as p:
         try:
-            navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+            navegador, pagina = abrir_navegador(p, oculto, executavel)
         except Exception as exc:
             if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
                 print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
                 return 2
             raise
-        pagina = navegador.new_page()
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
             pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
@@ -884,13 +934,12 @@ def autenticar(
     executavel = os.environ.get("JUSTICA_CHROMIUM") or None
     with sync_playwright() as p:
         try:
-            navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+            navegador, pagina = abrir_navegador(p, oculto, executavel)
         except Exception as exc:
             if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
                 print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
                 return 2
             raise
-        pagina = navegador.new_page()
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
             pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
