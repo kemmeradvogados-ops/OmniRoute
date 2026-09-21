@@ -339,19 +339,21 @@ def test_ignora_botoes_fora_do_formulario_de_escolha():
 
 
 def test_casa_perfil_por_trecho_do_rotulo():
-    from justica_mcp.portal import _casar_perfil
+    from justica_mcp.portal import _casar_perfil, _perfis_disponiveis
 
-    assert _casar_perfil(PERFIS_REAIS, "RJ168943")[0] == "tr0"
-    assert _casar_perfil(PERFIS_REAIS, "sp436159")[0] == "tr1", "caixa nao importa"
-    assert _casar_perfil(PERFIS_REAIS, "168943")[0] == "tr0", "trecho basta"
+    # `_casar_perfil` recebe os pares ja extraidos, nao os campos crus.
+    pares = _perfis_disponiveis(PERFIS_REAIS)
+    assert _casar_perfil(pares, "RJ168943")[0] == "tr0"
+    assert _casar_perfil(pares, "sp436159")[0] == "tr1", "caixa nao importa"
+    assert _casar_perfil(pares, "168943")[0] == "tr0", "trecho basta"
 
 
 def test_perfil_inexistente_nao_casa_com_nada():
     """Casar por aproximacao aqui seria pior que falhar: o perfil determina
     quais processos aparecem, e entrar no errado da visao incompleta sem aviso."""
-    from justica_mcp.portal import _casar_perfil
+    from justica_mcp.portal import _casar_perfil, _perfis_disponiveis
 
-    assert _casar_perfil(PERFIS_REAIS, "MG999999") is None
+    assert _casar_perfil(_perfis_disponiveis(PERFIS_REAIS), "MG999999") is None
 
 
 def test_tela_sem_perfis_nao_inventa_nenhum():
