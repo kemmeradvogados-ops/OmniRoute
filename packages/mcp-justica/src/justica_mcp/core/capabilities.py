@@ -88,8 +88,35 @@ MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
         ),
         Capacidade.DAR_CIENCIA_INTIMACAO: _nao_suportado("Fonte somente leitura."),
     },
-    # Declarados desde ja para o agente saber que existem e ainda nao respondem.
-    "eproc": {c: _fase2() for c in Capacidade},
+    "eproc": {
+        **{c: _fase2() for c in Capacidade},
+        # Validado em campo na Justica Federal do Rio em 21 de setembro de 2026.
+        Capacidade.CONSULTAR_PROCESSO: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Consulta autenticada pelo navegador. Exige credencial no cofre e "
+            "`JUSTICA_ACESSO_AUTENTICADO=1`. Cada uso consome uma tentativa de "
+            "autenticacao no tribunal e leva dezenas de segundos.",
+        ),
+        Capacidade.LISTAR_ANDAMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Eventos completos do processo, mais do que a base nacional publica.",
+        ),
+        Capacidade.LISTAR_DOCUMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Os documentos de cada evento sao LISTADOS, com rotulo e endereco. "
+            "Abrir e baixar continuam fora do escopo.",
+        ),
+        Capacidade.BAIXAR_DOCUMENTO: _nao_suportado(
+            "Download permanece proibido na versao somente leitura, em qualquer modo."
+        ),
+        Capacidade.BAIXAR_INTEGRA: _nao_suportado(
+            "O portal oferece 'Download Completo', mas baixar autos e ato de outra "
+            "natureza e exige decisao expressa do operador."
+        ),
+        Capacidade.DAR_CIENCIA_INTIMACAO: _nao_suportado(
+            "Abrir expediente dispara a ciencia e inicia o prazo."
+        ),
+    },
     "pje": {c: _fase2() for c in Capacidade},
     "dcp": {
         **{c: _fase2() for c in Capacidade},

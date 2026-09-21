@@ -506,6 +506,31 @@ onde não deve. O arquivo fica em `~/.justica-mcp/consultas/`.
 grava um snapshot, então `verificar_novos_andamentos` passa a enxergar também
 o acervo autenticado, e não só o que a base nacional publica.
 
+### Ferramentas autenticadas no servidor
+
+`justica_consultar_processo_autenticado` traz o que a base nacional não tem:
+partes, eventos completos e a lista de documentos de cada evento.
+
+**Desligado por padrão.** Ligar (`JUSTICA_ACESSO_AUTENTICADO=1`) permite que o
+agente dispare autenticação real no tribunal com a credencial do advogado, e
+isso é decisão do operador, não um comportamento herdado da instalação.
+
+O endereço e o perfil de cada portal ficam no ambiente, não como parâmetro de
+ferramenta: o agente não deve precisar saber o endereço do portal nem ter como
+apontar a autenticação para outro lugar.
+
+**Teto de tentativas.** Até aqui a proteção contra bloqueio de conta era a
+confirmação na linha de comando: um humano digitava a opção a cada execução.
+Expor a autenticação como ferramenta quebra essa premissa, porque um agente que
+tente de novo diante de erro queima as tentativas da conta em segundos, sem
+ninguém no meio para perceber. O teto (6 por hora, ajustável) é conferido
+**antes** de abrir o navegador, e a ferramenta é marcada como **não
+idempotente**, para o agente saber que repetir custa.
+
+`justica_acesso_autenticado_situacao` responde se está ligado, quais portais
+estão configurados e quantas tentativas ainda cabem, para o agente não gastar
+tentativa à toa nem prometer o que o servidor não pode fazer.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).

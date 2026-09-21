@@ -27,6 +27,9 @@ from urllib.parse import urlparse
 
 from .core.cofre import Cofre, CredencialAusente, Identidade
 from .core.estado import Estado
+from .core.limite_tentativas import (
+    LimiteTentativas, TetoDeTentativasAtingido,
+)
 from .core.guarda_navegacao import (
     Acao, GuardaNavegacao, Modo, NavegacaoBloqueada, Permissao,
 )
@@ -803,6 +806,14 @@ def autenticar(
     )
     guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[permissao])
 
+    # Conferido antes de abrir o navegador: se o teto foi atingido, nem se
+    # chega ao portal.
+    try:
+        LimiteTentativas.do_ambiente(estado).exigir_folga()
+    except TetoDeTentativasAtingido as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
     print("=" * LARGURA)
     print("AUTENTICACAO COMPLETA".center(LARGURA))
     print("=" * LARGURA)
@@ -1024,6 +1035,93 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
 
 BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
 BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
+
+
+def consultar_processo_estruturado(
+    tribunal: str,
+    sistema: str,
+    numero_processo: str,
+    *,
+    cofre: Optional[Cofre] = None,
+    estado: Optional[Estado] = None,
+) -> dict:
+    """Consulta e devolve os dados, sem imprimir nada.
+
+    Usada pela ferramenta do servidor. O endereco e o perfil vem do ambiente,
+    e nao de parametro: o agente nao deve precisar saber o endereco do portal
+    nem ter como apontar a autenticacao para outro lugar.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    from .core.acesso import autenticado_habilitado, config_portal
+
+    if not autenticado_habilitado():
+        raise PermissionError(
+            "Acesso autenticado desligado. Ligar permite que o agente dispare "
+            "autenticacao real no tribunal com a credencial do advogado, e isso "
+            "e decisao do operador. Para habilitar, defina no .env: "
+            "JUSTICA_ACESSO_AUTENTICADO=1"
+        )
+
+    config = config_portal(tribunal, sistema)
+    guardado: dict = {}
+
+    def capturar(pagina, guarda, estado_local, identidade):
+        from .core.cnj import parse_numero
+        from .extracao import extrair_processo
+
+        numero = parse_numero(numero_processo)
+        atual = pagina.url
+        campo = elemento_visivel(pagina, BUSCA_RAPIDA)
+        botao = elemento_visivel(pagina, BOTAO_BUSCA)
+        if campo is None or botao is None:
+            guardado["erro"] = "Busca rapida nao encontrada na tela."
+            return 1
+        guarda.permissoes.append(Permissao(
+            padrao_url=permissao_efemera(atual).padrao_url,
+            descricao="busca rapida de processo, somente leitura",
+            conferido_em="execucao atual",
+            seletores_clicaveis=(BOTAO_BUSCA,),
+            seletores_preenchiveis=(BUSCA_RAPIDA,),
+        ))
+        guarda.pode_executar(Acao.PREENCHER, BUSCA_RAPIDA, url=atual)
+        campo.click()
+        campo.fill(numero.formatado)
+        guarda.pode_executar(Acao.CLICAR, BOTAO_BUSCA, url=atual)
+        botao.click()
+        try:
+            pagina.wait_for_load_state("networkidle", timeout=45000)
+        except Exception:
+            pass
+        if guarda._termo_de_risco(pagina.url) is not None:
+            guardado["erro"] = "Destino com termo de risco; leitura interrompida."
+            return 1
+        dados = extrair_processo(pagina, numero.formatado)
+        dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
+        estado_local.gravar_snapshot(
+            numero.apenas_digitos,
+            [{"data_hora": e["data_hora"], "codigo": e["evento"], "nome": e["descricao"]}
+             for e in dados["eventos"]],
+        )
+        estado_local.registrar(
+            acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado,
+            resultado=f"{dados['totais']['eventos']} evento(s)",
+        )
+        guardado["dados"] = dados
+        return 0
+
+    # A saida do fluxo interativo nao interessa aqui; o que importa e o
+    # dicionario. Capturar evita poluir o canal do servidor.
+    with redirect_stdout(io.StringIO()):
+        codigo = autenticar(
+            config.url, tribunal, sistema, confirmado=True, perfil=config.perfil,
+            oculto=True, cofre=cofre, estado=estado, apos_autenticar=capturar,
+        )
+    if "dados" not in guardado:
+        raise RuntimeError(guardado.get("erro") or f"Consulta nao concluida (codigo {codigo}).")
+    return guardado["dados"]
 
 
 def consultar_processo(

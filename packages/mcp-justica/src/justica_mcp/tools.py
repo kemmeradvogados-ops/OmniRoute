@@ -12,7 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from .adapters import AdaptadorDataJud, AdaptadorDJEN, CapacidadeIndisponivel
 from .adapters.datajud import ChaveDataJudAusente
 from .core.capabilities import matriz_serializavel
+from .core.acesso import PortalNaoConfigurado, autenticado_habilitado, portais_configurados
 from .core.cofre import Cofre, CofreIndisponivel
+from .core.limite_tentativas import LimiteTentativas, TetoDeTentativasAtingido
 from .core.cnj import NumeroCNJInvalido, parse_numero
 from .core.estado import Estado
 from .core.resolver import resolver_sistema
@@ -312,6 +314,107 @@ def registrar(mcp: Any) -> None:
                          "O advogado precisa verificar o Gerenciador de Credenciais.")
         except Exception as exc:
             return _tratar(exc)
+
+    @mcp.tool(
+        name="justica_consultar_processo_autenticado",
+        annotations=ToolAnnotations(
+            title="Consultar processo no portal autenticado",
+            read_only_hint=True,
+            destructive_hint=False,
+            # Nao idempotente: cada chamada consome uma tentativa de
+            # autenticacao no tribunal, e tentativas seguidas bloqueiam a conta.
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+    )
+    async def justica_consultar_processo_autenticado(params: NumeroInput) -> str:
+        """Consulta o processo no portal do tribunal, com a credencial do advogado.
+
+        Traz o que a base nacional NAO tem: partes, eventos completos e a lista
+        de documentos de cada evento. Somente leitura: nao abre documento, nao
+        baixa nada, nao toca em expediente de intimacao.
+
+        CUSTO REAL POR CHAMADA: cada uso autentica de verdade no tribunal, o
+        que leva dezenas de segundos e consome uma tentativa. Tentativas
+        seguidas bloqueiam o acesso do advogado, entao ha um teto por hora e a
+        ferramenta recusa quando ele e atingido. **Nao repita a chamada diante
+        de erro**: relate ao advogado e espere instrucao.
+
+        Use `justica_consultar_processo` (base nacional) quando bastarem classe,
+        orgao e movimentos: e instantaneo, gratuito e sem risco.
+        """
+        import asyncio
+
+        from .portal import consultar_processo_estruturado
+
+        if not autenticado_habilitado():
+            return _erro(
+                "Acesso autenticado desligado neste servidor.", "acesso_desligado",
+                "Ligar permite disparar autenticacao real no tribunal com a credencial "
+                "do advogado, e e decisao do operador. Informe isso a ele em vez de "
+                "tentar outro caminho.",
+            )
+        try:
+            numero = parse_numero(params.numero)
+            tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
+            LimiteTentativas.do_ambiente(_estado).exigir_folga()
+
+            sistema = (await resolver_sistema(numero, _estado)).sistema
+            if sistema not in ("eproc",):
+                return _erro(
+                    f"Consulta autenticada ainda nao implementada para {sistema!r}.",
+                    "sistema_sem_adaptador",
+                    "Apenas o eproc tem adaptador autenticado. Use a base nacional.",
+                )
+
+            # Playwright sincrono nao roda dentro do laco de eventos; vai para
+            # uma thread propria.
+            dados = await asyncio.to_thread(
+                consultar_processo_estruturado, tribunal.codigo, sistema, numero.formatado
+            )
+            dados["proveniencia"] = {
+                "fonte": f"{tribunal.codigo}/{sistema}",
+                "metodo": "navegador",
+                "confianca": "alta",
+                "coletado_em": agora_iso(),
+                "observacao": ("Leitura autenticada do portal, ao vivo. Nenhum documento "
+                               "foi aberto e nenhum expediente foi tocado."),
+            }
+            return _json(dados)
+        except TetoDeTentativasAtingido as exc:
+            return _erro(str(exc), "teto_de_tentativas",
+                         "NAO repita a chamada. Relate ao advogado e aguarde.")
+        except PortalNaoConfigurado as exc:
+            return _erro(str(exc), "portal_nao_configurado",
+                         "O operador precisa configurar o endereco do portal.")
+        except PermissionError as exc:
+            return _erro(str(exc), "acesso_desligado", None)
+        except Exception as exc:
+            _estado.registrar(acao="consulta_processo_autenticada", numero=params.numero,
+                              resultado="erro", detalhe=type(exc).__name__)
+            return _tratar(exc)
+
+    @mcp.tool(name="justica_acesso_autenticado_situacao",
+              annotations=somente_leitura("Situacao do acesso autenticado"))
+    async def justica_acesso_autenticado_situacao() -> str:
+        """Diz se o acesso autenticado esta ligado, quais portais estao
+        configurados e quantas tentativas de autenticacao ainda cabem na janela.
+
+        Consulte antes de usar a consulta autenticada, para nao gastar tentativa
+        a toa nem prometer ao advogado algo que o servidor nao pode fazer.
+        """
+        return _json({
+            "habilitado": autenticado_habilitado(),
+            "portais": [
+                {"tribunal": c.tribunal, "sistema": c.sistema,
+                 "perfil_definido": c.perfil is not None}
+                for c in portais_configurados()
+            ],
+            "tentativas": LimiteTentativas.do_ambiente(_estado).situacao(),
+            "observacao": ("Cada consulta autenticada consome uma tentativa. O teto "
+                           "existe para o acesso do advogado nao ser bloqueado pelo "
+                           "portal apos tentativas seguidas."),
+        })
 
     @mcp.tool(name="justica_auditoria_recente", annotations=somente_leitura("Auditoria recente"))
     async def justica_auditoria_recente(limite: int = 50) -> str:
