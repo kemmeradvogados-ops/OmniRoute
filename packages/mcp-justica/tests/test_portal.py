@@ -1155,3 +1155,33 @@ def test_pagina_sem_quadros_nao_quebra():
             return "nada aqui"
 
     assert _desafio_reprovado(Simples()) is False
+
+
+def test_processo_vem_do_ambiente_quando_nao_veio_no_comando(monkeypatch, capsys):
+    """Numero de processo e dado de cliente: mora no .env, que o git ignora,
+    e nao no comando digitado nem no codigo versionado."""
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_URL", "https://pje.exemplo/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_PROCESSO_TESTE", "0000001-02.2020.8.19.0001")
+    args = Namespace(tribunal="TJRJ", sistema="pje", url=None, perfil=None, processo=None)
+    _do_ambiente(args)
+    assert args.processo == "0000001-02.2020.8.19.0001"
+    assert "Processo vindo do .env" in capsys.readouterr().out
+
+
+def test_processo_do_comando_tem_precedencia(monkeypatch):
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_URL", "https://pje.exemplo/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_PROCESSO_TESTE", "0000001-02.2020.8.19.0001")
+    args = Namespace(tribunal="TJRJ", sistema="pje", url="https://x/", perfil="P",
+                     processo="9999999-99.2099.8.19.0001")
+    _do_ambiente(args)
+    assert args.processo == "9999999-99.2099.8.19.0001"
+
+
+def test_endereco_completo_mas_processo_ausente_ainda_consulta_o_ambiente(monkeypatch):
+    """A saida cedo do completamento nao pode pular o processo so porque o
+    endereco e o perfil ja vieram."""
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_URL", "https://pje.exemplo/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_PROCESSO_TESTE", "0000001-02.2020.8.19.0001")
+    args = Namespace(tribunal="TJRJ", sistema="pje", url="https://x/", perfil="P", processo=None)
+    _do_ambiente(args)
+    assert args.processo == "0000001-02.2020.8.19.0001"

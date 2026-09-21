@@ -28,6 +28,10 @@ class ConfigPortal:
     sistema: str
     url: str
     perfil: Optional[str]
+    # Processo usado para exercitar este portal em campo. Fica no ambiente, e
+    # nao no codigo, porque e numero de processo de cliente: o repositorio e
+    # compartilhado, e numero em codigo versionado nao se apaga do historico.
+    processo_teste: Optional[str] = None
 
     @property
     def rotulo(self) -> str:
@@ -56,6 +60,9 @@ def config_portal(tribunal: str, sistema: str) -> ConfigPortal:
         sistema=sistema.lower(),
         url=url,
         perfil=os.environ.get(_chave(tribunal, sistema, "PERFIL"), "").strip() or None,
+        processo_teste=os.environ.get(
+            _chave(tribunal, sistema, "PROCESSO_TESTE"), ""
+        ).strip() or None,
     )
 
 

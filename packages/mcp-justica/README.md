@@ -547,6 +547,12 @@ justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --docu
 justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --documentos nenhum
 ```
 
+O `--processo` também deixou de ser obrigatório: quando omitido, vem de
+`JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_PROCESSO_TESTE`. Número de processo é
+**dado de cliente** e por isso mora no `.env`, que o git ignora, nunca em código
+versionado: o repositório é compartilhado, e número em histórico de git não se
+apaga.
+
 O `--url` deixou de ser obrigatorio: quando omitido, vem do `.env`
 (`JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_URL`), e o comando avisa de onde o tirou.
 Repetir o endereco a mao a cada execucao convidava a errar o destino da

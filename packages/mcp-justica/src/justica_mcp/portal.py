@@ -1919,7 +1919,9 @@ def _do_ambiente(args) -> None:
     destino da autenticacao, que e exatamente o que este projeto nao pode
     deixar acontecer. O que vier no comando continua tendo precedencia.
     """
-    if getattr(args, "url", None) and getattr(args, "perfil", "ausente") is not None:
+    if (getattr(args, "url", None)
+            and getattr(args, "perfil", "ausente") is not None
+            and getattr(args, "processo", "ausente") is not None):
         return
     try:
         config = config_portal(args.tribunal, args.sistema)
@@ -1932,6 +1934,9 @@ def _do_ambiente(args) -> None:
         print(f"Endereco vindo do .env para {config.rotulo}.")
     if getattr(args, "perfil", "ausente") is None and config.perfil:
         args.perfil = config.perfil
+    if getattr(args, "processo", "ausente") is None and config.processo_teste:
+        args.processo = config.processo_teste
+        print(f"Processo vindo do .env para {config.rotulo}.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1998,7 +2003,9 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--url", default=None, help=AJUDA_URL)
     cp.add_argument("--tribunal", required=True)
     cp.add_argument("--sistema", required=True)
-    cp.add_argument("--processo", required=True, help="numero no padrao da numeracao unica")
+    cp.add_argument("--processo", default=None,
+                    help="numero no padrao da numeracao unica; quando omitido, vem do .env "
+                         "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_PROCESSO_TESTE)")
     cp.add_argument("--perfil", default=None)
     cp.add_argument("--documentos", default="auto",
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
@@ -2025,6 +2032,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
         if args.comando == "consultar":
+            if not args.processo:
+                print(
+                    "Nenhum processo informado. Passe --processo, ou defina no .env:\n"
+                    f"    JUSTICA_PORTAL_{args.tribunal.upper()}_{args.sistema.upper()}"
+                    "_PROCESSO_TESTE=<numero>",
+                    file=sys.stderr,
+                )
+                return 1
             return consultar_processo(
                 args.url, args.tribunal, args.sistema, args.processo,
                 documentos=args.documentos, confirmado=args.confirmado,
