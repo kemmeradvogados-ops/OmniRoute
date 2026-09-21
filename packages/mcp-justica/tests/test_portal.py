@@ -708,3 +708,46 @@ def test_relato_nao_quebra_quando_a_estrutura_nao_pode_ser_lida(monkeypatch, cap
     monkeypatch.setattr("justica_mcp.portal._coletar", explode)
     _relatar_tela(_TelaDeGeracao([]), "X")
     assert "Nao foi possivel ler a estrutura" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Segundo fator que nao e pedido
+#
+# Em campo, 21/09/2026: apos enviar a credencial, a tela do codigo nao
+# apareceu. Credencial recusada e sessao ainda valida chegavam ao mesmo
+# ponto com a mesma mensagem de uma linha, e as duas pedem providencias
+# opostas: uma manda parar, a outra manda seguir.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _ja_autenticado
+
+
+def test_tela_de_perfil_prova_que_a_sessao_esta_aberta(monkeypatch):
+    """A selecao de perfil nao existe antes da autenticacao, entao serve de
+    prova positiva."""
+    perfis = [
+        _botao("tr0", "RJ168943\nADVOGADO"),
+        _botao("tr1", "SP436159\nADVOGADO"),
+    ]
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], perfis))
+    assert _ja_autenticado(object()) is True
+
+
+def test_tela_sem_perfil_nao_conta_como_autenticada(monkeypatch):
+    """Deduzir autenticacao da AUSENCIA da tela de codigo seria concluir a
+    partir de ausencia. O preco de errar e seguir como autenticado quando a
+    credencial foi recusada."""
+    monkeypatch.setattr(
+        "justica_mcp.portal._coletar",
+        lambda p: ([], [_botao("btnEntrar", "Entrar", formulario=None)]),
+    )
+    assert _ja_autenticado(object()) is False
+
+
+def test_tela_ilegivel_nao_conta_como_autenticada(monkeypatch):
+    """Falha ao ler a estrutura nao pode virar 'esta dentro'."""
+    def explode(_):
+        raise RuntimeError("pagina fechada")
+
+    monkeypatch.setattr("justica_mcp.portal._coletar", explode)
+    assert _ja_autenticado(object()) is False

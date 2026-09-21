@@ -889,44 +889,57 @@ def autenticar(
             erros = _mensagens_de_erro(pagina)
             campo = pagina.query_selector(campo_codigo)
             if campo is None:
-                print("\n  [PARADO] A tela do segundo fator nao apareceu.")
-                if erros:
-                    print("  Mensagens na tela:")
-                    for e in erros:
-                        print(f"    {e}")
-                    print("\n  NAO repita o comando. Confira a credencial no cofre.")
-                estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
-                                 sistema=identidade.sistema, resultado="sem_tela_de_codigo")
-                return 1
+                # Duas situacoes muito diferentes chegavam aqui com a mesma
+                # mensagem de uma linha: credencial recusada e portal que
+                # simplesmente nao pediu o segundo fator porque a sessao
+                # anterior continua valida. Sem distinguir, o operador nao
+                # sabia se devia conferir a senha ou apenas rodar de novo, e a
+                # orientacao errada custa tentativas de uma conta que bloqueia.
+                if not _ja_autenticado(pagina):
+                    print("\n  [PARADO] A tela do segundo fator nao apareceu.")
+                    if erros:
+                        print("  Mensagens na tela:")
+                        for e in erros:
+                            print(f"    {e}")
+                    _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
+                    print("\n  NAO repita o comando antes de conferir o que ha acima:")
+                    print("  se for recusa de credencial, repetir queima tentativa da conta.")
+                    estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
+                                     sistema=identidade.sistema, resultado="sem_tela_de_codigo")
+                    return 1
+                print("  Etapa 2: o portal nao pediu o segundo fator; "
+                      "a sessao ja esta autenticada.")
+                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                 sistema=identidade.sistema, resultado="nao_solicitado")
+            else:
+                # ---------- etapa 2: segundo fator ----------
+                # Exige janela util: codigo gerado no fim da validade expira
+                # entre o preenchimento e o envio, e o portal registra falha
+                # por um motivo que nao e culpa da credencial.
+                restante = cofre.segundos_restantes_do_codigo()
+                if restante < 8:
+                    print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
+                codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
 
-            # ---------- etapa 2: segundo fator ----------
-            # Exige janela util: codigo gerado no fim da validade expira entre o
-            # preenchimento e o envio, e o portal registra falha por um motivo
-            # que nao e culpa da credencial.
-            restante = cofre.segundos_restantes_do_codigo()
-            if restante < 8:
-                print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
-            codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
+                guarda.pode_executar(Acao.PREENCHER, campo_codigo, url=url)
+                campo.click()
+                campo.fill(codigo)
+                conferido = campo.evaluate("e => (e.value || '').length")
+                if conferido != len(codigo):
+                    print(f"  [ABORTADO] O codigo nao entrou no campo ({conferido} de {len(codigo)}).")
+                    print("             Nada foi enviado, para nao gastar tentativa.")
+                    return 1
+                print(f"  Etapa 2: codigo preenchido, valido por mais "
+                      f"{cofre.segundos_restantes_do_codigo()}s.")
 
-            guarda.pode_executar(Acao.PREENCHER, campo_codigo, url=url)
-            campo.click()
-            campo.fill(codigo)
-            conferido = campo.evaluate("e => (e.value || '').length")
-            if conferido != len(codigo):
-                print(f"  [ABORTADO] O codigo nao entrou no campo ({conferido} de {len(codigo)}).")
-                print("             Nada foi enviado, para nao gastar tentativa.")
-                return 1
-            print(f"  Etapa 2: codigo preenchido, valido por mais "
-                  f"{cofre.segundos_restantes_do_codigo()}s.")
-
-            guarda.pode_executar(Acao.CLICAR, botao_validar, url=url)
-            estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
-                             sistema=identidade.sistema, resultado="enviado")
-            pagina.query_selector(botao_validar).click()
-            try:
-                pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
-            except Exception:
-                pass
+                guarda.pode_executar(Acao.CLICAR, botao_validar, url=url)
+                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                 sistema=identidade.sistema, resultado="enviado")
+                pagina.query_selector(botao_validar).click()
+                try:
+                    pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+                except Exception:
+                    pass
 
             # ---------- resultado ----------
             final = pagina.url
@@ -1058,6 +1071,22 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
 
 
 BOTAO_INTEGRA = "#btnDownloadCompletoRS"
+
+
+def _ja_autenticado(pagina) -> bool:
+    """Diz se a sessao ja esta aberta, por evidencia positiva na tela.
+
+    So devolve verdadeiro quando a tela de selecao de perfil esta presente.
+    Essa tela nao existe antes da autenticacao, entao serve de prova; deduzir
+    do endereco ou da ausencia da tela de codigo seria concluir a partir de
+    ausencia, e o preco de errar aqui e seguir como autenticado quando a
+    credencial foi recusada.
+    """
+    try:
+        _, botoes = _coletar(pagina)
+    except Exception:
+        return False
+    return bool(_perfis_disponiveis(botoes))
 
 
 def _relatar_tela(pagina, titulo: str) -> None:
