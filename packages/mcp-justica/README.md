@@ -8,6 +8,11 @@ o processo está no PJe, no eproc, no e-SAJ ou no DCP.
 **Versão 0.1.0, Fase 1: somente leitura, sem credenciais, sem automação de
 navegador.**
 
+> Escopo somente leitura confirmado pelo operador em 21 de setembro de 2026.
+> A alternativa descartada nesta fase era o servidor com escrita (protocolo de
+> petições e ciência em intimações). Habilitar escrita exige decisão expressa,
+> confirmação humana por ato e revisão da fronteira em `core/seguranca.py`.
+
 ## Escopo
 
 Fechado nas credenciais da banca:
@@ -129,11 +134,31 @@ Registro no cliente Model Context Protocol:
 }
 ```
 
-## Testes
+## Testes e diagnóstico de campo
+
+Os testes de unidade não dependem de rede e rodam em qualquer máquina:
 
 ```bash
 .venv/bin/python -m pytest tests/ -q
 ```
+
+O diagnóstico de campo confronta o servidor com os tribunais de verdade e
+**precisa rodar na máquina do escritório**, por causa do bloqueio por país:
+
+```bash
+.venv/bin/justica-diagnostico                      # relatório seguro
+.venv/bin/justica-diagnostico --dias 30            # janela maior
+.venv/bin/justica-diagnostico --processo <número>  # consulta um processo real
+.venv/bin/justica-diagnostico --detalhe            # inclui teor das publicações
+```
+
+Ele verifica ambiente, roda os testes, confirma as siglas do Diário e os alias
+do DataJud para os quatro tribunais, e imprime os nomes dos campos das respostas
+reais, que é o que falta para fechar as pendências abaixo.
+
+Por padrão a saída **não** inclui o teor das publicações, apenas estrutura e
+contagens, porque publicação de Diário traz nome de parte e número de processo
+da carteira. Use `--detalhe` apenas para leitura própria.
 
 ## Credenciais: o que este repositório não guarda
 
