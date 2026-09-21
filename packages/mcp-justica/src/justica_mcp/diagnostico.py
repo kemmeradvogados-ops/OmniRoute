@@ -29,6 +29,7 @@ from typing import Any, Optional
 
 import httpx
 
+from .core.config import carregar_env
 from .core.tribunais import TRIBUNAIS
 
 LARGURA = 74
@@ -59,6 +60,9 @@ def mascarar(texto: Optional[str], detalhe: bool, limite: int = 90) -> str:
 
 def checar_ambiente() -> None:
     titulo("1. AMBIENTE")
+    lidas = carregar_env()
+    item("arquivo .env", f"carregado, chaves: {', '.join(lidas)}" if lidas
+         else "nao encontrado (opcional; pode usar variavel de ambiente)", bool(lidas) or None)
     item("Python", sys.version.split()[0], sys.version_info >= (3, 11))
     for modulo in ("mcp", "pydantic", "httpx", "yaml"):
         try:

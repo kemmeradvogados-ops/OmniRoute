@@ -93,6 +93,52 @@ class AdaptadorDJEN(AdaptadorBase):
             or bool(item.get("data_cancelamento"))
         )
 
+    @staticmethod
+    def _normalizar_advogados(item: dict[str, Any]) -> list[dict[str, Any]]:
+        """Achata `destinatarioadvogados[].advogado`.
+
+        Estrutura confirmada em campo em 21 de setembro de 2026:
+        cada vinculo traz um objeto `advogado` com `id`, `nome`, `numero_oab`
+        e `uf_oab`.
+        """
+        saida = []
+        for vinculo in item.get("destinatarioadvogados") or []:
+            adv = vinculo.get("advogado") if isinstance(vinculo, dict) else None
+            if not isinstance(adv, dict):
+                continue
+            saida.append({
+                "nome": adv.get("nome"),
+                "numero_oab": str(adv.get("numero_oab")) if adv.get("numero_oab") is not None else None,
+                "uf_oab": adv.get("uf_oab"),
+            })
+        return saida
+
+    @staticmethod
+    def _normalizar_destinatarios(item: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {"nome": d.get("nome"), "polo": d.get("polo")}
+            for d in (item.get("destinatarios") or [])
+            if isinstance(d, dict)
+        ]
+
+    @staticmethod
+    def _cita_inscricao(publicacao: dict[str, Any], numero_oab: str, uf_oab: str) -> bool:
+        """A publicacao realmente nomeia a inscricao consultada?
+
+        Conferido em campo: o servidor filtra por numero E seccional
+        corretamente. Esta verificacao existe como guarda de regressao, nao por
+        desconfianca do momento: se o filtro mudar de comportamento, a falha
+        seria SILENCIOSA, e a banca passaria a monitorar processo de terceiro
+        sem nenhum sinal. O custo de conferir e desprezivel; o de nao conferir,
+        nao e.
+        """
+        alvo = numero_oab.strip().lstrip("0")
+        uf = uf_oab.strip().upper()
+        return any(
+            (a["numero_oab"] or "").lstrip("0") == alvo and (a["uf_oab"] or "").upper() == uf
+            for a in publicacao["advogados"]
+        )
+
     @classmethod
     def _normalizar(cls, item: dict[str, Any]) -> dict[str, Any]:
         cancelada = cls._cancelada(item)
@@ -114,8 +160,8 @@ class AdaptadorDJEN(AdaptadorBase):
             "texto": item.get("texto"),
             "hash": item.get("hash"),
             "link_certidao": item.get("link"),
-            "destinatarios": item.get("destinatarios") or [],
-            "advogados": item.get("destinatarioadvogados") or [],
+            "destinatarios": cls._normalizar_destinatarios(item),
+            "advogados": cls._normalizar_advogados(item),
             # Sinais de cancelamento: uma publicacao cancelada NAO gera prazo,
             # e tratar como viva produziria prazo fantasma no monitoramento.
             "cancelada": cancelada,
@@ -173,11 +219,24 @@ class AdaptadorDJEN(AdaptadorBase):
         dados = await self._consultar(parametros)
         itens_brutos = dados.get("items") or []
         publicacoes = [self._normalizar(i) for i in itens_brutos]
+        for pub in publicacoes:
+            pub["inscricao_consultada_confere"] = self._cita_inscricao(
+                pub, parametros["numeroOab"], parametros["ufOab"]
+            )
+        divergentes = [p for p in publicacoes if not p["inscricao_consultada_confere"]]
         return {
             **self._resumo_total(dados, itens_brutos),
             "pagina": parametros["pagina"],
             "itens_por_pagina": parametros["itensPorPagina"],
             "canceladas_nesta_pagina": sum(1 for p in publicacoes if p["cancelada"]),
+            "divergentes_nesta_pagina": len(divergentes),
+            "alerta_divergencia": (
+                f"{len(divergentes)} publicacao(oes) nao nomeiam a inscricao "
+                f"{parametros['numeroOab']}/{parametros['ufOab']}. Podem ser de outro "
+                f"advogado com o mesmo numero em outra seccional. NAO trate como "
+                f"processo da banca sem conferir."
+                if divergentes else None
+            ),
             "publicacoes": publicacoes,
             "proveniencia": self.proveniencia(endpoint=BASE, observacao=AVISO_SEM_CIENCIA).model_dump(),
         }

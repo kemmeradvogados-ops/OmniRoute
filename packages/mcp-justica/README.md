@@ -214,7 +214,19 @@ Executado na máquina do escritório, com saída brasileira. Resultado:
 - As siglas `TJRJ`, `TJSP`, `TRT1` e `TRF2` são aceitas.
 - Os 27 testes de unidade passam também no Python 3.13.
 
-Três correções nasceram dessa execução:
+Confirmado em campo, com amostra real:
+
+- O filtro por inscrição na Ordem aplica **número e seccional** corretamente.
+  Numa amostra de cinco publicações, as cinco nomeavam exatamente 218174/RJ.
+- A estrutura de `destinatarioadvogados[].advogado` é
+  `{id, nome, numero_oab, uf_oab}`.
+- `destinatarios[]` traz `{nome, comunicacao_id, polo}`.
+- Publicações de tribunais fora do estado da inscrição (Roraima, Amazonas)
+  são legítimas: a banca atua em causas fora do Rio ao lado de colegas de
+  inscrição carioca. Distribuição por tribunal, sozinha, não indica erro de
+  filtro.
+
+Cinco correções nasceram dessa execução:
 
 1. **Campos que faltavam.** O adaptador tinha sido escrito a partir de
    documentação de terceiro e ignorava `id`, `numeroComunicacao`, `nomeClasse`,
@@ -229,6 +241,15 @@ Três correções nasceram dessa execução:
    devolveram exatamente esse valor, o que é impossível como total real. Agora
    a resposta traz `total_e_estimativa` e diz que o total é maior ou igual,
    em vez de afirmar um número falso.
+4. **Advogados achatados e conferidos.** A lista de advogados vem normalizada
+   com número e seccional, e cada publicação traz
+   `inscricao_consultada_confere`. O filtro do servidor funciona hoje; a
+   conferência é guarda de regressão, porque uma mudança nesse filtro falharia
+   em **silêncio** e a banca passaria a monitorar processo de terceiro sem
+   qualquer sinal.
+5. **O `.env` passou a ser lido.** O README mandava criar o arquivo, mas o
+   código só consultava variáveis de ambiente do sistema. Quem seguisse a
+   instrução ficaria sem a chave sem entender por quê.
 
 ## Pendências que dependem do operador
 

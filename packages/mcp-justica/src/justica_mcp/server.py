@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import MCPServer
 
+from .core.config import carregar_env
 from .core.seguranca import verificar_somente_leitura
 from .tools import registrar
 
@@ -16,6 +17,7 @@ mcp = MCPServer("justica_mcp")
 
 
 def construir() -> MCPServer:
+    carregar_env()
     # Aborta a inicializacao se alguma capacidade de escrita vazar para a versao 1.
     verificar_somente_leitura()
     registrar(mcp)

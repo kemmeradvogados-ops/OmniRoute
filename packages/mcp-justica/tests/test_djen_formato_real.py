@@ -32,11 +32,13 @@ ITEM_REAL = {
     "datadisponibilizacao": "21/09/2026",
     "meiocompleto": "Diário de Justiça Eletrônico Nacional",
     "numeroprocessocommascara": "9004029-50.2025.8.23.0000",
-    "destinatarios": [{"nome": "Fulano"}],
-    # ATENCAO: a estrutura interna de `advogado` ainda NAO foi confirmada em
-    # campo. Os nomes abaixo sao provisorios e o adaptador nao depende deles.
-    # A confirmacao vem na proxima execucao do diagnostico.
-    "destinatarioadvogados": [{"advogado": {"numero_oab": "218174", "uf_oab": "RJ"}}],
+    "destinatarios": [{"nome": "Fulano", "comunicacao_id": 9, "polo": "A"}],
+    # Estrutura CONFIRMADA em campo em 21 de setembro de 2026:
+    # destinatarioadvogados[].advogado = {id, nome, numero_oab, uf_oab}
+    "destinatarioadvogados": [
+        {"advogado": {"id": 1, "nome": "Advogado Um", "numero_oab": 121045, "uf_oab": "RJ"}},
+        {"advogado": {"id": 2, "nome": "Advogado Dois", "numero_oab": 218174, "uf_oab": "RJ"}},
+    ],
 }
 
 
@@ -99,3 +101,31 @@ def test_contagem_pequena_e_tratada_como_exata():
     assert r["total_informado"] == 35
     assert r["total_e_estimativa"] is False
     assert r["observacao_total"] is None
+
+
+def test_achata_advogados_com_numero_e_seccional():
+    """Confirmado em campo: o objeto aninhado traz numero_oab e uf_oab."""
+    n = AdaptadorDJEN._normalizar(ITEM_REAL)
+    assert n["advogados"] == [
+        {"nome": "Advogado Um", "numero_oab": "121045", "uf_oab": "RJ"},
+        {"nome": "Advogado Dois", "numero_oab": "218174", "uf_oab": "RJ"},
+    ]
+
+
+def test_destinatario_traz_o_polo():
+    n = AdaptadorDJEN._normalizar(ITEM_REAL)
+    assert n["destinatarios"] == [{"nome": "Fulano", "polo": "A"}]
+
+
+def test_reconhece_a_inscricao_consultada():
+    n = AdaptadorDJEN._normalizar(ITEM_REAL)
+    assert AdaptadorDJEN._cita_inscricao(n, "218174", "RJ") is True
+    assert AdaptadorDJEN._cita_inscricao(n, "0218174", "rj") is True, "zero a esquerda e caixa"
+
+
+def test_recusa_mesmo_numero_em_outra_seccional():
+    """Guarda do modo de falha silencioso: numero igual, seccional diferente,
+    e outro advogado. Se o filtro do servidor mudar, isso precisa aparecer."""
+    n = AdaptadorDJEN._normalizar(ITEM_REAL)
+    assert AdaptadorDJEN._cita_inscricao(n, "218174", "RR") is False
+    assert AdaptadorDJEN._cita_inscricao(n, "999999", "RJ") is False
