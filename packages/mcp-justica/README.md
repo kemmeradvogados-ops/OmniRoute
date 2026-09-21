@@ -323,6 +323,38 @@ portal **não** fica autorizada por tabela, e um redirecionamento para fora do
 endereço autorizado interrompe a leitura. Termo de risco no endereço bloqueia
 mesmo que tenha sido o operador a digitá-lo.
 
+### Ensaio de login
+
+Preenche o formulário de login com a credencial do cofre e **confere o efeito**,
+sem enviar.
+
+```powershell
+justica-portal ensaiar-login --url "<tela de login>" --tribunal TRF2 --sistema eproc
+```
+
+Por que não envia: se o preenchimento programático não funcionar e o código
+clicar em Entrar assim mesmo, isso conta como tentativa de login falha, e
+tentativas repetidas **bloqueiam a conta do advogado**. O risco não é uma
+mensagem de erro, é perder o acesso.
+
+A dúvida vem da própria página. O campo de senha visível do eproc traz
+`inputmode=none`, que suprime o teclado do dispositivo: assinatura de portal com
+teclado virtual, onde o valor talvez só se forme a partir de cliques na tela. Se
+for o caso, preencher não surte efeito, e este ensaio revela isso sem custo.
+
+A conferência lê de volta o **campo oculto**, que é o efetivamente enviado, e
+compara apenas comprimentos. Nenhum valor de credencial é impresso.
+
+A tela recebe permissão de preenchimento nos dois campos e **nenhuma permissão
+de clique**. Assim, mesmo que o código tentasse enviar por engano, a trava
+barraria: a impossibilidade não depende de ninguém lembrar.
+
+Estrutura do eproc da Justiça Federal do Rio, confirmada em campo em 21 de
+setembro de 2026: formulário `frmLogin`, usuário em `#txtUsuario`, senha visível
+em `#pwdSenha` (tipo texto) e campo enviado em `input[name=pwdSenha]` (tipo
+senha, oculto). Não há campo de segundo fator nessa tela, então o código de seis
+dígitos deve ser pedido numa segunda tela, ainda não observada.
+
 ### O que ainda falta na Fase 2
 
 - Adaptador autenticado de eproc (cobre três dos quatro tribunais do escopo).

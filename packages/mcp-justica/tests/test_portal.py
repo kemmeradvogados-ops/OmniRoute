@@ -120,3 +120,51 @@ def test_campo_na_borda_ainda_conta_como_na_tela():
     from justica_mcp.portal import _na_tela
 
     assert _na_tela(_Elemento(_caixa(-10, 200)), 1280, 720) is True, "parcialmente visivel"
+
+
+# ---------------- ensaio de login: preenche, nao envia ----------------
+
+def _permissao_do_ensaio(url=ENDERECO, usuario="#txtUsuario", senha="#pwdSenha"):
+    """Reproduz a permissao que `ensaiar_login` monta: preenchimento liberado
+    nos dois campos, NENHUM clique liberado."""
+    from justica_mcp.core.guarda_navegacao import Permissao
+
+    base = permissao_efemera(url)
+    return Permissao(
+        padrao_url=base.padrao_url,
+        descricao="tela de login, ensaio de preenchimento sem envio",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(),
+        seletores_preenchiveis=(usuario, senha),
+    )
+
+
+def _guarda_ensaio():
+    return GuardaNavegacao(modo=Modo.LEITURA, permissoes=[_permissao_do_ensaio()])
+
+
+def test_ensaio_permite_preencher_os_dois_campos():
+    g = _guarda_ensaio()
+    assert g.avaliar(Acao.PREENCHER, "#txtUsuario", url=ENDERECO).permitido is True
+    assert g.avaliar(Acao.PREENCHER, "#pwdSenha", url=ENDERECO).permitido is True
+
+
+def test_ensaio_nunca_deixa_clicar_em_entrar():
+    """A garantia central do ensaio. Se o preenchimento nao funcionar e o
+    codigo clicar assim mesmo, isso conta como tentativa de login falha, e
+    tentativas repetidas bloqueiam a conta do advogado. A impossibilidade nao
+    pode depender de eu lembrar de nao chamar o clique: a trava barra."""
+    g = _guarda_ensaio()
+    for seletor in ("#sbmEntrar", "button[name=sbmEntrar]", "input[value='Certificado Digital']"):
+        assert g.avaliar(Acao.CLICAR, seletor, url=ENDERECO).permitido is False
+
+
+def test_ensaio_nao_preenche_campo_fora_da_lista():
+    """A caixa de busca do menu nao faz parte do login e nao deve ser tocada."""
+    g = _guarda_ensaio()
+    assert g.avaliar(Acao.PREENCHER, "#sidebar-searchbox", url=ENDERECO).permitido is False
+
+
+def test_ensaio_nao_baixa_nada():
+    g = _guarda_ensaio()
+    assert g.avaliar(Acao.BAIXAR, "autos.pdf", url=ENDERECO).permitido is False

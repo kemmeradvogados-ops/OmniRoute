@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from .core.cofre import Cofre, CredencialAusente, Identidade
 from .core.guarda_navegacao import (
     Acao, GuardaNavegacao, Modo, NavegacaoBloqueada, Permissao,
 )
@@ -316,6 +317,152 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
     return 0
 
 
+
+
+def ensaiar_login(
+    url: str,
+    tribunal: str,
+    sistema: str,
+    *,
+    campo_usuario: str = "#txtUsuario",
+    campo_senha: str = "#pwdSenha",
+    campo_senha_oculto: str = "input[name=pwdSenha]",
+    oculto: bool = False,
+    segundos: int = 30,
+    cofre: Optional[Cofre] = None,
+) -> int:
+    """Preenche o formulario de login e CONFERE o efeito, sem enviar.
+
+    Por que nao envia: se o preenchimento programatico nao funcionar e o codigo
+    clicar em Entrar assim mesmo, isso conta como tentativa de login falha, e
+    tentativas repetidas bloqueiam a conta do advogado. O risco nao e uma
+    mensagem de erro, e sim perder o acesso.
+
+    O motivo da duvida esta na propria pagina: o campo visivel do eproc traz
+    `inputmode=none`, que suprime o teclado do dispositivo. E a assinatura de
+    portal com teclado virtual, onde o valor talvez so se forme a partir de
+    cliques na tela. Se for esse o caso, preencher nao surte efeito, e este
+    ensaio revela isso sem custo nenhum.
+
+    A conferencia e feita lendo de volta o campo OCULTO, que e o efetivamente
+    enviado. Nenhum valor de credencial e impresso: so o comprimento.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(INSTRUCAO_INSTALACAO, file=sys.stderr)
+        return 2
+
+    identidade = Identidade(tribunal, sistema)
+    cofre = cofre or Cofre()
+    try:
+        login = cofre._login(identidade)
+        senha = cofre._senha(identidade)
+    except CredencialAusente as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
+    # A tela recebe permissao de PREENCHIMENTO nos dois campos, e nenhuma
+    # permissao de clique. Assim, mesmo que o codigo tentasse enviar por
+    # engano, a trava barraria: a impossibilidade nao depende de eu lembrar.
+    permissao = permissao_efemera(url)
+    permissao = Permissao(
+        padrao_url=permissao.padrao_url,
+        descricao="tela de login, ensaio de preenchimento sem envio",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(),
+        seletores_preenchiveis=(campo_usuario, campo_senha),
+    )
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[permissao])
+
+    print("=" * LARGURA)
+    print("ENSAIO DE LOGIN".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Endereco: {url}")
+    print(f"Credencial: {identidade.rotulo} (lida do cofre, nunca impressa)")
+    print("Preenche e CONFERE o efeito. NAO clica em Entrar, NAO autentica.\n")
+
+    executavel = os.environ.get("JUSTICA_CHROMIUM") or None
+    with sync_playwright() as p:
+        try:
+            navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+        except Exception as exc:
+            if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
+                print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
+                return 2
+            raise
+        pagina = navegador.new_page()
+        try:
+            guarda.pode_executar(Acao.NAVEGAR, url)
+            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+
+            botoes_antes = len(pagina.query_selector_all("button, input[type=button]"))
+
+            for seletor, valor, rotulo in (
+                (campo_usuario, login, "usuario"),
+                (campo_senha, senha, "senha"),
+            ):
+                elemento = pagina.query_selector(seletor)
+                if elemento is None:
+                    print(f"  [FALHA] Campo de {rotulo} nao encontrado: {seletor}")
+                    print("          A pagina mudou. Rode `reconhecer` de novo.")
+                    return 1
+                guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
+                elemento.click()          # foco, dentro da tela autorizada
+                elemento.fill(valor)
+                print(f"  Preenchido o campo de {rotulo} ({seletor}).")
+
+            print()
+            # Conferencia: o campo oculto e o que viaja no envio.
+            oculto_el = pagina.query_selector(campo_senha_oculto)
+            visivel_el = pagina.query_selector(campo_senha)
+            tam_oculto = oculto_el.evaluate("e => (e.value || '').length") if oculto_el else None
+            tam_visivel = visivel_el.evaluate("e => (e.value || '').length") if visivel_el else None
+            esperado = len(senha)
+
+            print("  CONFERENCIA (comprimentos, nunca o conteudo):")
+            print(f"    senha no cofre           : {esperado} caracteres")
+            print(f"    campo visivel  ({campo_senha}) : {tam_visivel}")
+            print(f"    campo oculto   (enviado) : {tam_oculto}")
+
+            if tam_oculto == esperado:
+                veredito = "O valor CHEGOU ao campo enviado. O login programatico deve funcionar."
+                proximo = "Proximo passo: clicar em Entrar e reconhecer a tela seguinte."
+            elif tam_visivel == esperado and not tam_oculto:
+                veredito = (
+                    "O valor ficou SO no campo visivel e nao passou para o enviado. "
+                    "E o comportamento esperado quando a pagina monta o valor a partir "
+                    "de teclado virtual, ou quando o espelhamento depende de eventos "
+                    "de digitacao que o preenchimento direto nao dispara."
+                )
+                proximo = (
+                    "Proximo passo: digitar tecla a tecla em vez de preencher de uma "
+                    "vez, e conferir de novo. NAO clicar em Entrar ate o valor chegar."
+                )
+            else:
+                veredito = "Resultado inesperado; nao da para concluir."
+                proximo = "Nao clicar em Entrar. Me mande este relatorio."
+
+            print(f"\n  VEREDITO: {veredito}")
+            print(f"  {proximo}")
+
+            botoes_depois = len(pagina.query_selector_all("button, input[type=button]"))
+            if botoes_depois > botoes_antes:
+                print(f"\n  ATENCAO: apareceram {botoes_depois - botoes_antes} botoes novos apos")
+                print("  o foco no campo. Indicio forte de teclado virtual na tela.")
+
+            print("\n  RELATO DA TRAVA:")
+            for linha in guarda.relato():
+                print(f"    {linha}")
+        finally:
+            navegador.close()
+
+    print("\n" + "=" * LARGURA)
+    print("  NADA foi enviado. Nenhuma tentativa de login foi registrada no portal.")
+    print("  Cole este relatorio para eu decidir o passo seguinte.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="justica-portal",
@@ -327,11 +474,33 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--oculto", action="store_true",
                    help="nao mostra a janela do navegador (o padrao e mostrar)")
     r.add_argument("--segundos", type=int, default=30, help="tempo limite de carregamento")
+
+    e = sub.add_parser(
+        "ensaiar-login",
+        help="preenche o formulario e confere o efeito, SEM clicar em Entrar",
+    )
+    e.add_argument("--url", required=True, help="endereco da tela de login")
+    e.add_argument("--tribunal", required=True, help="por exemplo TRF2")
+    e.add_argument("--sistema", required=True, help="por exemplo eproc")
+    e.add_argument("--campo-usuario", default="#txtUsuario")
+    e.add_argument("--campo-senha", default="#pwdSenha")
+    e.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
+    e.add_argument("--oculto", action="store_true")
+    e.add_argument("--segundos", type=int, default=30)
+
     args = p.parse_args(argv)
 
     try:
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "ensaiar-login":
+            return ensaiar_login(
+                args.url, args.tribunal, args.sistema,
+                campo_usuario=args.campo_usuario,
+                campo_senha=args.campo_senha,
+                campo_senha_oculto=args.campo_senha_oculto,
+                oculto=args.oculto, segundos=args.segundos,
+            )
     except PortalIndisponivel as exc:
         print(str(exc), file=sys.stderr)
         return 1
