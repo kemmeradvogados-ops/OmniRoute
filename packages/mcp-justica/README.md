@@ -640,9 +640,14 @@ Falta:
 - **Listagem de intimações pendentes sem abrir.** Decisão do operador: listar
   sim, abrir não. A primeira execução precisa ser assistida, porque a premissa
   de que listar não dispara ciência ainda não foi confirmada para o eproc.
-- **Cópia integral contra o portal real.** A decisão íntegra/complemento foi
-  exercitada ponta a ponta, mas contra página sintética com PDF de verdade. O
-  botão `#btnDownloadCompletoRS` nunca foi acionado em campo. [Não verificado]
+- **O segundo clique da cópia integral.** Verificado em campo em 21 de setembro
+  de 2026: o clique em `#btnDownloadCompletoRS` **não devolve arquivo**. O eproc
+  abre uma tela intermediária pedindo que a cópia seja gerada, e o download só
+  vem depois disso. O comando não adivinha esse segundo clique: quando o arquivo
+  não chega, ele **relata a tela** que apareceu, com os botões visíveis e as
+  ligações cujo texto contenha "gerar", "baixar", "download", "completo" ou
+  "íntegra", inclusive em aba nova, e para sem clicar em nada. O seletor real
+  entra no código depois de conferido nesse relato, nunca antes.
 - **Sondagem real de sistema**, via `registrar_sonda`, que hoje não tem nenhuma
   sonda registrada.
 - **Os outros três tribunais do escopo**: PJe, e-SAJ e o portal legado do Rio de

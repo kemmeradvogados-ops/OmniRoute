@@ -613,3 +613,98 @@ def test_comando_sem_perfil_no_namespace_nao_quebra(monkeypatch):
     _do_ambiente(args)
     assert args.url == "https://eproc.exemplo/"
     assert not hasattr(args, "perfil")
+
+
+# --------------------------------------------------------------------------
+# Relato da tela intermediaria da copia integral
+#
+# Em campo, 21/09/2026: o clique em #btnDownloadCompletoRS NAO devolve arquivo.
+# O eproc abre uma tela pedindo que a copia seja gerada. O comando nao pode
+# adivinhar o segundo clique: precisa relatar o que achou e parar.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import Campo, _relatar_tela
+
+
+class _TelaDeGeracao:
+    """O minimo que `_relatar_tela` consome. Nao simula o Playwright inteiro:
+    simula o contrato usado, que e o que o teste precisa fixar."""
+
+    def __init__(self, botoes, ligacoes=(), url="https://eproc.exemplo/gerar"):
+        self.url = url
+        self._botoes = botoes
+        self._ligacoes = list(ligacoes)
+
+    def title(self):
+        return ":: eproc - Gerar copia ::"
+
+    def query_selector_all(self, seletor):
+        return self._ligacoes if seletor == "a[href]" else []
+
+
+class _Ligacao:
+    def __init__(self, texto, href):
+        self._texto, self._href = texto, href
+
+    def inner_text(self):
+        return self._texto
+
+    def get_attribute(self, nome):
+        return self._href if nome == "href" else None
+
+
+def _botao_simples(identificador, texto, na_tela=True):
+    return Campo(
+        marcador="button", tipo="button", nome=None, identificador=identificador,
+        rotulo=None, texto_visivel=texto, e_senha=False, na_tela=na_tela, extras={},
+    )
+
+
+def test_relato_lista_os_botoes_na_tela(monkeypatch, capsys):
+    pagina = _TelaDeGeracao([_botao_simples("btnGerar", "Gerar arquivo completo")])
+    monkeypatch.setattr(
+        "justica_mcp.portal._coletar", lambda p: ([], p._botoes)
+    )
+    _relatar_tela(pagina, "TELA APOS O CLIQUE")
+    saida = capsys.readouterr().out
+    assert "TELA APOS O CLIQUE" in saida
+    assert "#btnGerar" in saida
+    assert "Gerar arquivo completo" in saida
+    assert "https://eproc.exemplo/gerar" in saida
+
+
+def test_relato_mostra_botao_fora_da_tela_quando_nao_ha_nenhum_visivel(monkeypatch, capsys):
+    """Se nada esta na tela, esconder a lista deixaria o relato inutil: melhor
+    mostrar marcado como fora da tela do que nao mostrar nada."""
+    pagina = _TelaDeGeracao([_botao_simples("btnEscondido", "Gerar", na_tela=False)])
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], p._botoes))
+    _relatar_tela(pagina, "X")
+    saida = capsys.readouterr().out
+    assert "fora da tela" in saida
+    assert "#btnEscondido" in saida
+
+
+def test_relato_destaca_ligacoes_com_termo_de_copia(monkeypatch, capsys):
+    pagina = _TelaDeGeracao(
+        [],
+        ligacoes=[
+            _Ligacao("Gerar arquivo completo", "controlador.php?acao=gerar"),
+            _Ligacao("Voltar", "controlador.php?acao=voltar"),
+        ],
+    )
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], []))
+    _relatar_tela(pagina, "X")
+    saida = capsys.readouterr().out
+    assert "acao=gerar" in saida
+    assert "acao=voltar" not in saida
+
+
+def test_relato_nao_quebra_quando_a_estrutura_nao_pode_ser_lida(monkeypatch, capsys):
+    """O relato e diagnostico: falhar nele nao pode derrubar a consulta, que ja
+    entregou eventos e partes."""
+    def explode(_):
+        raise RuntimeError("pagina fechada")
+
+    monkeypatch.setattr("justica_mcp.portal._coletar", explode)
+    _relatar_tela(_TelaDeGeracao([]), "X")
+    assert "Nao foi possivel ler a estrutura" in capsys.readouterr().out

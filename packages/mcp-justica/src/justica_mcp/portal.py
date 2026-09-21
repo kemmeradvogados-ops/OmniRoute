@@ -1060,12 +1060,60 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
 BOTAO_INTEGRA = "#btnDownloadCompletoRS"
 
 
+def _relatar_tela(pagina, titulo: str) -> None:
+    """Descreve a tela atual, sem tocar em nada.
+
+    Existe porque o clique na copia integral NAO devolve arquivo: o eproc abre
+    uma tela intermediaria pedindo que o arquivo seja gerado. Adivinhar o
+    seletor dessa tela seria exatamente o erro que este projeto evita, entao o
+    comando relata o que encontrou e para, para que o seletor real seja
+    conferido em campo antes de virar codigo.
+    """
+    print(f"\n    ----- {titulo} -----")
+    print(f"    Endereco: {pagina.url}")
+    try:
+        print(f"    Titulo: {pagina.title()!r}")
+    except Exception:
+        pass
+    try:
+        campos, botoes = _coletar(pagina)
+    except Exception as exc:
+        print(f"    Nao foi possivel ler a estrutura: {type(exc).__name__}: {exc}")
+        return
+    visiveis = [b for b in botoes if b.na_tela]
+    print(f"    BOTOES NA TELA ({len(visiveis)} de {len(botoes)}):")
+    for b in visiveis:
+        alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
+        print(f"      {alvo:40s} {(b.texto_visivel or '')[:50]!r}")
+    if not visiveis:
+        for b in botoes[:20]:
+            alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
+            print(f"      (fora da tela) {alvo:30s} {(b.texto_visivel or '')[:50]!r}")
+    ligacoes = pagina.query_selector_all("a[href]")
+    interessantes = []
+    for a in ligacoes:
+        texto = (a.inner_text() or "").strip()
+        if any(t in texto.lower() for t in ("gerar", "download", "baixar", "completo", "integra")):
+            interessantes.append((texto[:60], (a.get_attribute("href") or "")[:90]))
+    if interessantes:
+        print(f"    LIGACOES COM TERMO DE COPIA ({len(interessantes)}):")
+        for texto, href in interessantes[:15]:
+            print(f"      {texto!r}  ->  {href}")
+
+
 def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optional[str]:
     """Copia integral pelo botao do proprio portal.
 
     Unico download que exige clique: o botao nao tem endereco proprio, o
     arquivo e montado pelo servidor sob demanda. Por isso o alvo e liberado
     nominalmente, e so nesta operacao.
+
+    Em campo, em 21 de setembro de 2026, este clique NAO devolveu arquivo: o
+    eproc abre uma tela intermediaria pedindo que a copia seja gerada. O
+    comando nao adivinha o segundo clique. Ele relata a tela que apareceu, com
+    os botoes e as ligacoes candidatas, para que o seletor real seja conferido
+    antes de virar codigo. Adivinhar aqui e o erro que este projeto existe para
+    evitar: um clique errado no portal custa caro.
     """
     from pathlib import Path
 
@@ -1079,8 +1127,31 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
         seletores_clicaveis=(BOTAO_INTEGRA,),
     ))
     guarda.pode_executar(Acao.CLICAR, BOTAO_INTEGRA, url=pagina.url)
-    with pagina.expect_download(timeout=segundos * 1000) as info:
-        botao.click()
+
+    # A tela intermediaria pode vir como aba nova. Sem capturar a aba, o
+    # relato descreveria a pagina antiga e nao diria nada de util.
+    nova: list = []
+    try:
+        pagina.context.on("page", lambda p: nova.append(p))
+    except Exception:
+        pass
+
+    try:
+        with pagina.expect_download(timeout=segundos * 1000) as info:
+            botao.click()
+    except Exception as exc:
+        print(f"    O clique nao devolveu arquivo: {type(exc).__name__}.")
+        print("    O eproc abre uma tela pedindo para gerar a copia. Segue o que ha nela,")
+        print("    para o seletor ser conferido antes de virar codigo. Nada foi clicado.")
+        _relatar_tela(pagina, "TELA APOS O CLIQUE")
+        for i, p in enumerate(nova):
+            try:
+                p.wait_for_load_state("domcontentloaded", timeout=5000)
+            except Exception:
+                pass
+            _relatar_tela(p, f"ABA NOVA {i + 1}")
+        raise
+
     baixado = info.value
     destino.mkdir(parents=True, exist_ok=True)
     sugerido = baixado.suggested_filename or f"{chave}-integra.zip"
@@ -1351,7 +1422,10 @@ def consultar_processo(
                     )
                 except Exception as exc:
                     arquivo, falhou = None, True
-                    print(f"    falhou: {type(exc).__name__}: {exc}")
+                    # So o nome do erro: o relato da tela, impresso acima, e o
+                    # que serve para decidir o proximo passo. O despejo do log
+                    # do Playwright sepultava esse relato.
+                    print(f"    Copia integral nao concluida ({type(exc).__name__}).")
                 if arquivo:
                     from pathlib import Path as _P
 
