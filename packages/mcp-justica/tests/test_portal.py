@@ -993,3 +993,94 @@ def test_tempo_esgotado_distingue_desafio_que_saiu_da_tela(capsys):
     saida = capsys.readouterr().out
     assert "Desafio ainda na tela: nao" in saida
     assert "voltado ao login" in saida
+
+
+# --------------------------------------------------------------------------
+# Reenvio da credencial apos o desafio
+#
+# Confirmado pelo operador em 21/09/2026: ele marcou a caixa, e o eproc voltou
+# ao FORMULARIO DE LOGIN, nao ao segundo fator. A primeira credencial nunca
+# chegou a ser avaliada, foi desviada para o desafio.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _reenviar_credencial
+
+
+class _CampoDoFormulario:
+    def __init__(self, valor=""):
+        self.valor = valor
+        self.cliques = 0
+
+    def click(self):
+        self.cliques += 1
+
+    def fill(self, valor):
+        self.valor = valor
+
+    def evaluate(self, _):
+        return len(self.valor)
+
+
+class _Formulario:
+    def __init__(self, faltando=None, senha_espelho=True):
+        self.url = "https://eproc.exemplo/login"
+        self.faltando = faltando or set()
+        self.senha_espelho = senha_espelho
+        self.campos = {}
+        self.carregou = 0
+
+    def query_selector(self, seletor):
+        if seletor in self.faltando:
+            return None
+        if seletor == "input[name=pwdSenha]":
+            if not self.senha_espelho:
+                return _CampoDoFormulario("")
+            return self.campos.get("#pwdSenha", _CampoDoFormulario(""))
+        self.campos.setdefault(seletor, _CampoDoFormulario())
+        return self.campos[seletor]
+
+    def wait_for_load_state(self, *a, **kw):
+        self.carregou += 1
+
+
+class _GuardaPermissiva:
+    def pode_executar(self, *a, **kw):
+        return True
+
+
+def _reenviar(pagina):
+    return _reenviar_credencial(
+        pagina, _GuardaPermissiva(), "https://eproc.exemplo/login",
+        "usuario", "senha-secreta", "#txtUsuario", "#pwdSenha",
+        "input[name=pwdSenha]", "#sbmEntrar", 5,
+    )
+
+
+def test_reenvio_preenche_e_clica_uma_vez(capsys):
+    pagina = _Formulario()
+    assert _reenviar(pagina) is True
+    assert pagina.campos["#txtUsuario"].valor == "usuario"
+    assert pagina.campos["#pwdSenha"].valor == "senha-secreta"
+    assert pagina.campos["#sbmEntrar"].cliques == 1
+    assert "reenviada (uma vez)" in capsys.readouterr().out
+
+
+def test_reenvio_aborta_se_a_senha_nao_chegou_ao_campo_enviado(capsys):
+    """A mesma trava do primeiro envio: sem conferir o campo espelho, a senha
+    podia nao chegar e o clique contaria como tentativa falha."""
+    pagina = _Formulario(senha_espelho=False)
+    assert _reenviar(pagina) is False
+    assert "#sbmEntrar" not in pagina.campos
+    assert "Nada reenviado" in capsys.readouterr().out
+
+
+def test_reenvio_aborta_se_o_campo_sumiu(capsys):
+    pagina = _Formulario(faltando={"#txtUsuario"})
+    assert _reenviar(pagina) is False
+    assert "Nada reenviado" in capsys.readouterr().out
+
+
+def test_reenvio_aborta_se_o_botao_sumiu(capsys):
+    pagina = _Formulario(faltando={"#sbmEntrar"})
+    assert _reenviar(pagina) is False
+    assert "Nada reenviado" in capsys.readouterr().out

@@ -695,6 +695,32 @@ pasta de estado, junto da auditoria, e não em lugar temporário.
 `JUSTICA_NAVEGADOR_EFEMERO=1` devolve o descarte a cada execução, para quem
 preferir pagar o desafio toda vez.
 
+#### O que o eproc faz depois do desafio
+
+Confirmado em campo em 21 de setembro de 2026, com o operador diante da tela:
+ele marcou a caixa e o portal **voltou ao formulário de login**, não ao segundo
+fator. A primeira credencial nunca chegou a ser avaliada, foi desviada para o
+desafio.
+
+Por padrão o comando **não reenvia sozinho**, porque credencial recusada devolve
+a mesma tela e reenviar às cegas é como se bloqueia uma conta. Dois caminhos:
+
+```powershell
+# repetir o comando: a liberação fica guardada no perfil, e a 2ª execução passa direto
+justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --confirmo-tentativa-unica
+
+# ou autorizar o reenvio na hora, numa execução só
+justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --confirmo-tentativa-unica --reenviar-apos-desafio
+```
+
+O reenvio só acontece quando **não há mensagem de erro na tela**. Havendo
+mensagem, ele para e a imprime, mesmo com a opção ligada. E mantém as mesmas
+travas do primeiro envio, inclusive a conferência de que a senha chegou ao campo
+efetivamente enviado.
+
+Ele também não conta como nova tentativa no teto, pelo mesmo motivo por que
+existe: é a conclusão do envio já contado, não um segundo envio.
+
 Com `--oculto` não há janela onde responder, então o comando **recusa e explica**
 em vez de esperar em silêncio até o tempo acabar. Pela mesma razão, a ferramenta
 do servidor, que roda sempre oculta, não passa por telas com desafio: quando ele

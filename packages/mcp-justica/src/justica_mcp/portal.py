@@ -853,6 +853,7 @@ def autenticar(
     oculto: bool = False,
     segundos: int = 45,
     espera_humana: int = ESPERA_HUMANA_PADRAO,
+    reenviar: bool = False,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
     apos_autenticar: Optional[Any] = None,
@@ -1014,11 +1015,34 @@ def autenticar(
                         and not _ha_desafio_humano(pagina)
                         and voltou is not None and voltou.is_visible()):
                     print("\n  O portal voltou ao formulario de login apos o desafio.")
-                    print("  A credencial precisa ser enviada de novo, e este comando")
-                    print("  nao faz isso sozinho: credencial recusada devolve a mesma")
-                    print("  tela, e reenviar as cegas e como se bloqueia uma conta.")
-                    print("  Se nao houver mensagem de erro abaixo, repita o comando:")
-                    print("  a liberacao do desafio fica guardada no perfil do navegador.")
+                    erros_do_desafio = _mensagens_de_erro(pagina)
+                    if erros_do_desafio:
+                        print("  MAS ha mensagem na tela, entao a credencial pode ter sido")
+                        print("  recusada. NAO foi reenviada:")
+                        for e in erros_do_desafio:
+                            print(f"    {e}")
+                    elif not reenviar:
+                        print("  A credencial precisa ser enviada de novo. Este comando nao")
+                        print("  faz isso sozinho por padrao: credencial recusada devolve a")
+                        print("  mesma tela, e reenviar as cegas e como se bloqueia conta.")
+                        print("  Sem mensagem de erro acima, ha dois caminhos:")
+                        print("    repetir o comando (a liberacao fica guardada no perfil), ou")
+                        print("    acrescentar --reenviar-apos-desafio para o reenvio na hora.")
+                    else:
+                        # Autorizado pelo operador na linha de comando, e so
+                        # quando NAO ha mensagem de erro. Nao e repetir uma
+                        # tentativa recusada: a primeira nunca chegou a ser
+                        # avaliada, foi desviada para o desafio.
+                        print("  Sem mensagem de erro, e o reenvio foi autorizado no comando.")
+                        if _reenviar_credencial(
+                            pagina, guarda, url, login, senha, campo_usuario, campo_senha,
+                            campo_senha_oculto, botao_entrar, segundos,
+                        ):
+                            estado.registrar(
+                                acao="login_resultado_credencial",
+                                tribunal=identidade.tribunal, sistema=identidade.sistema,
+                                resultado="reenviada_apos_desafio",
+                            )
 
             erros = _mensagens_de_erro(pagina)
             campo = pagina.query_selector(campo_codigo)
@@ -1295,6 +1319,50 @@ def _aguardar_desafio_humano(
     return False
 
 
+def _reenviar_credencial(
+    pagina, guarda, url, login, senha, campo_usuario, campo_senha,
+    campo_senha_oculto, botao_entrar, segundos,
+) -> bool:
+    """Reenvia a credencial UMA vez, apos o desafio ter sido resolvido.
+
+    Nao e repetir uma tentativa recusada. A primeira nunca chegou a ser
+    avaliada: foi desviada para o desafio do Cloudflare, e o portal devolveu o
+    formulario em branco. Quem chama ja conferiu que nao ha mensagem de erro na
+    tela e que o operador autorizou na linha de comando.
+
+    Nao conta como nova tentativa no teto, pelo mesmo motivo: e a conclusao do
+    envio que ja foi contado, nao um segundo envio.
+    """
+    for seletor, valor, rotulo in (
+        (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
+    ):
+        elemento = pagina.query_selector(seletor)
+        if elemento is None:
+            print(f"    [FALHA] Campo de {rotulo} sumiu. Nada reenviado.")
+            return False
+        guarda.pode_executar(Acao.PREENCHER, seletor, url=pagina.url)
+        elemento.click()
+        elemento.fill(valor)
+
+    alvo = pagina.query_selector(campo_senha_oculto)
+    if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
+        print("    [ABORTADO] A senha nao chegou ao campo enviado. Nada reenviado.")
+        return False
+
+    guarda.pode_executar(Acao.CLICAR, botao_entrar, url=pagina.url)
+    botao = pagina.query_selector(botao_entrar)
+    if botao is None:
+        print("    [FALHA] Botao de entrar sumiu. Nada reenviado.")
+        return False
+    print("    Credencial reenviada (uma vez).")
+    botao.click()
+    try:
+        pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+    except Exception:
+        pass
+    return True
+
+
 def _ja_autenticado(pagina) -> bool:
     """Diz se a sessao ja esta aberta, por evidencia positiva na tela.
 
@@ -1524,6 +1592,7 @@ def consultar_processo(
     oculto: bool = False,
     segundos: int = 45,
     espera_humana: int = ESPERA_HUMANA_PADRAO,
+    reenviar: bool = False,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
 ) -> int:
@@ -1773,7 +1842,7 @@ def consultar_processo(
     return autenticar(
         url, tribunal, sistema, confirmado=confirmado, perfil=perfil,
         oculto=oculto, segundos=segundos, espera_humana=espera_humana,
-        cofre=cofre, estado=estado, apos_autenticar=depois,
+        reenviar=reenviar, cofre=cofre, estado=estado, apos_autenticar=depois,
     )
 
 
@@ -1860,6 +1929,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--segundos", type=int, default=45)
     a.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
                      help="segundos para o operador marcar a caixa do desafio do Cloudflare")
+    a.add_argument("--reenviar-apos-desafio", action="store_true",
+                     dest="reenviar",
+                     help="reenvia a credencial na hora se o portal voltar ao login apos o desafio, e so quando nao houver mensagem de erro")
 
     cp = sub.add_parser("consultar", help="autentica e consulta um processo pela busca rapida")
     cp.add_argument("--url", default=None, help=AJUDA_URL)
@@ -1875,6 +1947,9 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--segundos", type=int, default=45)
     cp.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
                       help="segundos para o operador marcar a caixa do desafio do Cloudflare")
+    cp.add_argument("--reenviar-apos-desafio", action="store_true",
+                      dest="reenviar",
+                      help="reenvia a credencial na hora se o portal voltar ao login apos o desafio, e so quando nao houver mensagem de erro")
 
     args = p.parse_args(argv)
 
@@ -1893,14 +1968,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.url, args.tribunal, args.sistema, args.processo,
                 documentos=args.documentos, confirmado=args.confirmado,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
-                espera_humana=args.espera_humana,
+                espera_humana=args.espera_humana, reenviar=args.reenviar,
             )
         if args.comando == "autenticar":
             return autenticar(
                 args.url, args.tribunal, args.sistema, confirmado=args.confirmado,
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
-                espera_humana=args.espera_humana,
+                espera_humana=args.espera_humana, reenviar=args.reenviar,
             )
         if args.comando == "entrar":
             return entrar(
