@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from .core.acesso import PortalNaoConfigurado, config_portal
 from .core.cofre import Cofre, CredencialAusente, Identidade
+from .core.config import carregar_env
 from .core.estado import Estado
 from .core.limite_tentativas import (
     LimiteTentativas, TetoDeTentativasAtingido,
@@ -1429,6 +1431,33 @@ def consultar_processo(
     )
 
 
+AJUDA_URL = ("endereco do portal; quando omitido, vem do .env "
+             "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_URL)")
+
+
+def _do_ambiente(args) -> None:
+    """Completa endereco e perfil a partir do .env quando nao vieram no comando.
+
+    O endereco ja morava no ambiente para o servidor, mas a linha de comando o
+    exigia de novo a cada execucao. Repetir o endereco a mao convida a errar o
+    destino da autenticacao, que e exatamente o que este projeto nao pode
+    deixar acontecer. O que vier no comando continua tendo precedencia.
+    """
+    if getattr(args, "url", None) and getattr(args, "perfil", "ausente") is not None:
+        return
+    try:
+        config = config_portal(args.tribunal, args.sistema)
+    except PortalNaoConfigurado:
+        if not getattr(args, "url", None):
+            raise
+        return
+    if not args.url:
+        args.url = config.url
+        print(f"Endereco vindo do .env para {config.rotulo}.")
+    if getattr(args, "perfil", "ausente") is None and config.perfil:
+        args.perfil = config.perfil
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="justica-portal",
@@ -1445,7 +1474,7 @@ def main(argv: list[str] | None = None) -> int:
         "ensaiar-login",
         help="preenche o formulario e confere o efeito, SEM clicar em Entrar",
     )
-    e.add_argument("--url", required=True, help="endereco da tela de login")
+    e.add_argument("--url", default=None, help=AJUDA_URL)
     e.add_argument("--tribunal", required=True, help="por exemplo TRF2")
     e.add_argument("--sistema", required=True, help="por exemplo eproc")
     e.add_argument("--campo-usuario", default="#txtUsuario")
@@ -1455,7 +1484,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--segundos", type=int, default=30)
 
     t = sub.add_parser("entrar", help="envia o login UMA vez e le a tela seguinte")
-    t.add_argument("--url", required=True)
+    t.add_argument("--url", default=None, help=AJUDA_URL)
     t.add_argument("--tribunal", required=True)
     t.add_argument("--sistema", required=True)
     t.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado",
@@ -1468,7 +1497,7 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--segundos", type=int, default=45)
 
     a = sub.add_parser("autenticar", help="credencial e segundo fator, numa sessao so")
-    a.add_argument("--url", required=True)
+    a.add_argument("--url", default=None, help=AJUDA_URL)
     a.add_argument("--tribunal", required=True)
     a.add_argument("--sistema", required=True)
     a.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
@@ -1481,7 +1510,7 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--segundos", type=int, default=45)
 
     cp = sub.add_parser("consultar", help="autentica e consulta um processo pela busca rapida")
-    cp.add_argument("--url", required=True)
+    cp.add_argument("--url", default=None, help=AJUDA_URL)
     cp.add_argument("--tribunal", required=True)
     cp.add_argument("--sistema", required=True)
     cp.add_argument("--processo", required=True, help="numero no padrao da numeracao unica")
@@ -1495,7 +1524,14 @@ def main(argv: list[str] | None = None) -> int:
 
     args = p.parse_args(argv)
 
+    # O .env nunca era lido aqui: so o servidor o carregava. Quem configurasse
+    # a pasta de copias ou o endereco do portal no arquivo via a linha de
+    # comando ignorar tudo, em silencio, e gravar no lugar antigo.
+    carregar_env()
+
     try:
+        if args.comando != "reconhecer":
+            _do_ambiente(args)
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
         if args.comando == "consultar":
@@ -1525,7 +1561,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_senha_oculto=args.campo_senha_oculto,
                 oculto=args.oculto, segundos=args.segundos,
             )
-    except PortalIndisponivel as exc:
+    except (PortalIndisponivel, PortalNaoConfigurado) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     return 2

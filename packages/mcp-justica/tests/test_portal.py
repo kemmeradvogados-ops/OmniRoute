@@ -533,3 +533,83 @@ def test_auditoria_atribui_o_download_a_permissao_de_documentos():
     d = g.avaliar(Acao.BAIXAR, "https://eproc1g.tjrj.jus.br/eproc/doc.pdf")
     assert d.permitido is True
     assert "documentos do processo" in d.motivo
+
+
+# --------------------------------------------------------------------------
+# Endereco e perfil vindos do .env
+#
+# A linha de comando exigia `--url` a cada execucao, embora o endereco ja
+# morasse no ambiente para o servidor. Repetir o endereco a mao convida a
+# errar o destino da autenticacao, que e precisamente o que este projeto
+# existe para evitar.
+# --------------------------------------------------------------------------
+
+from argparse import Namespace
+
+from justica_mcp.core.acesso import PortalNaoConfigurado
+from justica_mcp.portal import _do_ambiente
+
+
+def _args(**extra):
+    base = {"tribunal": "TRF2", "sistema": "eproc", "url": None}
+    base.update(extra)
+    return Namespace(**base)
+
+
+def test_endereco_vem_do_ambiente_quando_nao_veio_no_comando(monkeypatch, capsys):
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/eproc/")
+    args = _args()
+    _do_ambiente(args)
+    assert args.url == "https://eproc.exemplo/eproc/"
+    # O usuario precisa saber de onde veio o endereco que vai receber a senha.
+    assert "vindo do .env" in capsys.readouterr().out
+
+
+def test_endereco_do_comando_tem_precedencia_sobre_o_ambiente(monkeypatch):
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://do-ambiente/")
+    args = _args(url="https://do-comando/")
+    _do_ambiente(args)
+    assert args.url == "https://do-comando/"
+
+
+def test_perfil_vem_do_ambiente_quando_nao_veio_no_comando(monkeypatch):
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ000000")
+    args = _args(perfil=None)
+    _do_ambiente(args)
+    assert args.perfil == "RJ000000"
+
+
+def test_perfil_do_comando_tem_precedencia(monkeypatch):
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ000000")
+    args = _args(url="https://x/", perfil="RJ999999")
+    _do_ambiente(args)
+    assert args.perfil == "RJ999999"
+
+
+def test_sem_endereco_no_comando_e_no_ambiente_orienta_o_que_configurar(monkeypatch):
+    monkeypatch.delenv("JUSTICA_PORTAL_TRF2_EPROC_URL", raising=False)
+    with pytest.raises(PortalNaoConfigurado) as erro:
+        _do_ambiente(_args())
+    assert "JUSTICA_PORTAL_TRF2_EPROC_URL" in str(erro.value)
+
+
+def test_ambiente_incompleto_nao_atrapalha_quem_passou_o_endereco(monkeypatch):
+    """Quem informa `--url` nao pode ser barrado por falta de configuracao:
+    o comando explicito e autossuficiente."""
+    monkeypatch.delenv("JUSTICA_PORTAL_TRF2_EPROC_URL", raising=False)
+    args = _args(url="https://do-comando/", perfil=None)
+    _do_ambiente(args)
+    assert args.url == "https://do-comando/"
+    assert args.perfil is None
+
+
+def test_comando_sem_perfil_no_namespace_nao_quebra(monkeypatch):
+    """`entrar` e `ensaiar-login` nao tem `--perfil`. O completamento nao pode
+    supor que o campo exista."""
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/")
+    args = _args()
+    _do_ambiente(args)
+    assert args.url == "https://eproc.exemplo/"
+    assert not hasattr(args, "perfil")

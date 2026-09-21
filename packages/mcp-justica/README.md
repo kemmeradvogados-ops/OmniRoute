@@ -534,11 +534,17 @@ tentativa à toa nem prometer o que o servidor não pode fazer.
 ### Cópia de documentos
 
 ```powershell
-justica-portal consultar --url "..." --processo "..." --documentos auto        # padrao
-justica-portal consultar --url "..." --processo "..." --documentos integra
-justica-portal consultar --url "..." --processo "..." --documentos ultimos:5
-justica-portal consultar --url "..." --processo "..." --documentos nenhum
+justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..."                      # auto
+justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --documentos integra
+justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --documentos ultimos:5
+justica-portal consultar --tribunal TRF2 --sistema eproc --processo "..." --documentos nenhum
 ```
+
+O `--url` deixou de ser obrigatorio: quando omitido, vem do `.env`
+(`JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_URL`), e o comando avisa de onde o tirou.
+Repetir o endereco a mao a cada execucao convidava a errar o destino da
+autenticacao, que e exatamente o que este projeto existe para evitar. O que vier
+no comando continua tendo precedencia sobre o arquivo.
 
 Baixar autos esteve **proibido em qualquer modo** até 21 de setembro de 2026,
 quando o operador decidiu habilitar a cópia. A mudança foi de "nunca" para
