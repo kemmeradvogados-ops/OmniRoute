@@ -1,0 +1,59 @@
+# Regras de migracao mantidas pelo OPERADOR, nao pelo codigo.
+#
+# Estas regras sao PISTAS de prioridade de sondagem, nunca afirmacao sobre onde
+# o processo esta. A migracao move processos de sistema continuamente; por isso
+# toda regra tem `vigencia_inicio`, `fonte` e confianca no maximo media.
+#
+# Revisar a cada ciclo de migracao anunciado pelo tribunal.
+
+TJRJ:
+  - descricao: >-
+      Competencias civeis em sentido amplo passaram a receber distribuicao nova
+      exclusivamente no eproc; PJe e DCP ficaram bloqueados para distribuicao.
+    sistema_provavel: eproc
+    ano_ajuizamento_minimo: 2026
+    confianca: media
+    vigencia_inicio: "2026-06-01"
+    fonte: https://oabrj.org.br/noticias/tjrj-reforca-distribuicao-dependencia-sera-bloqueada-pje-dcp-unidades-eproc-implantado
+  - descricao: >-
+      Acervo anterior permanece em PJe ou DCP ate ser migrado em lote pelo
+      Ato Executivo Conjunto TJ/CGJ nº. 21/2026. Sem sondagem, indeterminado.
+    sistema_provavel: null
+    ano_ajuizamento_maximo: 2025
+    confianca: baixa
+    vigencia_inicio: "2026-01-01"
+    fonte: https://www.tjrj.jus.br/eproc/legislacao
+
+TJSP:
+  - descricao: >-
+      Migracao do SAJ para o eproc em ciclos por competencia. Processos novos
+      das competencias ja implantadas nascem no eproc.
+    sistema_provavel: eproc
+    ano_ajuizamento_minimo: 2026
+    confianca: media
+    vigencia_inicio: "2026-02-01"
+    fonte: https://www.tjsp.jus.br/Noticias/Noticia?codigoNoticia=113587
+  - descricao: >-
+      Acervo anterior segue no e-SAJ ate a migracao do respectivo ciclo.
+      A banca nao possui credencial de e-SAJ.
+    sistema_provavel: esaj
+    ano_ajuizamento_maximo: 2025
+    confianca: baixa
+    vigencia_inicio: "2025-10-01"
+    fonte: https://www.tjsp.jus.br/Download/EPROC/InfoEproc/Infoeproc101.pdf
+
+TRT1:
+  - descricao: Justica do Trabalho opera integralmente em PJe; sem ambiguidade.
+    sistema_provavel: pje
+    confianca: alta
+    vigencia_inicio: "2018-01-01"
+    fonte: https://www.cnj.jus.br/programas-e-acoes/processo-judicial-eletronico-pje/
+
+TRF2:
+  - descricao: >-
+      Justica Federal da 2ª Regiao opera em eproc, inclusive primeiro grau do
+      Rio de Janeiro.
+    sistema_provavel: eproc
+    confianca: media
+    vigencia_inicio: "2023-01-01"
+    fonte: https://www.trf4.jus.br/eproc

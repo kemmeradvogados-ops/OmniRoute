@@ -1,0 +1,176 @@
+# justica-mcp
+
+Camada padronizadora de acesso processual da Kemmer Advogados. Um servidor
+Model Context Protocol que entrega, ao agente, processos, andamentos e
+publicações dos tribunais onde a banca atua, sem que o agente precise saber se
+o processo está no PJe, no eproc, no e-SAJ ou no DCP.
+
+**Versão 0.1.0, Fase 1: somente leitura, sem credenciais, sem automação de
+navegador.**
+
+## Escopo
+
+Fechado nas credenciais da banca:
+
+| Tribunal | Sistemas ativos | Credencial da banca |
+| --- | --- | --- |
+| Tribunal de Justiça do Estado do Rio de Janeiro | PJe, eproc, DCP | PJe, eproc, DCP |
+| Tribunal de Justiça do Estado de São Paulo | e-SAJ, eproc | eproc apenas |
+| Tribunal Regional do Trabalho da 1ª Região | PJe | PJe |
+| Justiça Federal da 2ª Região | eproc | eproc |
+
+## Decisão central do projeto
+
+`tribunal -> sistema` **não é tabelável**, e tabelar foi o erro que este
+desenho corrige.
+
+O Tribunal de Justiça do Estado do Rio de Janeiro opera PJe, eproc e DCP em
+paralelo, sob o cronograma de migração do Ato Executivo Conjunto TJ/CGJ
+nº. 21/2026. O Tribunal de Justiça do Estado de São Paulo migra do SAJ para o
+eproc em ciclos por competência. Nos dois casos, o mesmo número pode estar em
+sistemas diferentes conforme a competência, a vara e a data de migração.
+
+Por isso:
+
+- `identificar_tribunal` é determinístico, derivado do próprio número, e valida
+  o dígito verificador (ISO 7064 MOD 97-10, Resolução nº. 65/2008).
+- `resolver_sistema` é empírico e cacheado, nunca tabelado. Ordem de decisão:
+  cache válido, sondagem autenticada (Fase 2), pista de migração, indeterminado.
+- Toda resposta traz `sistema_resolvido`, `origem_da_resolucao` e `valido_ate`,
+  para o cache envelhecer em voz alta em vez de levar o agente ao adaptador
+  errado em silêncio.
+- Quando não sabe, responde `indeterminado` com a ordem de candidatos. Não chuta.
+
+## Ferramentas
+
+Todas somente leitura.
+
+| Ferramenta | Fonte | Entrega |
+| --- | --- | --- |
+| `justica_identificar_tribunal` | local | tribunal, segmento, ano, validação do dígito |
+| `justica_resolver_sistema` | local mais cache | sistema provável, origem e validade |
+| `justica_consultar_processo` | DataJud | classe, assuntos, órgão, último andamento |
+| `justica_listar_andamentos` | DataJud | movimentos, do mais recente ao mais antigo |
+| `justica_publicacoes_por_oab` | Diário de Justiça Eletrônico Nacional | publicações por inscrição na Ordem |
+| `justica_publicacoes_por_processo` | Diário de Justiça Eletrônico Nacional | publicações de um processo |
+| `justica_verificar_novos_andamentos` | DataJud mais snapshots | apenas o que mudou desde a última consulta |
+| `justica_capacidades` | local | o que cada adaptador faz, e por que não faz o resto |
+| `justica_auditoria_recente` | local | últimas chamadas registradas |
+
+## Intimação: a fronteira que não pode ser instrução de prompt
+
+A lei nº. 11.419/06, artigo 5º, §3º, dispõe que a intimação eletrônica se
+considera realizada no dia em que o intimado consulta o teor da comunicação, e,
+não havendo consulta em 10 dias corridos, considera-se automaticamente
+realizada. O Superior Tribunal de Justiça decidiu em outubro de 2025 que esses
+10 dias corridos contam da data do **envio**.
+
+Ou seja: **abrir o teor consome o prazo**. Um agente que clique no lugar errado
+antecipa a ciência e pode custar um prazo ao cliente.
+
+Como o projeto trata isso:
+
+1. O caminho de leitura é o Diário de Justiça Eletrônico Nacional, canal público
+   já publicado, que **não dispara ciência**.
+2. A capacidade `dar_ciencia_intimacao` não existe em nenhum adaptador, e
+   `verificar_somente_leitura()` **aborta a inicialização do servidor** se ela
+   for declarada disponível por engano. Barreira estrutural, não promessa.
+3. Limite declarado honestamente: nem toda comunicação dirigida ao advogado
+   transita pelo Diário. Expediente no painel do portal e Domicílio Judicial
+   Eletrônico são canais distintos. **Ausência no Diário não prova ausência de
+   intimação**, e essa cobertura precisa ser conferida tribunal a tribunal antes
+   de o escritório confiar o monitoramento a esta fonte isoladamente.
+
+## O que o servidor não faz, e diz que não faz
+
+A matriz em `core/capabilities.py` declara cada limite com o motivo, para o
+agente recusar com honestidade em vez de tentar outro caminho e inventar uma
+explicação quando a resposta vier vazia:
+
+- **Busca por nome de parte**: nenhum adaptador atende. A API pública do DataJud
+  não publica nomes de partes nem advogados, por política do Conselho Nacional
+  de Justiça amparada na Portaria nº. 160/2020.
+- **Documentos e íntegra**: nenhum adaptador atende na Fase 1. Exige acesso
+  autenticado.
+- **Intimações pendentes do painel**: exige portal autenticado.
+- **Busca por inscrição na Ordem**: só pelo Diário, nunca pelo DataJud.
+
+## Restrição de infraestrutura, verificada
+
+As APIs do Conselho Nacional de Justiça bloqueiam acesso por país de origem.
+Chamada a `comunicaapi.pje.jus.br` a partir de máquina fora do Brasil retorna
+HTTP 403 do CloudFront, com a mensagem *"configured to block access from your
+country"*. O servidor **precisa rodar com saída brasileira**: máquina do
+escritório ou provedor nacional. Nuvem fora do Brasil está descartada.
+
+## Instalação
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e .
+cp .env.example .env     # preencher DATAJUD_API_KEY
+```
+
+A chave do DataJud é pública, emitida pelo Departamento de Pesquisas Judiciárias
+do Conselho Nacional de Justiça. Obtenha em
+<https://datajud-wiki.cnj.jus.br/api-publica/acesso/>.
+
+Registro no cliente Model Context Protocol:
+
+```json
+{
+  "mcpServers": {
+    "justica": {
+      "command": ".venv/bin/python",
+      "args": ["-m", "justica_mcp.server"],
+      "env": { "DATAJUD_API_KEY": "..." }
+    }
+  }
+}
+```
+
+## Testes
+
+```bash
+.venv/bin/python -m pytest tests/ -q
+```
+
+## Credenciais: o que este repositório não guarda
+
+A Fase 1 **não usa credencial nenhuma**, de propósito. Ela entrega monitoramento
+e movimentação sem tocar em senha, e por isso é a fatia que pode entrar em
+produção sem risco de acesso.
+
+Regras para a Fase 2, quando as credenciais entrarem:
+
+- Senha e semente do segundo fator **nunca** no mesmo lugar, e nunca em planilha.
+  Senha e semente juntas equivalem à conta inteira: o segundo fator deixa de ser
+  segundo fator quando viaja ao lado da senha.
+- Credencial **jamais** entra no contexto do modelo. O adaptador lê do cofre no
+  momento da chamada; o modelo vê apenas o resultado.
+- Nada de credencial em `.env` versionado, em código ou em log. A tabela de
+  auditoria registra ação, tribunal, processo e solicitante, nunca segredo.
+- Os códigos de segundo fator dos portais são gerados por aplicativo a partir de
+  semente em base32, de modo que o servidor consegue produzi-los sem intervenção
+  humana. Isso **aumenta** a responsabilidade sobre o cofre, não diminui.
+
+## Próximas fases
+
+- **Fase 2**: adaptadores autenticados de eproc para o Tribunal de Justiça do
+  Estado do Rio de Janeiro e para a Justiça Federal da 2ª Região, com cofre de
+  segredos, sondagem real de sistema (`registrar_sonda`) e download de documentos.
+- **Fase 3**: PJe do Rio de Janeiro e do Tribunal Regional do Trabalho da 1ª
+  Região; depois São Paulo. O DCP é legado em extinção pela migração ao eproc e
+  provavelmente não merece adaptador de documentos.
+- **Prazos**: a contagem fica na habilidade `analise-processual`, não aqui. Este
+  servidor entrega o movimento e a publicação com proveniência; a contagem exige
+  calendário forense por tribunal e permanece sempre conferível, nunca automática.
+
+## Pendências que dependem do operador
+
+1. Confirmar a natureza do campo de três caracteres do DCP na planilha.
+2. Credencial de e-SAJ para São Paulo: sem ela, o acervo não migrado fica sem
+   acesso autenticado.
+3. Conferir o alias do DataJud do primeiro grau da Justiça Federal do Rio de
+   Janeiro em produção.
+4. Testar, tribunal a tribunal, se as intimações da banca aparecem no Diário.
