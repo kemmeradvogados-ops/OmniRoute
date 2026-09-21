@@ -90,3 +90,44 @@ def test_teto_vem_do_ambiente(estado, monkeypatch):
 def test_valor_invalido_no_ambiente_cai_no_padrao(estado, monkeypatch):
     monkeypatch.setenv("JUSTICA_TETO_TENTATIVAS", "zero")
     assert LimiteTentativas.do_ambiente(estado).teto == 6
+
+
+# --------------------------------------------------------------------------
+# O que conta como tentativa
+#
+# Dois defeitos encontrados em 21/09/2026, quando o teto barrou o operador
+# depois de poucas execucoes. Os dois distorciam a contagem, em sentidos
+# opostos, e os dois podiam terminar em conta bloqueada.
+# --------------------------------------------------------------------------
+
+def test_desfecho_da_etapa_nao_conta_como_segunda_tentativa(estado):
+    """Uma unica tentativa gravava DOIS registros com o mesmo nome de acao, o
+    envio e o desfecho, e consumia duas das seis. O advogado ficava sem acesso
+    na metade das tentativas que acreditava ter."""
+    estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    estado.registrar(acao="login_resultado_credencial", resultado="sem_tela_de_codigo")
+    assert LimiteTentativas(estado=estado).situacao()["tentativas_na_janela"] == 1
+
+
+def test_envio_unico_pelo_comando_entrar_tambem_conta(estado):
+    """`entrar` envia senha de verdade ao portal. Ficava fora da contagem, e o
+    bloqueio da conta nao distingue por qual comando a senha foi enviada."""
+    estado.registrar(acao="login_tentativa_unica", resultado="enviado")
+    assert LimiteTentativas(estado=estado).situacao()["tentativas_na_janela"] == 1
+
+
+def test_os_dois_comandos_somam_no_mesmo_teto(estado):
+    for _ in range(3):
+        estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    for _ in range(3):
+        estado.registrar(acao="login_tentativa_unica", resultado="enviado")
+    with pytest.raises(TetoDeTentativasAtingido):
+        LimiteTentativas(estado=estado).exigir_folga()
+
+
+def test_destino_bloqueado_nao_conta_como_novo_envio(estado):
+    """Envio e desfecho sao o mesmo ato: uma senha enviada. Contar o desfecho
+    tiraria do advogado uma tentativa por algo que nao mandou senha nenhuma."""
+    estado.registrar(acao="login_tentativa_unica", resultado="enviado")
+    estado.registrar(acao="login_resultado_credencial", resultado="destino_bloqueado")
+    assert LimiteTentativas(estado=estado).situacao()["tentativas_na_janela"] == 1

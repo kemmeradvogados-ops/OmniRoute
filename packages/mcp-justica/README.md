@@ -519,6 +519,13 @@ O endereço e o perfil de cada portal ficam no ambiente, não como parâmetro de
 ferramenta: o agente não deve precisar saber o endereço do portal nem ter como
 apontar a autenticação para outro lugar.
 
+**O que conta como tentativa.** Conta o ato de a credencial **chegar ao
+portal**, venha do comando `autenticar` ou do `entrar`: o bloqueio da conta não
+distingue por qual comando a senha foi enviada. O **desfecho** de uma tentativa,
+como a tela do segundo fator não aparecer, é auditado com nome próprio e não
+conta de novo. Execução que para antes do envio, no desafio do Cloudflare por
+exemplo, não gasta tentativa alguma, porque nada chegou ao portal.
+
 **Teto de tentativas.** Até aqui a proteção contra bloqueio de conta era a
 confirmação na linha de comando: um humano digitava a opção a cada execução.
 Expor a autenticação como ferramenta quebra essa premissa, porque um agente que

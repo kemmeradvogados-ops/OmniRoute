@@ -22,6 +22,12 @@ from typing import Optional
 
 from .estado import Estado
 
+# O que consome tentativa e a credencial CHEGAR ao portal, venha do comando
+# `autenticar` ou do `entrar`. Os dois enviam senha de verdade, e o bloqueio da
+# conta nao distingue por qual comando ela foi enviada.
+ACOES_TENTATIVA = frozenset({"login_etapa_credencial", "login_tentativa_unica"})
+
+# Mantido porque e o nome usado nos registros do fluxo completo.
 ACAO_TENTATIVA = "login_etapa_credencial"
 
 # Numero conservador de proposito. Um advogado autentica poucas vezes por hora;
@@ -72,7 +78,7 @@ class LimiteTentativas:
         return [
             r["ocorrido_em"]
             for r in self.estado.auditoria_recente(limite=200)
-            if r["acao"] == ACAO_TENTATIVA
+            if r["acao"] in ACOES_TENTATIVA
             and datetime.fromisoformat(r["ocorrido_em"]) >= corte
         ]
 

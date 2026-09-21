@@ -605,6 +605,15 @@ def entrar(
     )
     guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[permissao])
 
+    # `entrar` envia senha de verdade, entao consome tentativa como qualquer
+    # outro envio. Ficava de fora da conferencia e do teto: quem alternasse
+    # entre os dois comandos podia bloquear a conta sem nunca ver um aviso.
+    try:
+        LimiteTentativas.do_ambiente(estado).exigir_folga()
+    except TetoDeTentativasAtingido as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
     print("=" * LARGURA)
     print("ENVIO UNICO DE LOGIN".center(LARGURA))
     print("=" * LARGURA)
@@ -689,8 +698,11 @@ def entrar(
             if termo is not None:
                 print(f"  TRAVA: o destino contem o termo de risco {termo!r}.")
                 print("  A leitura foi interrompida. Informe este endereco.")
+                # Desfecho, nao um segundo envio: com o nome do envio, este
+                # registro consumiria mais uma das seis tentativas por um ato
+                # que nunca mandou senha nenhuma ao portal.
                 estado.registrar(
-                    acao="login_tentativa_unica", tribunal=identidade.tribunal,
+                    acao="login_resultado_credencial", tribunal=identidade.tribunal,
                     sistema=identidade.sistema, resultado="destino_bloqueado", detalhe=termo,
                 )
                 return 1
@@ -936,7 +948,13 @@ def autenticar(
                     _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
                     print("\n  NAO repita o comando antes de conferir o que ha acima:")
                     print("  se for recusa de credencial, repetir queima tentativa da conta.")
-                    estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
+                    # Nome proprio, de proposito: este e o DESFECHO da etapa,
+                    # nao um segundo envio. Com o mesmo nome do envio, uma
+                    # unica tentativa consumia duas das seis do teto, e o
+                    # advogado ficava sem acesso na metade das tentativas que
+                    # acreditava ter.
+                    estado.registrar(acao="login_resultado_credencial",
+                                     tribunal=identidade.tribunal,
                                      sistema=identidade.sistema, resultado="sem_tela_de_codigo")
                     return 1
                 print("  Etapa 2: o portal nao pediu o segundo fator; "
