@@ -784,7 +784,19 @@ CONFIRMAR_DOWNLOAD = ('text="Continuar"', "#btnContinuar")
 # portal ja o tinha montado: por isso o codigo precisa aceitar os dois casos.
 ESCOLHER_AGUARDAR = ("#radioAguardar",)
 CONFIRMAR_AGUARDAR = ("#btnAguardarProcessamento",)
-SALVAR_DOCUMENTO = ("#btnDownloadDocumento",)
+# LIBERADO PELO OPERADOR em 22 de setembro de 2026, reiterado no mesmo dia
+# ("liberar o clique na opcao SALVAR DOCUMENTO"). A autorizacao fica aqui, onde
+# a regra mora, e nao so no historico do repositorio.
+#
+# Por que este clique e seguro: ele baixa um arquivo ja gerado e nao altera
+# nada no processo. Nao da ciencia, nao junta peca, nao move prazo. O botao
+# vive na Pasta Digital, que nao contem o botao de ciencia: esse fica na pagina
+# do processo e segue barrado pelo termo de risco.
+#
+# O texto entra como segundo candidato, atras do identificador: se o portal
+# trocar o `id`, a copia continua achando o botao pela palavra que o operador
+# le na tela. Conferido: a guarda permite os dois.
+SALVAR_DOCUMENTO = ("#btnDownloadDocumento", 'text="Salvar o documento"')
 
 # NUNCA clicados, e por motivos diferentes:
 #   #radioEmail / #btnConfirmarEnvioEmail mandariam os autos do cliente para

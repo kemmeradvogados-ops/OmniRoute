@@ -2131,3 +2131,61 @@ def test_todo_clique_do_laco_tem_teto_curto(tmp_path, monkeypatch):
     )
     assert esaj_mod.TETO_DO_CLIQUE_MS in tetos
     assert esaj_mod.TETO_DO_CLIQUE_MS <= 10000
+
+
+# --------------------------------------------------------------------------
+# A liberacao do clique em "Salvar o documento"
+#
+# Autorizado pelo operador em 22/09/2026. Um termo de risco novo, largo demais,
+# poderia barrar este clique em silencio e a copia voltaria a falhar sem que
+# ninguem entendesse por que. Este teste e a trava contra isso.
+# --------------------------------------------------------------------------
+
+def test_a_guarda_permite_todos_os_candidatos_de_salvar_o_documento():
+    from justica_mcp.core.guarda_navegacao import Acao, GuardaNavegacao, Modo, Permissao
+    from justica_mcp.esaj import SALVAR_DOCUMENTO
+
+    url = "https://esaj.tjsp.jus.br/pastadigital/abrirPastaProcessoDigital.do?x=1"
+    for seletor in SALVAR_DOCUMENTO:
+        guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[Permissao(
+            padrao_url="https://esaj.tjsp.jus.br/pastadigital/*",
+            descricao="Pasta Digital: Salvar o documento, autorizado pelo operador",
+            conferido_em="22/09/2026",
+            seletores_clicaveis=(seletor,))])
+        decisao = guarda.avaliar(Acao.CLICAR, seletor, url=url)
+        assert decisao.permitido, f"{seletor} barrado: {decisao.motivo}"
+
+
+def test_salvar_o_documento_tem_o_texto_como_reserva():
+    """Se o portal trocar o identificador, a copia ainda acha o botao pela
+    palavra que o operador le na tela."""
+    from justica_mcp.esaj import SALVAR_DOCUMENTO
+
+    assert SALVAR_DOCUMENTO[0] == "#btnDownloadDocumento"
+    assert any("Salvar o documento" in c for c in SALVAR_DOCUMENTO[1:])
+
+
+def test_o_texto_de_reserva_funciona_quando_o_identificador_some(tmp_path, monkeypatch):
+    from justica_mcp import esaj as esaj_mod
+
+    class _SemIdentificador(_JanelaQueGera):
+        def __init__(self):
+            super().__init__(com_espera=False)
+
+        def _apos_clique(self, seletor):
+            if seletor == 'text="Continuar"':
+                self.visiveis.discard('text="Continuar"')
+                self.visiveis.add('text="Salvar o documento"')
+            elif seletor == 'text="Salvar o documento"':
+                for funcao in self.ouvintes.get("download", []):
+                    funcao(self.baixado)
+            else:
+                super()._apos_clique(seletor)
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    janela = _SemIdentificador()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert r["situacao"] == "gravada"
+    assert 'text="Salvar o documento"' in janela.clicados
