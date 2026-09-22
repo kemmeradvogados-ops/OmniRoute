@@ -1365,6 +1365,7 @@ class _Janela:
         self.viewport_size = {"width": 1280, "height": 720}
         self.ouvintes = {}
         self.baixado = _Baixado()
+        self.tentativas = []
 
     def on(self, evento, funcao):
         self.ouvintes.setdefault(evento, []).append(funcao)
@@ -1401,7 +1402,16 @@ class _AlvoClicavel:
     def bounding_box(self):
         return {"x": 1, "y": 1, "width": 9, "height": 9}
 
-    def click(self):
+    def is_enabled(self):
+        return self._seletor not in getattr(self._dono, "desabilitados", ())
+
+    def click(self, timeout=None):
+        # Toda TENTATIVA fica registrada, inclusive a que falha: o dano de
+        # mirar um botao desligado e a espera, nao o erro.
+        self._dono.tentativas.append(self._seletor)
+        estoura = getattr(self._dono, "estoura_no_clique", ())
+        if self._seletor in estoura or not self.is_enabled():
+            raise TimeoutError(f"ElementHandle.click: Timeout {timeout}ms exceeded.")
         self._dono.clicados.append(self._seletor)
         apos = getattr(self._dono, "_apos_clique", None)
         if apos is not None:
@@ -1414,6 +1424,7 @@ class _PaginaComAutos:
         self._janela = janela
         self.sem_botao = sem_botao
         self.clicados = []
+        self.tentativas = []
         self.viewport_size = {"width": 1280, "height": 720}
 
     def query_selector_all(self, seletor):
@@ -1806,7 +1817,7 @@ class _JanelaQueGera(_Janela):
     """Pasta Digital que monta o PDF: tela de espera, depois o botao de salvar,
     e so entao o arquivo."""
 
-    def __init__(self, com_espera=True, aviso=None):
+    def __init__(self, com_espera=True, aviso=None, avanca_sozinho=False):
         super().__init__()
         self.visiveis = {
             "#selecionarButton", "#salvarButton", 'text="Arquivo único"',
@@ -1814,6 +1825,9 @@ class _JanelaQueGera(_Janela):
         }
         self.com_espera = com_espera
         self.aviso = aviso
+        # Conferido no relato de campo: depois da escolha, o botao de confirmar
+        # sumiu sozinho. O portal segue sem esperar a confirmacao.
+        self.avanca_sozinho = avanca_sozinho
 
     def query_selector_all(self, seletor):
         return [_AlvoClicavel(self, seletor)] if seletor in self.visiveis else []
@@ -1827,6 +1841,9 @@ class _JanelaQueGera(_Janela):
                 self.visiveis |= {"#radioAguardar", "#btnAguardarProcessamento"}
             else:
                 self.visiveis.add("#btnDownloadDocumento")
+        elif seletor == "#radioAguardar" and self.avanca_sozinho:
+            self.visiveis -= {"#radioAguardar", "#btnAguardarProcessamento"}
+            self.visiveis.add("#btnDownloadDocumento")
         elif seletor == "#btnAguardarProcessamento":
             self.visiveis -= {"#radioAguardar", "#btnAguardarProcessamento"}
             self.visiveis.add("#btnDownloadDocumento")
@@ -2003,3 +2020,114 @@ def test_clicar_muitas_vezes_sem_download_vira_relato_e_nao_laco_eterno(
     assert r["situacao"] == "sem_arquivo"
     assert "Cliquei 2x" in r["detalhe"]
     assert janela.clicados.count("#btnDownloadDocumento") == 2
+
+
+# --------------------------------------------------------------------------
+# O botao desenhado e desligado
+#
+# Em campo em 22/09/2026, terceira execucao: "Confirmar a espera" estava na
+# tela e desabilitado. O clique ficou 30 segundos batendo nele ("element is
+# not enabled", depois "not visible") e terminou em TimeoutError, que subiu
+# ate a raiz e encerrou o programa com a sessao autenticada, o codigo ja lido
+# no celular e o PDF ja em producao no portal.
+# --------------------------------------------------------------------------
+
+class _JanelaComConfirmarDesligado(_JanelaQueGera):
+    """O "Confirmar a espera" fica na tela, desligado, enquanto o portal monta
+    o PDF sozinho. Foi o que o relato de campo mostrou: nao enabled, depois
+    nao visivel."""
+
+    def __init__(self):
+        super().__init__()
+        self.desabilitados = ("#btnAguardarProcessamento",)
+        self.escolheu = False
+        self.leituras = 0
+
+    def query_selector_all(self, seletor):
+        if seletor == "#btnDownloadDocumento":
+            self.leituras += 1 if self.escolheu else 0
+            if self.leituras >= 4:
+                return [_AlvoClicavel(self, seletor)]
+            return []
+        return super().query_selector_all(seletor)
+
+    def _apos_clique(self, seletor):
+        if seletor == "#radioAguardar":
+            self.escolheu = True
+        super()._apos_clique(seletor)
+
+
+def test_botao_desabilitado_nao_e_alvo(tmp_path, monkeypatch):
+    """Esperar num botao desligado cega o programa para o botao que importa: em
+    campo foram 30 segundos batendo no mesmo lugar."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    janela = _JanelaComConfirmarDesligado()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert "#btnAguardarProcessamento" not in janela.tentativas
+    assert "#radioAguardar" in janela.clicados
+    assert r["situacao"] == "gravada"
+
+
+class _AlvoQueEstouraUmaVez(_AlvoClicavel):
+    def click(self, timeout=None):
+        if not self._dono.estourou:
+            self._dono.estourou = True
+            raise TimeoutError("ElementHandle.click: Timeout 5000ms exceeded.")
+        super().click(timeout)
+
+
+class _PrimeiroCliqueEstoura(_JanelaQueGera):
+    """O primeiro clique em salvar estoura o tempo; o segundo funciona."""
+
+    def __init__(self):
+        super().__init__(com_espera=False)
+        self.estourou = False
+
+    def query_selector_all(self, seletor):
+        achados = super().query_selector_all(seletor)
+        if seletor == "#btnDownloadDocumento":
+            return [_AlvoQueEstouraUmaVez(self, seletor) for _ in achados]
+        return achados
+
+
+def test_clique_que_estoura_o_tempo_nao_derruba_o_programa(tmp_path, monkeypatch):
+    """O TimeoutError do Playwright subiu ate a raiz e encerrou tudo. Nunca
+    mais: quem falha e o passo, nao a copia."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    monkeypatch.setattr(esaj_mod, "ESPERA_ENTRE_CLIQUES_EM_SALVAR", 0)
+    janela = _PrimeiroCliqueEstoura()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert janela.estourou is True
+    assert r["situacao"] == "gravada"
+
+
+def test_todo_clique_do_laco_tem_teto_curto(tmp_path, monkeypatch):
+    """Sem teto proprio, o padrao de 30s do Playwright para o laco inteiro."""
+    from justica_mcp import esaj as esaj_mod
+
+    tetos = []
+
+    class _AlvoQueAnota(_AlvoClicavel):
+        def click(self, timeout=None):
+            tetos.append(timeout)
+            super().click(timeout)
+
+    class _JanelaQueAnota(_JanelaQueGera):
+        def query_selector_all(self, seletor):
+            achados = super().query_selector_all(seletor)
+            return [_AlvoQueAnota(self, seletor) for _ in achados]
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    copiar_autos_pelo_visualizador(
+        _PaginaComAutos(_JanelaQueAnota()), _guarda(), tmp_path, "123", 0
+    )
+    assert esaj_mod.TETO_DO_CLIQUE_MS in tetos
+    assert esaj_mod.TETO_DO_CLIQUE_MS <= 10000

@@ -816,19 +816,40 @@ INTERVALO_DE_LEITURA = 0.5
 ESPERA_ENTRE_CLIQUES_EM_SALVAR = 30
 MAXIMO_DE_CLIQUES_EM_SALVAR = 4
 
+# O padrao do Playwright e 30 segundos. Dentro do laco isso cega o programa:
+# ele deixa de ver o botao que importa enquanto insiste num que nao responde.
+TETO_DO_CLIQUE_MS = 5000
+
+
+def _habilitado(alvo: Any) -> bool:
+    """Botao desenhado mas desligado nao e alvo.
+
+    Conferido em campo em 22/09/2026: o "Confirmar a espera" estava na tela e
+    desabilitado. O clique ficou 30 segundos batendo nele ("element is not
+    enabled") e terminou em TimeoutError, que derrubou a copia inteira.
+    """
+    pergunta = getattr(alvo, "is_enabled", None)
+    if pergunta is None:
+        return True
+    try:
+        return bool(pergunta())
+    except Exception:
+        return True
+
 
 def _primeiro_visivel(janela: Any, candidatos) -> Optional[tuple[Any, str]]:
     from .portal import elemento_visivel
 
     for candidato in candidatos:
         alvo = elemento_visivel(janela, candidato)
-        if alvo is not None:
+        if alvo is not None and _habilitado(alvo):
             return alvo, candidato
     return None
 
 
 def _clicar_na_pasta(
-    janela: Any, guarda: Any, candidatos, rotulo: str, silencioso: bool = False
+    janela: Any, guarda: Any, candidatos, rotulo: str, silencioso: bool = False,
+    tempo_ms: Optional[int] = None,
 ) -> bool:
     """Clica um alvo da Pasta Digital, sob autorizacao nominal.
 
@@ -861,7 +882,22 @@ def _clicar_na_pasta(
         seletores_clicaveis=(seletor,),
     ))
     guarda.pode_executar(Acao.CLICAR, seletor, url=janela.url)
-    alvo.click()
+    try:
+        if tempo_ms is None:
+            alvo.click()
+        else:
+            # Teto proprio, curto. O padrao do Playwright e 30 segundos, e uma
+            # espera dessas dentro do laco cega o programa: ele deixa de ver o
+            # botao que importa enquanto insiste num que nao responde.
+            alvo.click(timeout=tempo_ms)
+    except Exception as exc:
+        # Clique que falha nao pode derrubar a copia. Em campo o TimeoutError
+        # subiu ate a raiz e encerrou o programa com a sessao ja autenticada,
+        # o codigo ja lido no celular e o PDF ja em producao no portal.
+        if not silencioso:
+            print(f"    [PAROU] Nao consegui clicar em {rotulo}: "
+                  f"{type(exc).__name__}.")
+        return False
     print(f"    {rotulo}: clicado.")
     return True
 
@@ -1029,8 +1065,9 @@ def _esperar_o_documento_ficar_pronto(
     import time
 
     limite = time.time() + max(segundos * 3, TETO_DE_GERACAO)
-    vistas = {"salvar": 0, "aguardar": 0, "aviso": 0}
+    vistas = {"salvar": 0, "aguardar": 0, "confirmar": 0, "aviso": 0}
     pedi_para_aguardar = False
+    confirmei_a_espera = False
     cliques_em_salvar = 0
     ultimo_salvar = 0.0
     proximo_aviso = time.time() + 20
@@ -1044,6 +1081,7 @@ def _esperar_o_documento_ficar_pronto(
             ("aviso", aviso is not None),
             ("salvar", _primeiro_visivel(janela, SALVAR_DOCUMENTO) is not None),
             ("aguardar", _primeiro_visivel(janela, ESCOLHER_AGUARDAR) is not None),
+            ("confirmar", _primeiro_visivel(janela, CONFIRMAR_AGUARDAR) is not None),
         ):
             vistas[chave] = vistas[chave] + 1 if presente else 0
 
@@ -1062,18 +1100,28 @@ def _esperar_o_documento_ficar_pronto(
                     "navegador nao anunciou download nenhum. O botao esta na "
                     "tela, entao o PDF ficou pronto: o que falhou foi a entrega.")}
             if _clicar_na_pasta(janela, guarda, SALVAR_DOCUMENTO,
-                                "Salvar o documento", silencioso=True):
+                                "Salvar o documento", silencioso=True,
+                                tempo_ms=TETO_DO_CLIQUE_MS):
                 cliques_em_salvar += 1
                 ultimo_salvar = agora
                 proximo_aviso = agora + 20
         elif vistas["aguardar"] >= LEITURAS_PARA_CONFIRMAR and not pedi_para_aguardar:
             # "Aguardar" e escolhido explicitamente para NAO cair no envio por
             # e-mail, que mandaria os autos do cliente para fora.
-            _clicar_na_pasta(janela, guarda, ESCOLHER_AGUARDAR,
-                             "Aguardar nesta tela", silencioso=True)
-            if _clicar_na_pasta(janela, guarda, CONFIRMAR_AGUARDAR,
-                                "Confirmar a espera", silencioso=True):
+            if _clicar_na_pasta(janela, guarda, ESCOLHER_AGUARDAR,
+                                "Aguardar nesta tela", silencioso=True,
+                                tempo_ms=TETO_DO_CLIQUE_MS):
                 pedi_para_aguardar = True
+                proximo_aviso = agora + 20
+        elif vistas["confirmar"] >= LEITURAS_PARA_CONFIRMAR and not confirmei_a_espera:
+            # Passo proprio, e nao emenda do anterior: o botao de confirmar
+            # nasce desabilitado e pode nem chegar a valer, porque o portal
+            # tambem segue sozinho. Clicar so quando ele esta habilitado e o
+            # que impede a espera de 30 segundos que derrubou a copia.
+            if _clicar_na_pasta(janela, guarda, CONFIRMAR_AGUARDAR,
+                                "Confirmar a espera", silencioso=True,
+                                tempo_ms=TETO_DO_CLIQUE_MS):
+                confirmei_a_espera = True
                 proximo_aviso = agora + 20
 
         if agora >= proximo_aviso:
