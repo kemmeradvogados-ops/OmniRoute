@@ -322,3 +322,109 @@ def test_a_impressao_e_gravada_para_as_copias_novas(tmp_path):
     indice = Indice(numero="1", pasta=tmp_path)
     item = indice.acrescentar(_pdf(tmp_path / "integra.pdf", 1), "integra")
     assert item.impressao and len(item.impressao) == 64
+
+
+# --------------------------------------------------------------------------
+# Reindexacao: consertar o acervo sem editar JSON a mao
+# --------------------------------------------------------------------------
+
+def test_o_plano_mantem_o_mais_antigo_e_marca_o_repetido(tmp_path):
+    """Fica o mais antigo porque e o que ja pode ter sido citado."""
+    import os
+    import shutil
+
+    from justica_mcp.core.acervo import Indice, planejar_reindexacao
+
+    velho = _pdf(tmp_path / "integra-com-tracos.pdf", 3)
+    os.utime(velho, (1000, 1000))
+    novo = tmp_path / "integra-digitos.pdf"
+    shutil.copyfile(velho, novo)
+    os.utime(novo, (2000, 2000))
+
+    plano = planejar_reindexacao(Indice(numero="1", pasta=tmp_path))
+    assert [m["arquivo"].name for m in plano["manter"]] == ["integra-com-tracos.pdf"]
+    assert [a["arquivo"].name for a in plano["apagar"]] == ["integra-digitos.pdf"]
+    assert plano["total"] == 3
+
+
+def test_o_plano_renumera_do_um_em_diante(tmp_path):
+    import os
+
+    from justica_mcp.core.acervo import Indice, planejar_reindexacao
+
+    primeiro = _pdf(tmp_path / "integra.pdf", 4)
+    os.utime(primeiro, (1000, 1000))
+    segundo = _pdf(tmp_path / "doc-evento-9.pdf", 2)
+    os.utime(segundo, (2000, 2000))
+
+    plano = planejar_reindexacao(Indice(numero="1", pasta=tmp_path))
+    faixas = [(m["folha_inicial"], m["folha_final"]) for m in plano["manter"]]
+    assert faixas == [(1, 4), (5, 6)]
+
+
+def test_o_plano_preserva_o_que_so_o_indice_sabia(tmp_path):
+    """Evento e rotulo nao estao dentro do PDF: se a reindexacao os perder,
+    eles se perdem para sempre."""
+    from justica_mcp.core.acervo import Indice, planejar_reindexacao
+
+    arquivo = _pdf(tmp_path / "doc.pdf", 1)
+    indice = Indice(numero="1", pasta=tmp_path)
+    indice.acrescentar(arquivo, "documento", evento="9", rotulo="Sentenca")
+
+    plano = planejar_reindexacao(indice)
+    assert plano["manter"][0]["evento"] == "9"
+    assert plano["manter"][0]["rotulo"] == "Sentenca"
+    assert plano["manter"][0]["tipo"] == "documento"
+
+
+def test_aplicar_apaga_o_repetido_e_grava_o_indice_certo(tmp_path):
+    import os
+    import shutil
+
+    from justica_mcp.core.acervo import (
+        Indice, aplicar_reindexacao, planejar_reindexacao,
+    )
+
+    velho = _pdf(tmp_path / "integra-a.pdf", 114)
+    os.utime(velho, (1000, 1000))
+    novo = tmp_path / "integra-b.pdf"
+    shutil.copyfile(velho, novo)
+    os.utime(novo, (2000, 2000))
+
+    indice = Indice(numero="1", pasta=tmp_path)
+    plano = planejar_reindexacao(indice)
+    aplicar_reindexacao(indice, plano, apagar_repetidos=True)
+
+    assert not novo.exists()
+    assert velho.exists()
+    assert indice.ultima_folha == 114
+    assert len(indice.itens) == 1
+
+
+def test_aplicar_sem_apagar_mantem_os_arquivos(tmp_path):
+    """Refazer a numeracao e apagar arquivo do escritorio sao decisoes
+    diferentes e precisam poder ser tomadas separadamente."""
+    import os
+    import shutil
+
+    from justica_mcp.core.acervo import (
+        Indice, aplicar_reindexacao, planejar_reindexacao,
+    )
+
+    velho = _pdf(tmp_path / "integra-a.pdf", 2)
+    os.utime(velho, (1000, 1000))
+    novo = tmp_path / "integra-b.pdf"
+    shutil.copyfile(velho, novo)
+    os.utime(novo, (2000, 2000))
+
+    indice = Indice(numero="1", pasta=tmp_path)
+    aplicar_reindexacao(indice, planejar_reindexacao(indice), apagar_repetidos=False)
+    assert novo.exists()
+    assert len(indice.itens) == 1
+
+
+def test_pasta_inexistente_nao_explode(tmp_path):
+    from justica_mcp.core.acervo import Indice, planejar_reindexacao
+
+    plano = planejar_reindexacao(Indice(numero="1", pasta=tmp_path / "nao-existe"))
+    assert plano == {"manter": [], "apagar": [], "total": 0}

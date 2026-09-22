@@ -1925,3 +1925,85 @@ def test_os_mapas_ficam_na_pasta_de_estado(tmp_path, monkeypatch):
     monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path))
     assert pasta_dos_mapas() == tmp_path / "mapas"
     assert pasta_dos_mapas().is_dir()
+
+
+# --------------------------------------------------------------------------
+# Seletores de entrada por sistema
+#
+# Todos LIDOS de tela real: e-SAJ da autenticacao que funcionou em 22/09/2026,
+# eproc e PJe dos mapas do mesmo dia. Seletor adivinhado falha em silencio, e
+# em portal que limita tentativa de login o silencio custa acesso.
+# --------------------------------------------------------------------------
+
+class _Args:
+    def __init__(self, sistema, **kw):
+        self.sistema = sistema
+        for nome in ("campo_usuario", "campo_senha", "campo_senha_oculto",
+                     "botao_entrar", "campo_codigo", "botao_validar"):
+            setattr(self, nome, kw.get(nome))
+
+
+def test_esaj_recebe_os_seletores_conferidos_em_campo():
+    from justica_mcp.portal import completar_seletores
+
+    args = _Args("esaj")
+    completar_seletores(args)
+    assert args.campo_usuario == "#usernameForm"
+    assert args.botao_entrar == "#pbEntrar"
+    assert args.campo_codigo == "#tokenInformado"
+
+
+def test_eproc_recebe_os_seletores_do_mapa():
+    from justica_mcp.portal import completar_seletores
+
+    args = _Args("eproc")
+    completar_seletores(args)
+    assert (args.campo_usuario, args.campo_senha, args.botao_entrar) == (
+        "#txtUsuario", "#pwdSenha", "#sbmEntrar")
+
+
+def test_pje_recebe_os_seletores_do_keycloak_lidos_no_mapa():
+    from justica_mcp.portal import completar_seletores
+
+    args = _Args("pje")
+    completar_seletores(args)
+    assert (args.campo_usuario, args.campo_senha, args.botao_entrar) == (
+        "#username", "#password", "#kc-login")
+
+
+def test_o_que_o_operador_passa_tem_precedencia_sobre_a_tabela():
+    """Portal muda de tela sem avisar: o operador precisa poder corrigir na
+    hora, sem esperar codigo novo."""
+    from justica_mcp.portal import completar_seletores
+
+    args = _Args("esaj", campo_usuario="#outro")
+    completar_seletores(args)
+    assert args.campo_usuario == "#outro"
+    assert args.botao_entrar == "#pbEntrar"
+
+
+def test_segundo_fator_que_nenhuma_tela_mostrou_fica_vazio():
+    """Preencher com um seletor plausivel seria adivinhar, e adivinhar aqui
+    gasta tentativa de login."""
+    from justica_mcp.portal import completar_seletores
+
+    args = _Args("pje")
+    completar_seletores(args)
+    assert args.campo_codigo is None
+    assert args.botao_validar is None
+
+
+def test_sistema_desconhecido_cai_no_padrao_historico_e_nao_em_vazio():
+    from justica_mcp.portal import seletores_do_sistema
+
+    assert seletores_do_sistema("projudi")["campo_usuario"] == "#txtUsuario"
+    assert seletores_do_sistema("")["botao_entrar"] == "#sbmEntrar"
+
+
+def test_a_tabela_nao_e_alterada_por_quem_a_consulta():
+    """Devolver a propria tabela deixaria um comando estragar o seguinte."""
+    from justica_mcp.portal import SELETORES_POR_SISTEMA, seletores_do_sistema
+
+    copia = seletores_do_sistema("esaj")
+    copia["campo_usuario"] = "#estragado"
+    assert SELETORES_POR_SISTEMA["esaj"]["campo_usuario"] == "#usernameForm"

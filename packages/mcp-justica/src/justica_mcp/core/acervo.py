@@ -254,6 +254,92 @@ def carregar_indice(numero_digitos: str, numero_formatado: str) -> Indice:
     )
 
 
+def planejar_reindexacao(indice: "Indice") -> dict:
+    """Monta o plano de refazer o indice a partir dos arquivos que existem.
+
+    Nasceu de um estrago real: em 22/09/2026 a mesma integra entrou duas vezes
+    e o indice passou a dizer 228 folhas num processo de 114. Consertar isso na
+    mao significaria editar JSON, que e pedir para errar folha.
+
+    O plano NAO e executado aqui. Quem varre e quem apaga sao passos separados
+    de proposito: o operador le o que vai acontecer com os arquivos do
+    escritorio antes de qualquer coisa acontecer.
+
+    Regras:
+      - arquivos de conteudo identico sao uma copia so; fica o mais antigo,
+        que e o que ja pode ter sido citado, e os outros saem;
+      - a numeracao e refeita na ordem de chegada dos que ficam;
+      - o que o indice antigo sabia sobre um arquivo que fica (se e integra ou
+        documento, o evento, o rotulo) e preservado, porque isso nao esta no
+        PDF e seria perdido para sempre.
+    """
+    if not indice.pasta.is_dir():
+        return {"manter": [], "apagar": [], "total": 0}
+
+    arquivos = sorted(
+        (a for a in indice.pasta.iterdir()
+         if a.is_file() and a.suffix.lower() == ".pdf"),
+        key=lambda a: (a.stat().st_mtime, a.name),
+    )
+    antigos = {Path(i.arquivo).name: i for i in indice.itens}
+
+    manter: list[dict] = []
+    apagar: list[dict] = []
+    vistos: dict[str, Path] = {}
+    folha = 0
+    for arquivo in arquivos:
+        impressao = impressao_do_arquivo(arquivo)
+        if impressao and impressao in vistos:
+            apagar.append({"arquivo": arquivo, "igual_a": vistos[impressao]})
+            continue
+        if impressao:
+            vistos[impressao] = arquivo
+        antigo = antigos.get(arquivo.name)
+        paginas = contar_paginas(arquivo)
+        inicial = final = None
+        if paginas:
+            inicial, final = folha + 1, folha + paginas
+            folha = final
+        manter.append({
+            "arquivo": arquivo, "paginas": paginas,
+            "folha_inicial": inicial, "folha_final": final,
+            "impressao": impressao,
+            "tipo": antigo.tipo if antigo else (
+                "integra" if arquivo.name.startswith("integra") else "documento"),
+            "evento": antigo.evento if antigo else None,
+            "rotulo": antigo.rotulo if antigo else None,
+            "evento_ate": antigo.evento_ate if antigo else None,
+            "em": antigo.em if antigo else None,
+        })
+    return {"manter": manter, "apagar": apagar, "total": folha}
+
+
+def aplicar_reindexacao(indice: "Indice", plano: dict, *, apagar_repetidos: bool) -> list[str]:
+    """Executa o plano e devolve o que foi feito, linha por linha."""
+    feito = []
+    if apagar_repetidos:
+        for repetido in plano["apagar"]:
+            try:
+                repetido["arquivo"].unlink()
+                feito.append(f"apagado {repetido['arquivo'].name} "
+                             f"(identico a {repetido['igual_a'].name})")
+            except OSError as exc:
+                feito.append(f"NAO consegui apagar {repetido['arquivo'].name}: {exc}")
+
+    indice.itens = [
+        Item(tipo=m["tipo"], arquivo=str(m["arquivo"]),
+             em=m["em"] or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+             paginas=m["paginas"], folha_inicial=m["folha_inicial"],
+             folha_final=m["folha_final"], evento=m["evento"], rotulo=m["rotulo"],
+             evento_ate=m["evento_ate"], impressao=m["impressao"])
+        for m in plano["manter"]
+    ]
+    feito.append(f"indice refeito com {len(indice.itens)} item(ns), "
+                 f"{indice.ultima_folha} folha(s)")
+    indice.gravar()
+    return feito
+
+
 def numero_do_evento(evento: dict) -> Optional[int]:
     bruto = str(evento.get("evento") or "").strip()
     return int(bruto) if bruto.isdigit() else None

@@ -1177,6 +1177,124 @@ def conferir_sessao(
                 pass
 
 
+# Seletores de entrada de cada sistema. TODOS foram LIDOS de tela real, e a
+# procedencia de cada bloco esta anotada: seletor adivinhado falha em silencio,
+# e em portal que limita tentativa de login o silencio custa acesso.
+SELETORES_POR_SISTEMA = {
+    # Conferido em campo em 22/09/2026, na autenticacao que funcionou.
+    "esaj": {
+        "campo_usuario": "#usernameForm",
+        "campo_senha": "#passwordForm",
+        "campo_senha_oculto": "input[name=password]",
+        "botao_entrar": "#pbEntrar",
+        "campo_codigo": "#tokenInformado",
+        "botao_validar": "#btnEnviarToken",
+    },
+    # Lido do mapa de 22/09/2026 (eproc.jfrj.jus.br): form#frmLogin com
+    # input#txtUsuario, input#pwdSenha e button#sbmEntrar. O segundo fator NAO
+    # aparece nesta tela (ha so o link a#lnk2fa), entao os campos dele ficam
+    # como estavam e so serao fixados quando uma tela real os mostrar.
+    "eproc": {
+        "campo_usuario": "#txtUsuario",
+        "campo_senha": "#pwdSenha",
+        "campo_senha_oculto": "input[name=pwdSenha]",
+        "botao_entrar": "#sbmEntrar",
+        "campo_codigo": "#txtAcessoCodigo",
+        "botao_validar": "#btnValidar",
+    },
+    # Lido do mapa de 22/09/2026 (sso.cloud.pje.jus.br, Keycloak do PJe):
+    # form#loginForm com input#username, input#password e input#kc-login.
+    # O segundo fator nao aparece na tela de entrada.
+    "pje": {
+        "campo_usuario": "#username",
+        "campo_senha": "#password",
+        # [Inferencia] O mapa mostra o campo pelo id, nao pelo tipo. Este
+        # seletor e so a rede de seguranca de quando o id falha, e por isso
+        # fica preso ao formulario que o mapa mostrou.
+        "campo_senha_oculto": "#loginForm input[type=password]",
+        "botao_entrar": "#kc-login",
+        "campo_codigo": None,
+        "botao_validar": None,
+    },
+}
+
+
+def seletores_do_sistema(sistema: str) -> dict:
+    """Seletores de entrada do sistema, ou os do eproc quando nao ha tabela.
+
+    O eproc e o padrao historico do comando; manter esse desfecho evita que um
+    sistema novo apareca sem seletor nenhum e o comando quebre por dentro.
+    """
+    return dict(SELETORES_POR_SISTEMA.get((sistema or "").lower().strip(),
+                                          SELETORES_POR_SISTEMA["eproc"]))
+
+
+def completar_seletores(args) -> None:
+    """Preenche os seletores que o operador nao passou, pelo sistema.
+
+    O que vem na linha de comando tem precedencia sempre: a tabela e
+    conveniencia, nao autoridade. Portal muda de tela sem avisar, e o operador
+    precisa poder corrigir na hora, sem esperar codigo novo.
+    """
+    padroes = seletores_do_sistema(getattr(args, "sistema", ""))
+    for nome, valor in padroes.items():
+        if getattr(args, nome, "ausente") is None and valor is not None:
+            setattr(args, nome, valor)
+
+
+def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
+    """Refaz o indice de folhas de um processo a partir dos arquivos na pasta.
+
+    Sem `--confirmar` nao toca em nada: mostra o que faria. A pasta e do
+    escritorio e os arquivos sao copias de processo; apagar por engano ali e
+    estrago que nao se desfaz com um comando.
+    """
+    from .core.acervo import (
+        aplicar_reindexacao, carregar_indice, planejar_reindexacao,
+    )
+    from .core.cnj import parse_numero
+
+    try:
+        numero = parse_numero(numero_bruto)
+    except ValueError as exc:
+        print(f"Numero de processo invalido: {exc}", file=sys.stderr)
+        return 1
+
+    indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+    print("=" * LARGURA)
+    print("REINDEXACAO DO ACERVO".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Processo: {numero.formatado}")
+    print(f"Pasta: {indice.pasta}")
+    if not indice.pasta.is_dir():
+        print("\n  A pasta nao existe. Nada a fazer.", file=sys.stderr)
+        return 1
+
+    print(f"Indice atual: {len(indice.itens)} item(ns), {indice.ultima_folha} folha(s).\n")
+    plano = planejar_reindexacao(indice)
+
+    if plano["apagar"]:
+        print("  REPETIDOS (mesmo conteudo, byte a byte):")
+        for repetido in plano["apagar"]:
+            print(f"    {repetido['arquivo'].name}")
+            print(f"      identico a {repetido['igual_a'].name}, que fica")
+    print("  COMO O INDICE VAI FICAR:")
+    for item in plano["manter"]:
+        faixa = (f"fls. {item['folha_inicial']}/{item['folha_final']}"
+                 if item["folha_inicial"] else "folhas nao contadas")
+        print(f"    {item['arquivo'].name}  {faixa}  [{item['tipo']}]")
+    print(f"\n  Total: {plano['total']} folha(s).")
+
+    if not confirmar:
+        print("\n  ENSAIO: nada foi alterado. Para aplicar, repita com --confirmar.")
+        return 0
+
+    print()
+    for linha in aplicar_reindexacao(indice, plano, apagar_repetidos=True):
+        print(f"  {linha}")
+    return 0
+
+
 def pasta_dos_mapas() -> "Path":
     """Onde ficam os relatos de tela dos portais, um arquivo por leitura."""
     from pathlib import Path as _P
@@ -2861,6 +2979,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="nao mostra a janela do navegador (o padrao e mostrar)")
     r.add_argument("--segundos", type=int, default=30, help="tempo limite de carregamento")
 
+    ri = sub.add_parser(
+        "reindexar",
+        help="refaz o indice de folhas de um processo a partir dos arquivos na pasta",
+    )
+    ri.add_argument("--processo", required=True)
+    ri.add_argument("--confirmar", action="store_true",
+                    help="sem isto e ensaio: mostra o que faria e nao altera nada")
+
     m = sub.add_parser(
         "mapear",
         help="le a tela de entrada de cada portal do .env e grava um mapa por portal",
@@ -2887,10 +3013,10 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--url", default=None, help=AJUDA_URL)
     e.add_argument("--tribunal", required=True, help="por exemplo TRF2")
     e.add_argument("--sistema", required=True, help="por exemplo eproc")
-    e.add_argument("--campo-usuario", default="#txtUsuario")
-    e.add_argument("--campo-senha", default="#pwdSenha")
-    e.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
-    e.add_argument("--botao-entrar", default="#sbmEntrar",
+    e.add_argument("--campo-usuario", default=None)
+    e.add_argument("--campo-senha", default=None)
+    e.add_argument("--campo-senha-oculto", default=None)
+    e.add_argument("--botao-entrar", default=None,
                    help="conferido, NUNCA clicado: o ensaio so relata se ele habilitou")
     e.add_argument("--oculto", action="store_true")
     e.add_argument("--segundos", type=int, default=30)
@@ -2903,10 +3029,10 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--sistema", required=True)
     t.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado",
                    help="confirma que autoriza UMA tentativa de login real")
-    t.add_argument("--campo-usuario", default="#txtUsuario")
-    t.add_argument("--campo-senha", default="#pwdSenha")
-    t.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
-    t.add_argument("--botao-entrar", default="#sbmEntrar")
+    t.add_argument("--campo-usuario", default=None)
+    t.add_argument("--campo-senha", default=None)
+    t.add_argument("--campo-senha-oculto", default=None)
+    t.add_argument("--botao-entrar", default=None)
     t.add_argument("--oculto", action="store_true")
     t.add_argument("--segundos", type=int, default=45)
     t.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
@@ -2917,12 +3043,12 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--tribunal", required=True)
     a.add_argument("--sistema", required=True)
     a.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
-    a.add_argument("--campo-usuario", default="#txtUsuario")
-    a.add_argument("--campo-senha", default="#pwdSenha")
-    a.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
-    a.add_argument("--botao-entrar", default="#sbmEntrar")
-    a.add_argument("--campo-codigo", default="#txtAcessoCodigo")
-    a.add_argument("--botao-validar", default="#btnValidar")
+    a.add_argument("--campo-usuario", default=None)
+    a.add_argument("--campo-senha", default=None)
+    a.add_argument("--campo-senha-oculto", default=None)
+    a.add_argument("--botao-entrar", default=None)
+    a.add_argument("--campo-codigo", default=None)
+    a.add_argument("--botao-validar", default=None)
     a.add_argument("--reconhecer-apos", action="append", default=None,
                    dest="reconhecer_apos",
                    help="apos autenticar, LE a estrutura desta tela interna; pode ser "
@@ -2949,12 +3075,12 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--processo", default=None,
                     help="numero no padrao da numeracao unica; quando omitido, vem do .env "
                          "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_PROCESSO_TESTE)")
-    cp.add_argument("--campo-usuario", default="#txtUsuario")
-    cp.add_argument("--campo-senha", default="#pwdSenha")
-    cp.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
-    cp.add_argument("--botao-entrar", default="#sbmEntrar")
-    cp.add_argument("--campo-codigo", default="#txtAcessoCodigo")
-    cp.add_argument("--botao-validar", default="#btnValidar")
+    cp.add_argument("--campo-usuario", default=None)
+    cp.add_argument("--campo-senha", default=None)
+    cp.add_argument("--campo-senha-oculto", default=None)
+    cp.add_argument("--botao-entrar", default=None)
+    cp.add_argument("--campo-codigo", default=None)
+    cp.add_argument("--botao-validar", default=None)
     cp.add_argument("--perfil", default=None)
     cp.add_argument("--documentos", default="auto",
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
@@ -2976,10 +3102,13 @@ def main(argv: list[str] | None = None) -> int:
     carregar_env()
 
     try:
-        if args.comando not in ("reconhecer", "mapear"):
+        if args.comando not in ("reconhecer", "mapear", "reindexar"):
             _do_ambiente(args)
+            completar_seletores(args)
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "reindexar":
+            return reindexar(args.processo, confirmar=args.confirmar)
         if args.comando == "mapear":
             return mapear(args.alvos, oculto=args.oculto, segundos=args.segundos)
         if args.comando == "sessao":
