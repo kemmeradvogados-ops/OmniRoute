@@ -32,6 +32,9 @@ class ConfigPortal:
     # nao no codigo, porque e numero de processo de cliente: o repositorio e
     # compartilhado, e numero em codigo versionado nao se apaga do historico.
     processo_teste: Optional[str] = None
+    # Portais separam as telas de primeiro e de segundo grau, entao exercitar
+    # um portal exige um processo de cada. O e-SAJ e o caso confirmado.
+    processo_teste_2g: Optional[str] = None
 
     @property
     def rotulo(self) -> str:
@@ -62,6 +65,9 @@ def config_portal(tribunal: str, sistema: str) -> ConfigPortal:
         perfil=os.environ.get(_chave(tribunal, sistema, "PERFIL"), "").strip() or None,
         processo_teste=os.environ.get(
             _chave(tribunal, sistema, "PROCESSO_TESTE"), ""
+        ).strip() or None,
+        processo_teste_2g=os.environ.get(
+            _chave(tribunal, sistema, "PROCESSO_TESTE_2G"), ""
         ).strip() or None,
     )
 

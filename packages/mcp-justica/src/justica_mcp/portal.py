@@ -2179,9 +2179,17 @@ def _do_ambiente(args) -> None:
         print(f"Endereco vindo do .env para {config.rotulo}.")
     if getattr(args, "perfil", "ausente") is None and config.perfil:
         args.perfil = config.perfil
-    if getattr(args, "processo", "ausente") is None and config.processo_teste:
-        args.processo = config.processo_teste
-        print(f"Processo vindo do .env para {config.rotulo}.")
+    if getattr(args, "processo", "ausente") is None:
+        # Quando o portal tem processo de teste dos dois graus, `--grau 2` diz
+        # qual usar. Sem indicacao fica o de primeiro grau, que e o caso comum.
+        grau = getattr(args, "grau", 1) or 1
+        escolhido = config.processo_teste_2g if grau == 2 else config.processo_teste
+        if escolhido is None and grau == 2:
+            escolhido = config.processo_teste
+        if escolhido:
+            args.processo = escolhido
+            print(f"Processo vindo do .env para {config.rotulo} "
+                  f"({'2º' if grau == 2 else '1º'} grau).")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2257,6 +2265,9 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--url", default=None, help=AJUDA_URL)
     cp.add_argument("--tribunal", required=True)
     cp.add_argument("--sistema", required=True)
+    cp.add_argument("--grau", type=int, choices=(1, 2), default=1,
+                    help="qual processo de teste usar quando --processo e omitido; "
+                         "o grau do processo informado e deduzido do proprio numero")
     cp.add_argument("--processo", default=None,
                     help="numero no padrao da numeracao unica; quando omitido, vem do .env "
                          "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_PROCESSO_TESTE)")

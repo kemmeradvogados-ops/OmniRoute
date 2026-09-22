@@ -63,6 +63,28 @@ class NumeroCNJ:
         return SEGMENTOS.get(self.segmento, "segmento desconhecido")
 
     @property
+    def grau(self) -> int:
+        """1 para primeira instancia, 2 para originario do tribunal.
+
+        Esta no proprio numero, no campo de origem: `0000` significa que o feito
+        nasceu no tribunal, e qualquer outro valor nomeia a unidade de primeiro
+        grau. Vem da Resolucao nº. 65/2008 do Conselho Nacional de Justica, e
+        foi conferido com dois processos reais do Tribunal de Justica de Sao
+        Paulo em 21 de setembro de 2026: `...8.26.0100` de primeira instancia e
+        `...8.26.0000` de segunda.
+
+        Importa porque portais separam as duas telas. O e-SAJ tem consulta de
+        primeiro e de segundo grau em enderecos distintos, e consultar no lugar
+        errado devolve "nao encontrado", que se confunde com processo
+        inexistente.
+        """
+        return 2 if self.origem == "0000" else 1
+
+    @property
+    def grau_nome(self) -> str:
+        return "segunda instancia" if self.grau == 2 else "primeira instancia"
+
+    @property
     def chave_segmento_tribunal(self) -> str:
         """Chave `J.TR`, usada para resolver o tribunal."""
         return f"{self.segmento}.{self.tribunal}"
