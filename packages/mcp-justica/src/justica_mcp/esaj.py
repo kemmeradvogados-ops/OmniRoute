@@ -665,3 +665,136 @@ def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> list[Any]:
         except Exception:
             continue
     return novas
+
+
+# Sequencia descrita pelo operador em 22 de setembro de 2026, com as telas
+# fotografadas: "Visualizar autos" abre a Pasta Digital; la se marca "Todas",
+# clica em "Baixar PDF", escolhe "Arquivo unico" e confirma em "Continuar".
+#
+# Os alvos sao TEXTOS, e nao identificadores, porque foi o texto que o operador
+# viu e informou. O mesmo caminho resolveu a palavra "Mais" nas movimentacoes,
+# depois de o identificador conhecido falhar.
+BOTAO_VISUALIZAR_AUTOS = "#linkPasta"
+MARCAR_TODAS = 'text="Todas"'
+BAIXAR_PDF = 'text="Baixar PDF"'
+ARQUIVO_UNICO = 'text="Arquivo único"'
+CONFIRMAR_DOWNLOAD = 'text="Continuar"'
+
+
+def _clicar_na_pasta(janela: Any, guarda: Any, seletor: str, rotulo: str) -> bool:
+    """Clica um alvo da Pasta Digital, sob autorizacao nominal.
+
+    Cada alvo entra na lista de permissao por si, no momento de usa-lo. Uma
+    permissao ampla para a janela inteira seria mais simples e e justamente o
+    que nao se faz aqui: a lista estreita e o que impede um clique fora do
+    previsto quando a tela mudar.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import elemento_visivel, permissao_efemera
+
+    alvo = elemento_visivel(janela, seletor)
+    if alvo is None:
+        print(f"    [PAROU] Nao encontrei {rotulo} ({seletor}) na Pasta Digital.")
+        return False
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(janela.url).padrao_url,
+        descricao=f"Pasta Digital: {rotulo}, autorizado pelo operador",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(seletor,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, seletor, url=janela.url)
+    alvo.click()
+    print(f"    {rotulo}: clicado.")
+    return True
+
+
+def copiar_autos_pelo_visualizador(
+    pagina: Any, guarda: Any, destino: Any, chave: str, segundos: int
+) -> dict[str, Any]:
+    """Copia a integra pelo caminho que o operador descreveu e fotografou.
+
+    Por que o clique, se este projeto prefere o endereco: a Pasta Digital SO
+    nasce do clique. Conferido em campo por tres caminhos, todos falhos: buscar
+    o endereco devolve pagina de passagem de menos de mil bytes; segui-la por
+    requisicao nao redireciona; abrir essa pagina numa aba deixa a aba vazia. O
+    endereco real traz um `ticket` que o portal monta no instante do clique.
+
+    O clique aqui e aceitavel porque o alvo e conhecido, nominalmente
+    autorizado, e a Pasta Digital nao contem o botao de ciencia, que mora na
+    pagina do processo e continua barrado pelo termo de risco.
+    """
+    from pathlib import Path
+
+    from .portal import _assentar, elemento_visivel
+
+    botao = elemento_visivel(pagina, BOTAO_VISUALIZAR_AUTOS)
+    if botao is None:
+        return {"situacao": "sem_botao",
+                "detalhe": f"Nao ha {BOTAO_VISUALIZAR_AUTOS} na pagina do processo."}
+
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import permissao_efemera
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="Visualizar autos, autorizado pelo operador",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(BOTAO_VISUALIZAR_AUTOS,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, BOTAO_VISUALIZAR_AUTOS, url=pagina.url)
+
+    print("    Visualizar autos: clicando e aguardando a janela...")
+    try:
+        with pagina.expect_popup(timeout=segundos * 1000) as info:
+            botao.click()
+        janela = info.value
+    except Exception as exc:
+        return {"situacao": "sem_janela",
+                "detalhe": f"A janela nao apareceu: {type(exc).__name__}: {exc}"}
+
+    try:
+        janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
+    except Exception:
+        pass
+    _assentar(janela, segundos)
+    print(f"    Pasta Digital aberta: {janela.url[:90]}")
+
+    passos = (
+        (MARCAR_TODAS, "Todas"),
+        (BAIXAR_PDF, "Baixar PDF"),
+    )
+    for seletor, rotulo in passos:
+        if not _clicar_na_pasta(janela, guarda, seletor, rotulo):
+            return {"situacao": "parou_no_passo", "passo": rotulo, "janela": janela}
+        _assentar(janela, segundos)
+
+    # "Arquivo unico" ja vem marcado na tela fotografada. Clicar assim mesmo e
+    # barato e protege do caso de o portal mudar o padrao; nao achar nao e erro.
+    _clicar_na_pasta(janela, guarda, ARQUIVO_UNICO, "Arquivo unico")
+
+    alvo = elemento_visivel(janela, CONFIRMAR_DOWNLOAD)
+    if alvo is None:
+        return {"situacao": "parou_no_passo", "passo": "Continuar", "janela": janela}
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(janela.url).padrao_url,
+        descricao="Pasta Digital: Continuar, autorizado pelo operador",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(CONFIRMAR_DOWNLOAD,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, CONFIRMAR_DOWNLOAD, url=janela.url)
+    print("    Continuar: clicado, aguardando o arquivo...")
+    try:
+        with janela.expect_download(timeout=max(segundos, 120) * 1000) as baixa:
+            alvo.click()
+        baixado = baixa.value
+    except Exception as exc:
+        return {"situacao": "sem_arquivo",
+                "detalhe": f"{type(exc).__name__}: {exc}", "janela": janela}
+
+    destino = Path(destino)
+    destino.mkdir(parents=True, exist_ok=True)
+    sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
+    arquivo = destino / f"integra-{sugerido}"
+    baixado.save_as(str(arquivo))
+    return {"situacao": "gravada", "arquivo": str(arquivo), "janela": janela}

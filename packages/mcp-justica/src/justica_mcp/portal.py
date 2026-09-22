@@ -2163,35 +2163,28 @@ def consultar_processo(
                 pasta = garantir_pasta(numero.apenas_digitos)
                 print(f"\n  Pasta do processo: {pasta}")
                 guarda.permitir_download = True
-                resultado = copiar_pasta_digital(
+                # O caminho que funciona e o que o operador descreveu e
+                # fotografou: clicar em "Visualizar autos", marcar "Todas",
+                # "Baixar PDF", "Arquivo unico" e "Continuar". Buscar pelo
+                # endereco falhou por tres caminhos conferidos em campo, porque
+                # o ticket da Pasta Digital so e montado no instante do clique.
+                from .esaj import copiar_autos_pelo_visualizador
+
+                resultado = copiar_autos_pelo_visualizador(
                     pagina, guarda, pasta, numero.apenas_digitos, segundos
                 )
-                if resultado["situacao"] != "gravada":
-                    # A busca pelo endereco devolveu tela de passagem. O
-                    # operador descreveu o caminho de verdade: a janela dos
-                    # autos, onde se selecionam os documentos. Abrir e RELATAR,
-                    # porque os seletores dela nunca foram vistos e nao serao
-                    # adivinhados.
-                    from .esaj import abrir_pasta_digital
-
-                    print("\n  ABRINDO A JANELA DOS AUTOS, so para reconhecer.")
+                janela = resultado.pop("janela", None)
+                if resultado["situacao"] != "gravada" and janela is not None:
+                    # Parou no meio: relatar a tela e o que permite escrever o
+                    # passo que faltou, sem adivinhar seletor.
+                    print(f"    Nao concluiu no passo {resultado.get('passo', '?')}.")
+                    _relatar_tela(janela, "PASTA DIGITAL")
+                    _relatar_estrutura_de_dados(janela)
+                if janela is not None:
                     try:
-                        abas = abrir_pasta_digital(pagina, guarda, segundos)
-                    except Exception as exc:
-                        abas = []
-                        print(f"    Nao abriu: {type(exc).__name__}: {exc}")
-                    if not abas:
-                        print("    Nenhuma janela sobrou aberta. A pagina de passagem")
-                        print("    pode ter aberto e fechado, ou aberto fora deste")
-                        print("    navegador. Nada foi lido.")
-                    for i, aba in enumerate(abas, 1):
-                        _relatar_tela(aba, f"JANELA DOS AUTOS {i} de {len(abas)}")
-                        _relatar_estrutura_de_dados(aba)
-                        _listar_ligacoes(aba, teto=25)
-                        try:
-                            aba.close()
-                        except Exception:
-                            pass
+                        janela.close()
+                    except Exception:
+                        pass
                 guarda.permitir_download = False
                 if resultado["situacao"] == "gravada":
                     from pathlib import Path as _P

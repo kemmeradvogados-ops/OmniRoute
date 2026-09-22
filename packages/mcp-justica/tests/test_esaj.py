@@ -1145,3 +1145,180 @@ def test_sem_endereco_real_segue_com_o_de_passagem():
     )
     abrir_pasta_digital(p, _guarda(), 5)
     assert aba.url.endswith("/cpopg/abrirPastaDigital.do?processo.codigo=X")
+
+
+# --------------------------------------------------------------------------
+# Copia pelo visualizador, como o operador descreveu e fotografou
+#
+# 22/09/2026: "Visualizar autos" abre a Pasta Digital; la se marca "Todas",
+# clica em "Baixar PDF", escolhe "Arquivo unico" e confirma em "Continuar".
+#
+# Por que o clique, se este projeto prefere o endereco: a Pasta Digital SO nasce
+# do clique. Tres caminhos falharam em campo, e o ultimo relato mostrou por que:
+# o ticket e montado no instante do clique.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import (
+    BAIXAR_PDF, BOTAO_VISUALIZAR_AUTOS, CONFIRMAR_DOWNLOAD, MARCAR_TODAS,
+    copiar_autos_pelo_visualizador,
+)
+
+
+class _Baixado:
+    suggested_filename = "autos.pdf"
+
+    def __init__(self, destino=None):
+        self.salvo_em = None
+
+    def save_as(self, caminho):
+        self.salvo_em = caminho
+        from pathlib import Path
+
+        Path(caminho).write_bytes(b"%PDF-1.4")
+
+
+class _Espera:
+    def __init__(self, valor):
+        self.value = valor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _Janela:
+    def __init__(self, faltando=()):
+        self.url = "https://esaj.tjsp.jus.br/pastadigital/abrirPastaProcessoDigital.do?t=1"
+        self.faltando = set(faltando)
+        self.clicados = []
+        self.fechada = False
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def query_selector_all(self, seletor):
+        return [] if seletor in self.faltando else [_AlvoClicavel(self, seletor)]
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def expect_download(self, timeout=None):
+        return _Espera(_Baixado())
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+    def close(self):
+        self.fechada = True
+
+
+class _AlvoClicavel:
+    def __init__(self, dono, seletor):
+        self._dono, self._seletor = dono, seletor
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def click(self):
+        self._dono.clicados.append(self._seletor)
+
+
+class _PaginaComAutos:
+    def __init__(self, janela, sem_botao=False):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do?processo.codigo=X"
+        self._janela = janela
+        self.sem_botao = sem_botao
+        self.clicados = []
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def query_selector_all(self, seletor):
+        if seletor == BOTAO_VISUALIZAR_AUTOS and not self.sem_botao:
+            return [_AlvoClicavel(self, seletor)]
+        return []
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def expect_popup(self, timeout=None):
+        return _Espera(self._janela)
+
+
+def test_a_sequencia_inteira_grava_o_pdf(tmp_path):
+    janela = _Janela()
+    p = _PaginaComAutos(janela)
+    r = copiar_autos_pelo_visualizador(p, _guarda(), tmp_path, "123", 10)
+    assert r["situacao"] == "gravada"
+    assert (tmp_path / "integra-autos.pdf").read_bytes().startswith(b"%PDF")
+    assert MARCAR_TODAS in janela.clicados
+    assert BAIXAR_PDF in janela.clicados
+    assert CONFIRMAR_DOWNLOAD in janela.clicados
+
+
+def test_a_ordem_dos_passos_e_a_que_o_operador_descreveu(tmp_path):
+    """Marcar depois de baixar nao selecionaria nada, e o PDF viria vazio."""
+    janela = _Janela()
+    copiar_autos_pelo_visualizador(_PaginaComAutos(janela), _guarda(), tmp_path, "1", 10)
+    assert janela.clicados.index(MARCAR_TODAS) < janela.clicados.index(BAIXAR_PDF)
+    assert janela.clicados.index(BAIXAR_PDF) < janela.clicados.index(CONFIRMAR_DOWNLOAD)
+
+
+def test_para_e_relata_quando_um_passo_some(tmp_path):
+    """A tela pode mudar. Continuar sem o passo baixaria outra coisa, ou nada,
+    e gravaria como se fosse a integra."""
+    janela = _Janela(faltando={BAIXAR_PDF})
+    r = copiar_autos_pelo_visualizador(_PaginaComAutos(janela), _guarda(), tmp_path, "1", 10)
+    assert r["situacao"] == "parou_no_passo"
+    assert r["passo"] == "Baixar PDF"
+    assert CONFIRMAR_DOWNLOAD not in janela.clicados
+
+
+def test_sem_o_botao_de_visualizar_autos_nao_clica_nada(tmp_path):
+    janela = _Janela()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela, sem_botao=True), _guarda(), tmp_path, "1", 10
+    )
+    assert r["situacao"] == "sem_botao"
+    assert janela.clicados == []
+
+
+def test_arquivo_unico_ausente_nao_interrompe(tmp_path):
+    """Ele ja vem marcado na tela fotografada: clicar e so protecao contra o
+    portal mudar o padrao, e nao achar nao pode custar o download."""
+    janela = _Janela(faltando={'text="Arquivo único"'})
+    r = copiar_autos_pelo_visualizador(_PaginaComAutos(janela), _guarda(), tmp_path, "1", 10)
+    assert r["situacao"] == "gravada"
+
+
+def test_cada_alvo_entra_na_permissao_por_si(tmp_path):
+    """Uma permissao ampla para a janela inteira seria mais simples, e e o que
+    nao se faz: a lista estreita impede clique fora do previsto se a tela
+    mudar."""
+    janela = _Janela()
+    guarda = _guarda()
+    copiar_autos_pelo_visualizador(_PaginaComAutos(janela), guarda, tmp_path, "1", 10)
+    liberados = set()
+    for perm in guarda.permissoes:
+        liberados.update(perm.seletores_clicaveis)
+    assert liberados <= {
+        BOTAO_VISUALIZAR_AUTOS, MARCAR_TODAS, BAIXAR_PDF,
+        'text="Arquivo único"', CONFIRMAR_DOWNLOAD,
+    }
+
+
+def test_o_botao_de_ciencia_continua_barrado_durante_a_copia(tmp_path):
+    janela = _Janela()
+    guarda = _guarda()
+    copiar_autos_pelo_visualizador(_PaginaComAutos(janela), guarda, tmp_path, "1", 10)
+    d = guarda.avaliar(
+        Acao.CLICAR, "#botaoConfirmarRebebimentoIntimacao",
+        url="https://esaj.tjsp.jus.br/cpopg/show.do",
+    )
+    assert d.permitido is False
