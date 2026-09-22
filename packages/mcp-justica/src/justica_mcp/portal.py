@@ -1959,6 +1959,40 @@ def consultar_processo(
         atual = pagina.url
         print(f"\n  CONSULTA DO PROCESSO {numero.formatado}")
 
+        # Cada sistema tem a sua forma de chegar ao processo, e a diferenca nao
+        # e cosmetica: o eproc tem barra de busca rapida em toda tela, o e-SAJ
+        # tem duas telas de consulta, uma por grau, com o numero partido em dois
+        # campos. Tratar tudo como eproc foi possivel enquanto so havia eproc.
+        if identidade.sistema == "esaj":
+            from .esaj import ConsultaESAJIndisponivel, buscar as buscar_esaj
+
+            print(f"  e-SAJ, {numero.grau_nome} (deduzida do proprio numero).")
+            try:
+                buscar_esaj(pagina, guarda, numero, segundos)
+            except ConsultaESAJIndisponivel as exc:
+                print(f"  [FALHA] {exc}")
+                return 1
+            print(f"  Endereco: {pagina.url}")
+            print(f"  Titulo: {pagina.title()!r}")
+            # A extracao do e-SAJ ainda nao existe: a tela de resultado nunca
+            # foi vista. Relatar a estrutura e o passo que gera o material para
+            # escreve-la, e e o mesmo caminho que o eproc percorreu.
+            _relatar_tela(pagina, "RESULTADO DA CONSULTA")
+            try:
+                campos, _ = _coletar(pagina)
+                print(f"    CAMPOS ({len(campos)}):")
+                for c in campos[:30]:
+                    print(f"      {c.linha()}")
+            except Exception as exc:
+                print(f"    Estrutura ilegivel: {type(exc).__name__}: {exc}")
+            _listar_ligacoes(pagina, teto=40)
+            estado_local.registrar(
+                acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+                sistema=identidade.sistema, numero=numero.formatado,
+                resultado="estrutura relatada, extracao ainda nao escrita",
+            )
+            return 0
+
         campo = elemento_visivel(pagina, BUSCA_RAPIDA)
         if campo is None:
             print("  [FALHA] Campo de busca rapida nao encontrado na tela.")
