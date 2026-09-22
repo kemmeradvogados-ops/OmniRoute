@@ -140,3 +140,42 @@ def test_so_semente_grava_so_a_semente(monkeypatch):
 
 def test_sem_escolha_grava_as_tres_pecas(monkeypatch):
     assert _guardar(monkeypatch) == ["login", "senha", "semente"]
+
+
+def test_o_login_tambem_sai_do_terminal_quando_ha_janela(monkeypatch):
+    """Prompt aberto no terminal e armadilha para quem trabalha colando
+    comandos: o texto colado vira resposta do prompt. Aconteceu duas vezes em
+    22/09/2026, com a linha de comando seguinte."""
+    from justica_mcp import credenciais as mod
+
+    pedidos = []
+
+    def falso(rotulo, janela, confirmar=True, mascarar=True):
+        pedidos.append((rotulo, janela, mascarar))
+        return "218174" if "Login" in rotulo else "segredo"
+
+    def explode(_):
+        raise AssertionError("o terminal nao pode ser usado quando ha janela")
+
+    monkeypatch.setattr("builtins.input", explode)
+    monkeypatch.setattr(mod, "pedir_segredo", falso)
+    mod.cmd_guardar(_CofreFalso(), "TJRJ", "pje", False, False, True, True)
+
+    assert pedidos and "Login" in pedidos[0][0]
+    assert pedidos[0][1] is True
+    assert pedidos[0][2] is False, "o login nao e mascarado: precisa ser conferido"
+
+
+def test_login_na_janela_e_visivel_e_pedido_uma_vez_so():
+    from justica_mcp.credenciais import pedir_em_janela
+
+    mostrados = []
+
+    def janela_falsa(titulo, mensagem):
+        mostrados.append(mensagem)
+        return "218174"
+
+    valor = pedir_em_janela("Login", confirmar=False, _construtor=janela_falsa,
+                            mascarar=False)
+    assert valor == "218174"
+    assert len(mostrados) == 1

@@ -116,7 +116,8 @@ def cmd_listar(cofre: Cofre) -> int:
     return 0
 
 
-def pedir_em_janela(rotulo: str, confirmar: bool = True, _construtor=None) -> "str | None":
+def pedir_em_janela(rotulo: str, confirmar: bool = True, _construtor=None,
+                    mascarar: bool = True) -> "str | None":
     """Pede um segredo numa janelinha, com os pontinhos e com Ctrl+V.
 
     Nasceu de um impedimento real, em 22 de setembro de 2026: o operador guarda
@@ -142,7 +143,8 @@ def pedir_em_janela(rotulo: str, confirmar: bool = True, _construtor=None) -> "s
             raiz.withdraw()
             raiz.attributes("-topmost", True)
             try:
-                return simpledialog.askstring(titulo, mensagem, show="*", parent=raiz)
+                return simpledialog.askstring(
+                    titulo, mensagem, show="*" if mascarar else "", parent=raiz)
             finally:
                 raiz.destroy()
 
@@ -159,10 +161,11 @@ def pedir_em_janela(rotulo: str, confirmar: bool = True, _construtor=None) -> "s
     return primeira
 
 
-def pedir_segredo(rotulo: str, janela: bool, confirmar: bool = True) -> "str | None":
+def pedir_segredo(rotulo: str, janela: bool, confirmar: bool = True,
+                  mascarar: bool = True) -> "str | None":
     """Pede um segredo pela janela, quando pedida, ou pelo terminal."""
     if janela:
-        valor = pedir_em_janela(rotulo, confirmar=confirmar)
+        valor = pedir_em_janela(rotulo, confirmar=confirmar, mascarar=mascarar)
         if valor is None:
             print("\n  Nao consegui abrir a janela (ou voce cancelou).")
             print("  Repita sem --janela para digitar no terminal.")
@@ -172,6 +175,8 @@ def pedir_segredo(rotulo: str, janela: bool, confirmar: bool = True) -> "str | N
             return None
         return valor
 
+    if not mascarar:
+        return input(f"  {rotulo}: ").strip()
     primeira = getpass.getpass(f"  {rotulo}: ")
     if not confirmar:
         return primeira
@@ -222,7 +227,16 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
 
     if pedir_login or pedir_senha:
         if pedir_login:
-            login = input("  Login (inscricao, cadastro de pessoa fisica, matricula): ").strip()
+            # Com `--janela`, o login tambem sai do terminal. Nao e conforto: em
+            # 22/09/2026 o operador colou DUAS vezes a linha de comando seguinte
+            # dentro do prompt de login, porque quem cola um comando enquanto um
+            # prompt espera ve o texto ser engolido como resposta. Prompt aberto
+            # no terminal e uma armadilha para quem trabalha colando comandos.
+            if janela:
+                print("  Abrindo a janela para o login.")
+            login = (pedir_segredo(
+                "Login (inscricao, cadastro de pessoa fisica, matricula)",
+                janela, confirmar=False, mascarar=False) or "").strip()
             if login:
                 recusa = motivo_para_recusar_login(login)
                 if recusa:
