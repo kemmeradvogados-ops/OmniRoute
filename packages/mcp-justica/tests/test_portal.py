@@ -2068,3 +2068,72 @@ def test_a_permissao_nao_leva_seletor_vazio_para_a_guarda():
         s for s in (pje["campo_usuario"], pje["campo_senha"], pje["campo_codigo"]) if s
     )
     assert preenchiveis == ("#username", "#password")
+
+
+# --------------------------------------------------------------------------
+# O relato precisa mostrar os CAMPOS
+#
+# Eles vinham sendo coletados e nunca impressos. No e-SAJ os campos foram
+# achados por acaso, na lista de elementos com identificador; na tela de
+# segundo fator do PJe, em 22/09/2026, nao havia essa lista e o relato
+# terminou sem dizer onde se digita o codigo, que era a unica coisa que
+# faltava para escrever o adaptador.
+# --------------------------------------------------------------------------
+
+class _PaginaDeRelato:
+    url = "https://sso.cloud.pje.jus.br/auth/realms/pje/login-actions/authenticate"
+    viewport_size = {"width": 1280, "height": 720}
+
+    def title(self):
+        return "Bem vindo ao PJe"
+
+    def query_selector_all(self, seletor):
+        return []
+
+
+def test_o_relato_mostra_os_campos_da_tela(monkeypatch, capsys):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import Campo, _relatar_tela
+
+    codigo = Campo(marcador="input", tipo="text", nome="otp", identificador="otp",
+                   rotulo="Codigo", texto_visivel=None, e_senha=False, visivel=True)
+    monkeypatch.setattr(portal_mod, "_coletar", lambda p: ([codigo], []))
+    _relatar_tela(_PaginaDeRelato(), "TELA")
+
+    saida = capsys.readouterr().out
+    assert "CAMPOS NA TELA" in saida
+    assert "#otp" in saida
+    assert "Codigo" in saida
+
+
+def test_campo_de_senha_e_marcado_no_relato(monkeypatch, capsys):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import Campo, _relatar_tela
+
+    senha = Campo(marcador="input", tipo="password", nome="password",
+                  identificador="password", rotulo=None, texto_visivel=None,
+                  e_senha=True, visivel=True)
+    monkeypatch.setattr(portal_mod, "_coletar", lambda p: ([senha], []))
+    _relatar_tela(_PaginaDeRelato(), "TELA")
+    assert "SENHA" in capsys.readouterr().out
+
+
+def test_campo_sem_identificador_aparece_pelo_nome(monkeypatch, capsys):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import Campo, _relatar_tela
+
+    sem_id = Campo(marcador="input", tipo="text", nome="codigo", identificador=None,
+                   rotulo=None, texto_visivel=None, e_senha=False, visivel=True)
+    monkeypatch.setattr(portal_mod, "_coletar", lambda p: ([sem_id], []))
+    _relatar_tela(_PaginaDeRelato(), "TELA")
+    assert "[name=codigo]" in capsys.readouterr().out
+
+
+def test_tela_sem_campo_nenhum_diz_isso(monkeypatch, capsys):
+    """Silencio aqui faria o leitor achar que o relato ficou incompleto."""
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import _relatar_tela
+
+    monkeypatch.setattr(portal_mod, "_coletar", lambda p: ([], []))
+    _relatar_tela(_PaginaDeRelato(), "TELA")
+    assert "(nenhum)" in capsys.readouterr().out

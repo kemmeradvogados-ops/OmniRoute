@@ -2378,6 +2378,31 @@ def _relatar_tela(pagina, titulo: str) -> None:
         print(f"    Nao foi possivel ler a estrutura: {type(exc).__name__}: {exc}")
         return
     visiveis = [b for b in botoes if b.na_tela]
+    # Os campos vinham sendo coletados e NUNCA impressos. O relato existe para
+    # que um seletor seja escrito a partir da tela real, e sem os campos ele
+    # servia so para metade do trabalho: no e-SAJ os campos foram achados por
+    # acaso, na lista de elementos com identificador, e na tela de segundo
+    # fator do PJe, em 22/09/2026, nao havia essa lista e o relato terminou
+    # sem dizer onde se digita o codigo. Nenhum VALOR e impresso, so a forma.
+    na_tela = [c for c in campos if c.na_tela]
+    print(f"    CAMPOS NA TELA ({len(na_tela)} de {len(campos)}):")
+    for c in na_tela:
+        alvo = (c.identificador and f"#{c.identificador}") or (
+            c.nome and f"[name={c.nome}]") or "(sem id)"
+        marcas = [f"tipo={c.tipo or '?'}"]
+        if c.e_senha:
+            marcas.append("SENHA")
+        if c.rotulo:
+            marcas.append(f"rotulo={c.rotulo[:30]!r}")
+        print(f"      {alvo:40s} {' '.join(marcas)}")
+    if not na_tela:
+        for c in campos[:20]:
+            alvo = (c.identificador and f"#{c.identificador}") or (
+                c.nome and f"[name={c.nome}]") or "(sem id)"
+            print(f"      (fora da tela) {alvo:30s} tipo={c.tipo or '?'}")
+        if not campos:
+            print("      (nenhum)")
+
     print(f"    BOTOES NA TELA ({len(visiveis)} de {len(botoes)}):")
     for b in visiveis:
         alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
