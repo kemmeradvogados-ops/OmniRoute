@@ -1729,3 +1729,14 @@ def test_pagina_ilegivel_nao_derruba_o_relato(capsys):
 
     _relatar_estrutura_de_dados(Explode())
     assert "ilegiveis" in capsys.readouterr().out
+
+
+def test_identificadores_nao_sao_cortados_em_quarenta(capsys):
+    """Identificador e estrutura pura, nao dado de processo. Cortar em 40
+    escondeu o `tbody` das movimentacoes do e-SAJ e custou uma execucao
+    autenticada inteira: uma tentativa e um codigo lido no celular."""
+    p = _PaginaComTabelas(marcados=[_Marcado("tbody", f"t{i}") for i in range(120)])
+    _relatar_estrutura_de_dados(p, teto=40)
+    saida = capsys.readouterr().out
+    assert "tbody#t100" in saida
+    assert "ELEMENTOS COM IDENTIFICADOR (120)" in saida

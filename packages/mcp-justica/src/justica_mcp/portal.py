@@ -1629,10 +1629,17 @@ def _relatar_estrutura_de_dados(pagina, teto: int = 40) -> None:
         if not ident or marcador in ("script", "style", "link", "meta"):
             continue
         nomes.append(f"{marcador}#{ident}")
+    # Teto proprio, e alto: identificador e estrutura pura, nao dado de
+    # processo, e cortar em 40 escondeu justamente o que faltava. O e-SAJ poe o
+    # identificador da tabela de movimentacoes no `tbody`, nao na `table`, e
+    # esses vinham depois do corte. Perder uma execucao autenticada por causa
+    # de um teto de listagem e caro: custa uma tentativa e um codigo lido no
+    # celular.
+    teto_ids = 300
     if nomes:
         print(f"    ELEMENTOS COM IDENTIFICADOR ({len(nomes)}"
-              + (f", mostrando {teto}" if len(nomes) > teto else "") + "):")
-        for nome in nomes[:teto]:
+              + (f", mostrando {teto_ids}" if len(nomes) > teto_ids else "") + "):")
+        for nome in nomes[:teto_ids]:
             print(f"      {nome}")
 
 
