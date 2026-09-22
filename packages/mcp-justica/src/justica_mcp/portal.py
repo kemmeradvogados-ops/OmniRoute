@@ -1302,7 +1302,15 @@ def autenticar(
                 campos, botoes = _coletar(pagina)
 
             if reconhecer_apos:
-                _reconhecer_dentro_da_sessao(pagina, guarda, reconhecer_apos, segundos)
+                # Varias telas numa autenticacao so. Cada login custa uma
+                # tentativa do teto e um codigo que o operador precisa ler no
+                # celular; reconhecer tela a tela multiplicava esse custo por
+                # um motivo que era so de implementacao.
+                destinos = ([reconhecer_apos] if isinstance(reconhecer_apos, str)
+                            else list(reconhecer_apos))
+                for i, destino in enumerate(destinos, 1):
+                    print(f"\n  ===== TELA {i} de {len(destinos)} =====")
+                    _reconhecer_dentro_da_sessao(pagina, guarda, destino, segundos)
 
             if apos_autenticar is not None:
                 # Quem precisa continuar dentro da sessao recebe a pagina ja
@@ -2277,9 +2285,11 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--botao-entrar", default="#sbmEntrar")
     a.add_argument("--campo-codigo", default="#txtAcessoCodigo")
     a.add_argument("--botao-validar", default="#btnValidar")
-    a.add_argument("--reconhecer-apos", default=None, dest="reconhecer_apos",
-                   help="apos autenticar, LE a estrutura desta tela interna e para; "
-                        "nao clica nem preenche nada nela")
+    a.add_argument("--reconhecer-apos", action="append", default=None,
+                   dest="reconhecer_apos",
+                   help="apos autenticar, LE a estrutura desta tela interna; pode ser "
+                        "repetido para varias telas na mesma autenticacao. Nao clica "
+                        "nem preenche nada em nenhuma delas")
     a.add_argument("--perfil", default=None,
                    help="inscricao a usar quando houver mais de um perfil, "
                         "por exemplo RJ168943")

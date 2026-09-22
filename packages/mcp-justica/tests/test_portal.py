@@ -1615,3 +1615,16 @@ def test_ligacoes_ilegiveis_nao_derrubam_o_relato(capsys):
 
     _listar_ligacoes(Explode())
     assert "ilegiveis" in capsys.readouterr().out
+
+
+def test_reconhecimento_interno_aceita_varias_telas():
+    """Cada login custa uma tentativa do teto e um codigo lido no celular.
+    Reconhecer tela a tela multiplicava esse custo por motivo de
+    implementacao, nao do portal."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    assert "isinstance(reconhecer_apos, str)" in fonte
+    assert "for i, destino in enumerate(destinos" in fonte
