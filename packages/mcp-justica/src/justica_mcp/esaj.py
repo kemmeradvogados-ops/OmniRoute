@@ -288,15 +288,22 @@ def _linhas_com_cara_de_movimentacao(elemento: Any) -> list[dict[str, str]]:
 
 
 def extrair_movimentacoes_com_origem(pagina: Any) -> tuple[list[dict[str, str]], str]:
-    """Devolve as linhas e DE ONDE elas vieram.
+    """Devolve o MAIOR conjunto de linhas com data, e de onde ele veio.
 
-    A origem importa mais que as linhas. Vindas do container nomeado, sao
-    movimentacoes por declaracao da propria pagina. Vindas da varredura, sao
-    linhas com data numa tabela sem identificador, e a pagina do e-SAJ tem
-    varias: peticoes diversas, incidentes, audiencias. Chamar qualquer uma
-    delas de "movimentacoes" seria afirmar o que nao se sabe, e o advogado
-    leria um historico que nao e o historico.
+    Pegar o primeiro conjunto que aparecesse era instavel, e a instabilidade
+    apareceu em campo: a mesma consulta trouxe 50, depois 48, depois 5. O
+    `div#containerMovimentacoes` guarda so as ultimas, e a lista completa nasce
+    noutra tabela quando a pessoa expande. Parando no primeiro, o laco de
+    expansao via o numero travado em cinco e concluia "parou de crescer" com
+    quarenta e tantas linhas ja na tela.
+
+    O maior conjunto e o historico: a pagina tem outras tabelas com data
+    (peticoes, incidentes, audiencias) e todas sao pequenas. A origem continua
+    sendo relatada, porque "o maior" e uma boa aposta e nao uma declaracao da
+    pagina.
     """
+    candidatos: list[tuple[list[dict[str, str]], str]] = []
+
     try:
         container = pagina.query_selector(CONTAINER_MOVIMENTACOES)
     except Exception:
@@ -304,17 +311,22 @@ def extrair_movimentacoes_com_origem(pagina: Any) -> tuple[list[dict[str, str]],
     if container is not None:
         do_container = _linhas_com_cara_de_movimentacao(container)
         if do_container:
-            return do_container, "container"
+            candidatos.append((do_container, "container"))
 
     try:
         tabelas = pagina.query_selector_all("table")
     except Exception:
-        return [], "nenhuma"
+        tabelas = []
     for tabela in tabelas:
         achadas = _linhas_com_cara_de_movimentacao(tabela)
         if achadas:
-            return achadas, "varredura"
-    return [], "nenhuma"
+            candidatos.append((achadas, "varredura"))
+
+    if not candidatos:
+        return [], "nenhuma"
+    # Empate fica com o container, que e o lugar declarado.
+    candidatos.sort(key=lambda par: (len(par[0]), par[1] == "container"), reverse=True)
+    return candidatos[0]
 
 
 def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:

@@ -1348,3 +1348,56 @@ def test_uma_rodada_sem_crescer_nao_encerra_a_expansao():
 
     r = expandir_movimentacoes_ate_o_fim(p, _guarda(), 5, contar=contar)
     assert p.cliques >= 2, "desistiu na primeira rodada sem crescimento"
+
+
+# --------------------------------------------------------------------------
+# O maior conjunto e o historico
+#
+# Instabilidade vista em campo em 22/09/2026: a mesma consulta trouxe 50,
+# depois 48, depois 5. O container guarda so as ultimas movimentacoes, e a
+# lista completa nasce noutra tabela quando a pessoa expande. Parando no
+# primeiro conjunto, o laco via o numero travado em cinco e concluia "parou de
+# crescer" com quarenta e tantas linhas ja na tela.
+# --------------------------------------------------------------------------
+
+def test_prefere_o_maior_conjunto_ao_primeiro_encontrado():
+    poucas = _El(filhos={"tr": [_linha("01/01/2026", "Recente")]})
+    muitas = _El(filhos={"tr": [
+        _linha(f"{d:02d}/01/2026", f"Andamento {d}") for d in range(1, 10)
+    ]})
+    p = _Pagina({"#containerMovimentacoes": poucas}, tabelas=[muitas])
+    movs, origem = extrair_movimentacoes_com_origem(p)
+    assert len(movs) == 9
+    assert origem == "varredura"
+
+
+def test_empate_fica_com_o_container():
+    """O lugar declarado ganha quando os dois tem o mesmo tamanho: so se
+    prefere a varredura quando ela traz MAIS."""
+    iguais = lambda: _El(filhos={"tr": [_linha("01/01/2026", "Algo")]})
+    p = _Pagina({"#containerMovimentacoes": iguais()}, tabelas=[iguais()])
+    assert extrair_movimentacoes_com_origem(p)[1] == "container"
+
+
+def test_container_maior_continua_vencendo():
+    muitas = _El(filhos={"tr": [
+        _linha(f"{d:02d}/01/2026", f"Andamento {d}") for d in range(1, 6)
+    ]})
+    poucas = _El(filhos={"tr": [_linha("01/01/2026", "Peticao")]})
+    p = _Pagina({"#containerMovimentacoes": muitas}, tabelas=[poucas])
+    movs, origem = extrair_movimentacoes_com_origem(p)
+    assert len(movs) == 5
+    assert origem == "container"
+
+
+def test_a_tabela_de_partes_continua_fora_mesmo_sendo_grande():
+    """Tamanho nao basta: a linha precisa comecar com data. Sem isso, uma
+    tabela grande de partes viraria o historico."""
+    partes = _El(filhos={"tr": [
+        _linha("Exeqte:", f"PARTE {i}") for i in range(20)
+    ]})
+    movs = _El(filhos={"tr": [_linha("01/01/2026", "Despacho")]})
+    p = _Pagina({}, tabelas=[partes, movs])
+    achadas, _ = extrair_movimentacoes_com_origem(p)
+    assert len(achadas) == 1
+    assert achadas[0]["descricao"] == "Despacho"
