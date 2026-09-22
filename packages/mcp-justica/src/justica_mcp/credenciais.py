@@ -202,19 +202,26 @@ def motivo_para_recusar_login(login: str) -> str:
 
 
 def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
-                so_semente: bool, janela: bool = False) -> int:
+                so_semente: bool, janela: bool = False, so_login: bool = False) -> int:
+    """Grava as tres pecas da credencial, ou so a que for pedida.
+
+    Cada `--so-alguma-coisa` grava EXATAMENTE aquilo, e nada mais. A regra
+    parece obvia e nao era: ate 22/09/2026 o `--so-senha` perguntava tambem o
+    login, o operador colou ali a linha de comando seguinte, e o login do
+    portal ficou corrompido em silencio. Consertar um pedaco nao pode obrigar
+    a redigitar os outros, porque cada redigitacao e uma chance de errar.
+    """
     identidade = _resolver(tribunal, sistema)
+    escolheu = so_login or so_senha or so_semente
+    pedir_login = so_login or not escolheu
+    pedir_senha = so_senha or not escolheu
+    pedir_semente = so_semente or not escolheu
+
     print(f"\nGravando credencial de {identidade.rotulo}.")
     print("O que voce digitar NAO aparece na tela e NAO fica em arquivo.\n")
 
-    if not so_semente:
-        # `--so-senha` promete gravar APENAS a senha, e por isso nao pergunta o
-        # login. Perguntar assim mesmo custou caro em 22/09/2026: o operador
-        # colou no prompt de login a linha de comando seguinte, ela foi gravada
-        # como se fosse a inscricao dele, e o login do portal ficou corrompido
-        # sem ninguem perceber. O proximo acesso teria gasto uma tentativa do
-        # teto da conta para enviar um texto que nao e login nenhum.
-        if not so_senha:
+    if pedir_login or pedir_senha:
+        if pedir_login:
             login = input("  Login (inscricao, cadastro de pessoa fisica, matricula): ").strip()
             if login:
                 recusa = motivo_para_recusar_login(login)
@@ -224,6 +231,8 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
                     return 1
                 cofre.guardar_login(identidade, login)
                 print("  Login gravado.")
+        if not pedir_senha:
+            return 0
         if janela:
             print("  Abrindo a janela para a senha. Ela aceita colar (Ctrl+V).")
         senha = pedir_segredo("Senha do portal", janela)
@@ -236,7 +245,7 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
             return 1
         print("  Senha gravada.")
 
-    if not so_senha:
+    if pedir_semente:
         print("\n  Semente do segundo fator: e o codigo longo do QR Code, com")
         print("  32 caracteres, e nao o codigo de 6 digitos do aplicativo.")
         print("  Pode colar com espacos; eles sao ignorados.")
@@ -305,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     g = sub.add_parser("guardar", help="grava senha e semente de segundo fator")
     g.add_argument("--tribunal", required=True)
     g.add_argument("--sistema", required=True)
+    g.add_argument("--so-login", action="store_true", help="grava apenas o login")
     g.add_argument("--so-senha", action="store_true", help="grava apenas a senha")
     g.add_argument("--so-semente", action="store_true", help="grava apenas a semente")
     g.add_argument("--janela", action="store_true",
@@ -349,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_importar(cofre, args.planilha, args.simular)
     if args.comando == "guardar":
         return cmd_guardar(cofre, args.tribunal, args.sistema, args.so_senha,
-                           args.so_semente, args.janela)
+                           args.so_semente, args.janela, args.so_login)
     if args.comando == "testar":
         return cmd_testar(cofre, args.tribunal, args.sistema)
     if args.comando == "remover":

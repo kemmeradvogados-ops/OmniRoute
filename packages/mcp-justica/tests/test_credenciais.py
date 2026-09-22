@@ -88,3 +88,55 @@ def test_a_semente_e_pedida_uma_vez_so():
 
     pedir_em_janela("Semente", confirmar=False, _construtor=janela_falsa)
     assert len(pedidos) == 1
+
+
+# --------------------------------------------------------------------------
+# Cada "--so-alguma-coisa" grava exatamente aquilo
+#
+# Consertar um pedaco da credencial nao pode obrigar a redigitar os outros:
+# cada redigitacao e uma chance de errar, e foi assim que o login do PJe se
+# perdeu em 22/09/2026.
+# --------------------------------------------------------------------------
+
+class _CofreFalso:
+    def __init__(self):
+        self.gravados = []
+
+    def guardar_login(self, identidade, valor):
+        self.gravados.append("login")
+
+    def guardar_senha(self, identidade, valor):
+        self.gravados.append("senha")
+
+    def guardar_semente(self, identidade, valor):
+        self.gravados.append("semente")
+
+    def _codigo_segundo_fator(self, identidade):
+        return "123456"
+
+
+def _guardar(monkeypatch, **flags):
+    from justica_mcp import credenciais as mod
+
+    cofre = _CofreFalso()
+    monkeypatch.setattr("builtins.input", lambda _: "218174")
+    monkeypatch.setattr(mod, "pedir_segredo", lambda *a, **kw: "segredo")
+    mod.cmd_guardar(cofre, "TJRJ", "pje", flags.get("so_senha", False),
+                    flags.get("so_semente", False), False, flags.get("so_login", False))
+    return cofre.gravados
+
+
+def test_so_login_grava_so_o_login(monkeypatch):
+    assert _guardar(monkeypatch, so_login=True) == ["login"]
+
+
+def test_so_senha_grava_so_a_senha(monkeypatch):
+    assert _guardar(monkeypatch, so_senha=True) == ["senha"]
+
+
+def test_so_semente_grava_so_a_semente(monkeypatch):
+    assert _guardar(monkeypatch, so_semente=True) == ["semente"]
+
+
+def test_sem_escolha_grava_as_tres_pecas(monkeypatch):
+    assert _guardar(monkeypatch) == ["login", "senha", "semente"]
