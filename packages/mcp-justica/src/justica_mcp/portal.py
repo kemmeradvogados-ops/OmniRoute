@@ -2036,24 +2036,54 @@ def consultar_processo(
                 print(f"  [FALHA] {exc}")
                 return 1
             print(f"  Endereco: {pagina.url}")
-            print(f"  Titulo: {pagina.title()!r}")
-            # A extracao do e-SAJ ainda nao existe: a tela de resultado nunca
-            # foi vista. Relatar a estrutura e o passo que gera o material para
-            # escreve-la, e e o mesmo caminho que o eproc percorreu.
-            _relatar_tela(pagina, "RESULTADO DA CONSULTA")
-            _relatar_estrutura_de_dados(pagina)
-            try:
-                campos, _ = _coletar(pagina)
-                print(f"    CAMPOS ({len(campos)}):")
-                for c in campos[:30]:
-                    print(f"      {c.linha()}")
-            except Exception as exc:
-                print(f"    Estrutura ilegivel: {type(exc).__name__}: {exc}")
-            _listar_ligacoes(pagina, teto=40)
+
+            from .esaj import extrair as extrair_esaj
+
+            dados = extrair_esaj(pagina)
+            dados["numero"] = numero.formatado
+            dados["tribunal"] = identidade.tribunal
+            dados["sistema"] = identidade.sistema
+            dados["grau"] = numero.grau
+            dados["endereco"] = pagina.url
+
+            principais = dados["principais"]
+            print("\n  EXTRAIDO:")
+            for rotulo in ("classe", "assunto", "foro", "vara", "juiz"):
+                if principais.get(rotulo):
+                    print(f"    {rotulo}: {principais[rotulo]}")
+            print(f"    partes: {dados['totais']['partes']}   "
+                  f"movimentacoes: {dados['totais']['movimentacoes']}")
+            if not dados["movimentacoes_completas"]:
+                # Entregar a lista parcial como completa faria o advogado
+                # concluir que nao ha andamento anterior, que e pior que nao
+                # entregar nada. O clique que expande ainda nao foi conferido
+                # em campo, e nao vai ser adivinhado.
+                print("    ATENCAO: a pagina ainda oferece \"exibir mais movimentacoes\".")
+                print("    A lista acima e PARCIAL. O clique que expande ainda nao foi")
+                print("    conferido em campo, entao nao e dado por este comando.")
+            if dados["pasta_digital"]:
+                print(f"    integra disponivel em: {dados['pasta_digital'][:70]}")
+            for m in dados["movimentacoes"][:5]:
+                print(f"      {m['data']}  {m['descricao'][:70]}")
+
+            dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
+            # Alimenta a comparacao de novidades, igual ao eproc. Sem isto, Sao
+            # Paulo ficaria fora do monitoramento: a consulta traria os dados e
+            # o `verificar_novos_andamentos` nunca saberia que eles existiram.
+            # A movimentacao do e-SAJ nao tem numero de evento, so data e
+            # descricao, entao a data faz as vezes de codigo; comparar por
+            # (data, descricao) e o que a pagina permite.
+            estado_local.gravar_snapshot(
+                numero.apenas_digitos,
+                [{"data_hora": m["data"], "codigo": m["data"], "nome": m["descricao"]}
+                 for m in dados["movimentacoes"]],
+            )
+            print(f"\n  Conteudo completo em: {dados['arquivo']}")
+            print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
             estado_local.registrar(
                 acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
                 sistema=identidade.sistema, numero=numero.formatado,
-                resultado="estrutura relatada, extracao ainda nao escrita",
+                resultado=f"{dados['totais']['movimentacoes']} movimentacao(oes)",
             )
             return 0
 

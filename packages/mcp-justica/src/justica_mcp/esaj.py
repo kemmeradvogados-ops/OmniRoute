@@ -148,3 +148,167 @@ def buscar(pagina: Any, guarda: Any, numero: NumeroCNJ, segundos: int) -> TelaCo
         pass
     _assentar(pagina, segundos)
     return tela
+
+
+# Identificadores conferidos em campo em 22 de setembro de 2026, na pagina do
+# processo do primeiro grau. Cada um foi visto no relato de estrutura, nenhum
+# foi suposto.
+DADOS_PRINCIPAIS = {
+    "numero": "#numeroProcesso",
+    "classe": "#classeProcesso",
+    "assunto": "#assuntoProcesso",
+    "foro": "#foroProcesso",
+    "vara": "#varaProcesso",
+    "juiz": "#juizProcesso",
+    "distribuicao": "#dataHoraDistribuicaoProcesso",
+    "controle": "#numeroControleProcesso",
+    "area": "#areaProcesso",
+    "valor_da_acao": "#valorAcaoProcesso",
+}
+
+TABELA_TODAS_PARTES = "#tableTodasPartes"
+TABELA_PARTES_PRINCIPAIS = "#tablePartesPrincipais"
+CONTAINER_MOVIMENTACOES = "#containerMovimentacoes"
+LINK_EXPANDIR_MOVIMENTACOES = "#btnExibirMovimentacoes"
+LINK_PASTA_DIGITAL = "#linkPasta"
+
+
+def _texto(pagina: Any, seletor: str) -> Optional[str]:
+    """Texto de um elemento, ou None. Nunca levanta: pagina de processo varia.
+
+    Processo de execucao fiscal tem tabela de certidao de divida ativa que
+    processo de conhecimento nao tem; processo sem juiz designado nao tem o
+    campo do juiz. Faltar e normal, e faltar nao pode derrubar a extracao do
+    resto.
+    """
+    try:
+        el = pagina.query_selector(seletor)
+        if el is None:
+            return None
+        return " ".join((el.inner_text() or "").split()) or None
+    except Exception:
+        return None
+
+
+def extrair_dados_principais(pagina: Any) -> dict[str, Optional[str]]:
+    return {nome: _texto(pagina, seletor) for nome, seletor in DADOS_PRINCIPAIS.items()}
+
+
+def extrair_partes(pagina: Any) -> list[dict[str, str]]:
+    """Partes do processo, da tabela completa quando ela existe.
+
+    O e-SAJ mostra duas: as principais e todas. A completa e superconjunto da
+    outra, entao usa-la evita perder o polo passivo de processo com varias
+    partes. Sem ela, cai na de principais em vez de devolver nada.
+
+    Cada linha tem duas colunas: o polo e o nome, e o nome vem com os
+    advogados no mesmo bloco, separados por quebra de linha.
+    """
+    for seletor in (TABELA_TODAS_PARTES, TABELA_PARTES_PRINCIPAIS):
+        try:
+            tabela = pagina.query_selector(seletor)
+        except Exception:
+            tabela = None
+        if tabela is None:
+            continue
+        partes: list[dict[str, str]] = []
+        try:
+            linhas = tabela.query_selector_all("tr")
+        except Exception:
+            continue
+        for linha in linhas:
+            try:
+                celulas = linha.query_selector_all("td")
+            except Exception:
+                continue
+            if len(celulas) < 2:
+                continue
+            polo = " ".join((celulas[0].inner_text() or "").split()).rstrip(":")
+            bruto = (celulas[1].inner_text() or "").strip()
+            if not bruto:
+                continue
+            pedacos = [p.strip() for p in bruto.splitlines() if p.strip()]
+            partes.append({
+                "polo": polo,
+                "nome": pedacos[0] if pedacos else "",
+                # Advogados vem no mesmo bloco, depois do nome. Guardar cru
+                # evita inventar estrutura que a pagina nao declara.
+                "representantes": pedacos[1:],
+            })
+        if partes:
+            return partes
+    return []
+
+
+def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:
+    """Movimentacoes, na ordem em que a pagina as mostra.
+
+    A tabela nao tem identificador proprio: vive dentro de
+    `div#containerMovimentacoes`. Ancorar no container, e nao na tabela, e o que
+    torna a leitura possivel sem inventar seletor.
+    """
+    try:
+        container = pagina.query_selector(CONTAINER_MOVIMENTACOES)
+    except Exception:
+        return []
+    if container is None:
+        return []
+    movimentacoes: list[dict[str, str]] = []
+    try:
+        linhas = container.query_selector_all("tr")
+    except Exception:
+        return []
+    for linha in linhas:
+        try:
+            celulas = linha.query_selector_all("td")
+        except Exception:
+            continue
+        if len(celulas) < 2:
+            continue
+        data = " ".join((celulas[0].inner_text() or "").split())
+        # A ultima celula e a descricao; as do meio sao vazias ou decorativas na
+        # pagina conferida, e depender do indice 2 quebraria em tabela de tres
+        # colunas.
+        descricao = " ".join((celulas[-1].inner_text() or "").split())
+        if not data and not descricao:
+            continue
+        movimentacoes.append({"data": data, "descricao": descricao})
+    return movimentacoes
+
+
+def lista_de_movimentacoes_esta_completa(pagina: Any) -> bool:
+    """Falso quando a pagina ainda oferece "exibir mais movimentacoes".
+
+    O e-SAJ mostra so as ultimas e guarda o resto atras de um link. Entregar a
+    lista parcial como se fosse completa faria o advogado concluir que nao ha
+    andamento anterior, que e pior que nao entregar nada.
+    """
+    try:
+        return pagina.query_selector(LINK_EXPANDIR_MOVIMENTACOES) is None
+    except Exception:
+        return True
+
+
+def link_da_pasta_digital(pagina: Any) -> Optional[str]:
+    """Endereco da integra. Ao contrario do eproc, aqui ela tem endereco
+    proprio, entao a copia nao precisa de clique."""
+    try:
+        el = pagina.query_selector(LINK_PASTA_DIGITAL)
+        return el.get_attribute("href") if el is not None else None
+    except Exception:
+        return None
+
+
+def extrair(pagina: Any) -> dict[str, Any]:
+    movimentacoes = extrair_movimentacoes(pagina)
+    return {
+        "principais": extrair_dados_principais(pagina),
+        "partes": extrair_partes(pagina),
+        "movimentacoes": movimentacoes,
+        "movimentacoes_completas": lista_de_movimentacoes_esta_completa(pagina),
+        "pasta_digital": link_da_pasta_digital(pagina),
+        "totais": {
+            "partes": len(extrair_partes(pagina)),
+            "movimentacoes": len(movimentacoes),
+        },
+    }

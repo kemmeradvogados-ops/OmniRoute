@@ -207,3 +207,210 @@ def test_a_consulta_despacha_pelo_sistema_e_nao_trata_tudo_como_eproc():
     assert "buscar as buscar_esaj" in fonte
     # e o caminho do eproc continua sendo o outro ramo, nao foi removido
     assert "BUSCA_RAPIDA" in fonte
+
+
+# --------------------------------------------------------------------------
+# Extracao
+#
+# Identificadores conferidos em campo em 22/09/2026, na pagina do processo de
+# primeiro grau. Cada um foi visto no relato de estrutura; nenhum foi suposto.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import (
+    extrair, extrair_dados_principais, extrair_movimentacoes, extrair_partes,
+    link_da_pasta_digital, lista_de_movimentacoes_esta_completa,
+)
+
+
+class _El:
+    def __init__(self, texto="", filhos=None, atributos=None):
+        self._texto = texto
+        self._filhos = filhos or {}
+        self._atributos = atributos or {}
+
+    def inner_text(self):
+        return self._texto
+
+    def get_attribute(self, nome):
+        return self._atributos.get(nome)
+
+    def query_selector_all(self, seletor):
+        return self._filhos.get(seletor, [])
+
+
+class _Pagina:
+    def __init__(self, mapa):
+        self._mapa = mapa
+
+    def query_selector(self, seletor):
+        return self._mapa.get(seletor)
+
+
+def _linha(*celulas):
+    return _El(filhos={"td": [_El(c) for c in celulas]})
+
+
+def test_le_os_dados_principais_pelos_identificadores():
+    p = _Pagina({
+        "#numeroProcesso": _El("1037850-62.2023.8.26.0100"),
+        "#classeProcesso": _El("Execução Fiscal"),
+        "#varaProcesso": _El(" 1ª  Vara  "),
+    })
+    d = extrair_dados_principais(p)
+    assert d["numero"] == "1037850-62.2023.8.26.0100"
+    assert d["classe"] == "Execução Fiscal"
+    assert d["vara"] == "1ª Vara"      # espacos colapsados
+    assert d["juiz"] is None           # ausente nao vira erro nem string vazia
+
+
+def test_campo_ausente_nao_derruba_os_outros():
+    """Processo sem juiz designado, ou de execucao fiscal sem os campos de
+    conhecimento: faltar e normal, e nao pode custar o resto."""
+    assert extrair_dados_principais(_Pagina({}))["numero"] is None
+
+
+def test_partes_preferem_a_tabela_completa():
+    """A tabela completa e superconjunto da de principais. Usar a de
+    principais quando ha as duas perderia parte do polo passivo."""
+    p = _Pagina({
+        "#tablePartesPrincipais": _El(filhos={"tr": [_linha("Exeqte:", "FAZENDA")]}),
+        "#tableTodasPartes": _El(filhos={"tr": [
+            _linha("Exeqte:", "FAZENDA"),
+            _linha("Exectdo:", "EMPRESA LTDA\nAdvogado Um\nAdvogado Dois"),
+        ]}),
+    })
+    partes = extrair_partes(p)
+    assert len(partes) == 2
+    assert partes[1]["polo"] == "Exectdo"          # dois-pontos removidos
+    assert partes[1]["nome"] == "EMPRESA LTDA"
+    assert partes[1]["representantes"] == ["Advogado Um", "Advogado Dois"]
+
+
+def test_sem_tabela_completa_cai_na_de_principais():
+    p = _Pagina({
+        "#tablePartesPrincipais": _El(filhos={"tr": [_linha("Exeqte:", "FAZENDA")]}),
+    })
+    assert len(extrair_partes(p)) == 1
+
+
+def test_sem_tabela_alguma_devolve_lista_vazia():
+    assert extrair_partes(_Pagina({})) == []
+
+
+def test_movimentacoes_saem_do_container_e_nao_de_tabela_com_id():
+    """A tabela nao tem identificador proprio: vive dentro do container.
+    Ancorar no container e o que torna a leitura possivel sem inventar
+    seletor."""
+    p = _Pagina({
+        "#containerMovimentacoes": _El(filhos={"tr": [
+            _linha("21/07/2026", "", "", "Remetidos os autos"),
+            _linha("16/07/2026", "", "", "Contrarrazões"),
+        ]}),
+    })
+    m = extrair_movimentacoes(p)
+    assert m == [
+        {"data": "21/07/2026", "descricao": "Remetidos os autos"},
+        {"data": "16/07/2026", "descricao": "Contrarrazões"},
+    ]
+
+
+def test_descricao_sai_da_ultima_celula_e_nao_de_indice_fixo():
+    """Depender do indice 2 quebraria em tabela de tres colunas, e a pagina
+    conferida tinha quatro."""
+    p = _Pagina({
+        "#containerMovimentacoes": _El(filhos={"tr": [_linha("01/01/2026", "Despacho")]}),
+    })
+    assert extrair_movimentacoes(p)[0]["descricao"] == "Despacho"
+
+
+def test_linha_de_cabecalho_sem_celulas_de_dado_e_ignorada():
+    p = _Pagina({
+        "#containerMovimentacoes": _El(filhos={"tr": [
+            _El(filhos={"td": []}),
+            _linha("01/01/2026", "Despacho"),
+        ]}),
+    })
+    assert len(extrair_movimentacoes(p)) == 1
+
+
+def test_lista_parcial_e_sinalizada():
+    """Entregar a lista parcial como completa faria o advogado concluir que
+    nao ha andamento anterior, que e pior que nao entregar nada."""
+    p = _Pagina({"#btnExibirMovimentacoes": _El("Exibir mais")})
+    assert lista_de_movimentacoes_esta_completa(p) is False
+
+
+def test_sem_link_de_expandir_a_lista_e_completa():
+    assert lista_de_movimentacoes_esta_completa(_Pagina({})) is True
+
+
+def test_le_o_endereco_da_pasta_digital():
+    """Ao contrario do eproc, a integra do e-SAJ tem endereco proprio, entao a
+    copia nao vai precisar de clique."""
+    p = _Pagina({"#linkPasta": _El(atributos={
+        "href": "/cpopg/abrirPastaDigital.do?processo.codigo=2S001OE3V0000"
+    })})
+    assert link_da_pasta_digital(p).endswith("processo.codigo=2S001OE3V0000")
+
+
+def test_sem_link_de_pasta_devolve_nada_em_vez_de_quebrar():
+    assert link_da_pasta_digital(_Pagina({})) is None
+
+
+def test_extracao_completa_traz_totais_e_sinalizacao():
+    p = _Pagina({
+        "#numeroProcesso": _El("1037850-62.2023.8.26.0100"),
+        "#tableTodasPartes": _El(filhos={"tr": [_linha("Exeqte:", "FAZENDA")]}),
+        "#containerMovimentacoes": _El(filhos={"tr": [_linha("01/01/2026", "Despacho")]}),
+        "#btnExibirMovimentacoes": _El("Exibir mais"),
+    })
+    d = extrair(p)
+    assert d["totais"] == {"partes": 1, "movimentacoes": 1}
+    assert d["movimentacoes_completas"] is False
+
+
+def test_pagina_que_explode_na_leitura_nao_derruba_a_extracao():
+    class Explode:
+        def query_selector(self, _):
+            raise RuntimeError("pagina fechada")
+
+    d = extrair(Explode())
+    assert d["totais"] == {"partes": 0, "movimentacoes": 0}
+    assert d["pasta_digital"] is None
+
+
+def test_a_consulta_grava_o_arquivo_e_nao_despeja_na_tela():
+    """Sao dezenas de movimentacoes por processo. Despeja-las no terminal
+    convida a colar dado de cliente onde nao deve."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("BUSCA_RAPIDA")]
+    assert "_gravar_consulta" in ramo
+    assert "Nao o cole em conversa nenhuma" in ramo
+    assert 'dados["movimentacoes"][:5]' in ramo   # so as cinco mais recentes
+
+
+def test_a_consulta_avisa_quando_a_lista_veio_parcial():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "e PARCIAL" in fonte
+    assert "nao foi" in fonte and "conferido em campo" in fonte
+
+
+def test_a_consulta_alimenta_a_comparacao_de_novidades():
+    """Sem o instantaneo, Sao Paulo ficaria fora do monitoramento: a consulta
+    traria os dados e `verificar_novos_andamentos` nunca saberia que eles
+    existiram."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("BUSCA_RAPIDA")]
+    assert "gravar_snapshot" in ramo
