@@ -716,6 +716,19 @@ pasta de estado, junto da auditoria, e não em lugar temporário.
 `JUSTICA_NAVEGADOR_EFEMERO=1` devolve o descarte a cada execução, para quem
 preferir pagar o desafio toda vez.
 
+#### Decisões do operador registradas
+
+Este projeto nega por padrão, então tudo o que ele faz num portal existe porque
+o advogado autorizou. As autorizações ficam registradas, com data, para que uma
+sessão futura saiba o que foi decidido e por quem.
+
+| Data | Decisão |
+| --- | --- |
+| 21/09/2026 | Habilitar a cópia de documentos, que era proibida em qualquer modo |
+| 22/09/2026 | Clicar em "exibir mais movimentações" até a opção acabar |
+| 22/09/2026 | Clicar em "salvar documento", e com isso ratificar o estreitamento do termo de risco `salvar` |
+| 22/09/2026 | Zerar o teto de tentativas a cada autenticação bem sucedida |
+
 #### O botão que dá ciência mora na página do processo
 
 **Achado em campo em 22 de setembro de 2026, e é o mais importante desta fase.**
