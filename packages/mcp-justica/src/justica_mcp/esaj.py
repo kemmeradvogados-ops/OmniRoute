@@ -16,6 +16,7 @@ confunde com processo inexistente.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -240,24 +241,23 @@ def extrair_partes(pagina: Any) -> list[dict[str, str]]:
     return []
 
 
-def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:
-    """Movimentacoes, na ordem em que a pagina as mostra.
+DATA_BRASILEIRA = re.compile(r"^\s*\d{2}/\d{2}/\d{4}\s*$")
 
-    A tabela nao tem identificador proprio: vive dentro de
-    `div#containerMovimentacoes`. Ancorar no container, e nao na tabela, e o que
-    torna a leitura possivel sem inventar seletor.
+
+def _linhas_com_cara_de_movimentacao(elemento: Any) -> list[dict[str, str]]:
+    """Le as linhas cuja PRIMEIRA celula e uma data no formato brasileiro.
+
+    Reconhecer pelo formato do dado, e nao por identificador, e o que permite
+    achar a tabela de movimentacoes do e-SAJ sem inventar seletor: ela nao tem
+    identificador proprio, e o container que tem esta vazio ate alguem acionar
+    "exibir mais". Uma data na primeira celula e evidencia; um seletor
+    adivinhado nao e.
     """
+    achadas: list[dict[str, str]] = []
     try:
-        container = pagina.query_selector(CONTAINER_MOVIMENTACOES)
+        linhas = elemento.query_selector_all("tr")
     except Exception:
-        return []
-    if container is None:
-        return []
-    movimentacoes: list[dict[str, str]] = []
-    try:
-        linhas = container.query_selector_all("tr")
-    except Exception:
-        return []
+        return achadas
     for linha in linhas:
         try:
             celulas = linha.query_selector_all("td")
@@ -266,14 +266,47 @@ def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:
         if len(celulas) < 2:
             continue
         data = " ".join((celulas[0].inner_text() or "").split())
-        # A ultima celula e a descricao; as do meio sao vazias ou decorativas na
-        # pagina conferida, e depender do indice 2 quebraria em tabela de tres
-        # colunas.
-        descricao = " ".join((celulas[-1].inner_text() or "").split())
-        if not data and not descricao:
+        if not DATA_BRASILEIRA.match(data):
             continue
-        movimentacoes.append({"data": data, "descricao": descricao})
-    return movimentacoes
+        descricao = " ".join((celulas[-1].inner_text() or "").split())
+        if not descricao:
+            continue
+        achadas.append({"data": data, "descricao": descricao})
+    return achadas
+
+
+def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:
+    """Movimentacoes, na ordem em que a pagina as mostra.
+
+    A tabela nao tem identificador proprio: vive dentro de
+    `div#containerMovimentacoes`. Ancorar no container, e nao na tabela, e o que
+    torna a leitura possivel sem inventar seletor.
+    """
+    # Primeiro o container nomeado, que e o lugar declarado. Conferido em campo
+    # em 22 de setembro de 2026: ele existe e vem VAZIO, porque o e-SAJ so o
+    # preenche quando alguem aciona "exibir mais".
+    try:
+        container = pagina.query_selector(CONTAINER_MOVIMENTACOES)
+    except Exception:
+        container = None
+    if container is not None:
+        do_container = _linhas_com_cara_de_movimentacao(container)
+        if do_container:
+            return do_container
+
+    # Sem nada la, varre as tabelas da pagina procurando linhas com data na
+    # primeira celula. As movimentacoes visiveis vivem numa tabela sem
+    # identificador, e reconhece-la pelo formato do dado e verificavel; chutar
+    # um identificador nao seria.
+    try:
+        tabelas = pagina.query_selector_all("table")
+    except Exception:
+        return []
+    for tabela in tabelas:
+        achadas = _linhas_com_cara_de_movimentacao(tabela)
+        if achadas:
+            return achadas
+    return []
 
 
 def lista_de_movimentacoes_esta_completa(pagina: Any) -> bool:

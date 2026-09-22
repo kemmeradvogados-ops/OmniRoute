@@ -239,11 +239,15 @@ class _El:
 
 
 class _Pagina:
-    def __init__(self, mapa):
+    def __init__(self, mapa, tabelas=()):
         self._mapa = mapa
+        self._tabelas = list(tabelas)
 
     def query_selector(self, seletor):
         return self._mapa.get(seletor)
+
+    def query_selector_all(self, seletor):
+        return self._tabelas if seletor == "table" else []
 
 
 def _linha(*celulas):
@@ -414,3 +418,63 @@ def test_a_consulta_alimenta_a_comparacao_de_novidades():
     fonte = inspect.getsource(portal.consultar_processo)
     ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("BUSCA_RAPIDA")]
     assert "gravar_snapshot" in ramo
+
+
+# --------------------------------------------------------------------------
+# A tabela de movimentacoes nao tem identificador
+#
+# Conferido em campo em 22/09/2026: `div#containerMovimentacoes` existe e vem
+# VAZIO, porque o e-SAJ so o preenche quando alguem aciona "exibir mais". As
+# movimentacoes visiveis vivem numa tabela sem identificador nenhum.
+# --------------------------------------------------------------------------
+
+def test_container_vazio_cai_na_varredura_por_formato_de_dado():
+    """Reconhecer pela data na primeira celula e verificavel; chutar um
+    identificador nao seria."""
+    p = _Pagina(
+        {"#containerMovimentacoes": _El(filhos={"tr": []})},
+        tabelas=[_El(filhos={"tr": [
+            _linha("21/07/2026", "", "", "Remetidos os autos"),
+            _linha("16/07/2026", "", "", "Contrarrazoes"),
+        ]})],
+    )
+    m = extrair_movimentacoes(p)
+    assert [x["data"] for x in m] == ["21/07/2026", "16/07/2026"]
+
+
+def test_container_preenchido_tem_precedencia_sobre_a_varredura():
+    """O lugar declarado vem primeiro: quando ele responde, a varredura nem
+    roda, e o resultado nao depende da ordem das tabelas na pagina."""
+    p = _Pagina(
+        {"#containerMovimentacoes": _El(filhos={"tr": [
+            _linha("01/01/2026", "Do container"),
+        ]})},
+        tabelas=[_El(filhos={"tr": [_linha("02/02/2026", "De outra tabela")]})],
+    )
+    assert extrair_movimentacoes(p)[0]["descricao"] == "Do container"
+
+
+def test_tabela_de_partes_nao_e_confundida_com_movimentacao():
+    """A pagina tem varias tabelas. Sem a exigencia de data na primeira
+    celula, a de partes viraria movimentacao e o relatorio mentiria."""
+    p = _Pagina({}, tabelas=[
+        _El(filhos={"tr": [_linha("Exeqte:", "FAZENDA DO ESTADO")]}),
+        _El(filhos={"tr": [_linha("10/03/2026", "Juntada de peticao")]}),
+    ])
+    m = extrair_movimentacoes(p)
+    assert len(m) == 1
+    assert m[0]["descricao"] == "Juntada de peticao"
+
+
+def test_data_em_formato_estranho_nao_conta():
+    p = _Pagina({}, tabelas=[_El(filhos={"tr": [_linha("2026-03-10", "Algo")]})])
+    assert extrair_movimentacoes(p) == []
+
+
+def test_linha_com_data_mas_sem_descricao_e_descartada():
+    p = _Pagina({}, tabelas=[_El(filhos={"tr": [_linha("10/03/2026", "")]})])
+    assert extrair_movimentacoes(p) == []
+
+
+def test_sem_tabela_alguma_devolve_lista_vazia_sem_quebrar():
+    assert extrair_movimentacoes(_Pagina({})) == []
