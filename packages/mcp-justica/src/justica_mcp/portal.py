@@ -1565,6 +1565,36 @@ def _reconhecer_dentro_da_sessao(pagina, guarda, destino: str, segundos: int) ->
     for c in campos:
         print(f"      {c.linha()}")
 
+    # Portais montam o menu como paineis sanfonados: os links existem no
+    # documento mesmo com o painel fechado. Lista-los revela o endereco da tela
+    # de consulta sem clicar em nada e sem eu adivinhar, que e o ponto todo do
+    # reconhecimento. Visto no e-SAJ de Sao Paulo, 21 de setembro de 2026.
+    _listar_ligacoes(pagina)
+
+
+def _listar_ligacoes(pagina, teto: int = 60) -> None:
+    try:
+        ancoras = pagina.query_selector_all("a[href]")
+    except Exception as exc:
+        print(f"    Ligacoes ilegiveis: {type(exc).__name__}: {exc}")
+        return
+    vistos: set = set()
+    linhas: list[tuple[str, str]] = []
+    for a in ancoras:
+        try:
+            alvo = (a.get_attribute("href") or "").strip()
+            texto = " ".join((a.inner_text() or "").split())[:50]
+        except Exception:
+            continue
+        if not alvo or alvo.startswith(("#", "javascript:")) or alvo in vistos:
+            continue
+        vistos.add(alvo)
+        linhas.append((texto, alvo))
+    print(f"    LIGACOES ({len(linhas)}"
+          + (f", mostrando {teto}" if len(linhas) > teto else "") + "):")
+    for texto, alvo in linhas[:teto]:
+        print(f"      {texto or '(sem texto)':42s} -> {alvo[:100]}")
+
 
 def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool) -> Optional[str]:
     """Pede ao operador o codigo que o PORTAL enviou.

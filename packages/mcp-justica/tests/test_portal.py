@@ -1534,3 +1534,84 @@ def test_nao_libera_clique_nem_preenchimento_na_tela_interna(monkeypatch):
     for p in guarda.permissoes:
         assert not p.seletores_clicaveis
         assert not p.seletores_preenchiveis
+
+
+# --------------------------------------------------------------------------
+# Ligacoes da tela interna
+#
+# Portais montam o menu como paineis sanfonados: os links existem no documento
+# mesmo com o painel fechado. Sem lista-los, o endereco da tela de consulta
+# teria de ser adivinhado, que e o erro que o reconhecimento existe para
+# evitar. Visto no e-SAJ de Sao Paulo, 21/09/2026.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _listar_ligacoes
+
+
+class _Ancora:
+    def __init__(self, texto, href):
+        self._texto, self._href = texto, href
+
+    def inner_text(self):
+        return self._texto
+
+    def get_attribute(self, nome):
+        return self._href if nome == "href" else None
+
+
+class _PaginaComLigacoes:
+    def __init__(self, ancoras):
+        self._ancoras = ancoras
+
+    def query_selector_all(self, seletor):
+        return self._ancoras if seletor == "a[href]" else []
+
+
+def test_lista_link_de_painel_fechado(capsys):
+    """O painel fechado esconde o link da tela, nao o remove do documento."""
+    p = _PaginaComLigacoes([_Ancora("Consulta de Processos do 1º Grau", "/cpopg/open.do")])
+    _listar_ligacoes(p)
+    saida = capsys.readouterr().out
+    assert "/cpopg/open.do" in saida
+    assert "1º Grau" in saida
+
+
+def test_descarta_ancora_sem_destino_util(capsys):
+    """`#` e `javascript:` sao gatilhos de interface, nao enderecos de tela:
+    listados, afogariam o que interessa."""
+    p = _PaginaComLigacoes([
+        _Ancora("abrir painel", "#"),
+        _Ancora("acao", "javascript:void(0)"),
+        _Ancora("Consulta", "/cposg/open.do"),
+    ])
+    _listar_ligacoes(p)
+    saida = capsys.readouterr().out
+    assert "/cposg/open.do" in saida
+    assert "javascript:" not in saida
+    assert "LIGACOES (1)" in saida
+
+
+def test_nao_repete_o_mesmo_destino(capsys):
+    p = _PaginaComLigacoes([
+        _Ancora("Consulta", "/cpopg/open.do"),
+        _Ancora("Consulta Processual", "/cpopg/open.do"),
+    ])
+    _listar_ligacoes(p)
+    assert "LIGACOES (1)" in capsys.readouterr().out
+
+
+def test_limita_a_listagem_e_avisa(capsys):
+    p = _PaginaComLigacoes([_Ancora(f"item {i}", f"/x{i}") for i in range(80)])
+    _listar_ligacoes(p, teto=10)
+    saida = capsys.readouterr().out
+    assert "mostrando 10" in saida
+    assert "/x10" not in saida
+
+
+def test_ligacoes_ilegiveis_nao_derrubam_o_relato(capsys):
+    class Explode:
+        def query_selector_all(self, _):
+            raise RuntimeError("pagina fechada")
+
+    _listar_ligacoes(Explode())
+    assert "ilegiveis" in capsys.readouterr().out
