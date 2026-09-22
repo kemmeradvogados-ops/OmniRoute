@@ -286,3 +286,52 @@ def test_ler_a_pagina_do_processo_continua_permitido():
         url="https://esaj.tjsp.jus.br/cpopg/show.do?processo.numero=1037850-62.2023.8.26.0100",
     )
     assert d.permitido is True
+
+
+# --------------------------------------------------------------------------
+# "salvar" cru era largo demais
+#
+# Estreitado em 22/09/2026, com o operador informado. O termo existia para
+# impedir gravar alteracao de cadastro, e estava impedindo `#salvarButton`, que
+# na Pasta Digital do e-SAJ baixa um arquivo e nao altera nada.
+# --------------------------------------------------------------------------
+
+def _guarda_livre():
+    return GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+
+
+def test_baixar_arquivo_deixou_de_ser_confundido_com_gravar_cadastro():
+    """Termo largo demais que barra leitura nao protege: ensina a contorna-lo."""
+    d = _guarda_livre().avaliar(Acao.CLICAR, "#salvarButton",
+                                url="https://esaj.tjsp.jus.br/pastadigital/abrir.do")
+    assert "Termo de risco" not in d.motivo
+
+
+def test_gravar_alteracao_de_cadastro_continua_barrado():
+    for alvo in ("#salvarCadastro", "#btnGravarCadastro", "#salvarAlteracao",
+                 "#salvar_senha", "#salvarPerfil"):
+        d = _guarda_livre().avaliar(Acao.CLICAR, alvo)
+        assert d.permitido is False, alvo
+        assert "Termo de risco" in d.motivo
+
+
+def test_a_tela_de_alteracao_de_cadastro_e_barrada_pelo_endereco():
+    """O risco mora no endereco, e barra-lo ali cobre qualquer botao que a tela
+    tenha, inclusive os que nao previmos."""
+    for url in ("https://eproc.jfrj.jus.br/eproc/controlador.php?acao=pessoa_alterar",
+                "https://portal.exemplo/alterar-cadastro"):
+        assert _guarda_livre().avaliar(Acao.NAVEGAR, url, url=url).permitido is False
+
+
+def test_excluir_e_remover_continuam_crus():
+    """Sao destrutivos: nao ha versao inofensiva de excluir."""
+    for alvo in ("#excluirTudo", "#removerDocumento"):
+        assert _guarda_livre().avaliar(Acao.CLICAR, alvo).permitido is False
+
+
+def test_o_botao_de_ciencia_nao_foi_afetado_pelo_estreitamento():
+    """A mudanca mexeu em `salvar` e `gravar`. A protecao central, que e a
+    ciencia, tem de continuar exatamente como estava."""
+    d = _guarda_livre().avaliar(Acao.CLICAR, "#botaoConfirmarRebebimentoIntimacao")
+    assert d.permitido is False
+    assert "ciencia" in d.motivo

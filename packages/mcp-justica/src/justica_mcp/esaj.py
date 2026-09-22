@@ -390,10 +390,25 @@ def expandir_movimentacoes_ate_o_fim(
             return {"expansoes": expansoes, "motivo": "botao sumiu"}
         expansoes += 1
         if contar is not None:
+            # A pagina monta as linhas novas depois de a rede sossegar, entao
+            # contar imediatamente via o numero antigo e o laco concluia "parou
+            # de crescer" cedo demais. Em campo isso deixou o historico em cinco
+            # linhas quando havia quase cinquenta.
+            try:
+                pagina.wait_for_timeout(1500)
+            except Exception:
+                pass
             agora = contar(pagina)
             if antes_do_laco is not None and agora <= antes_do_laco:
-                return {"expansoes": expansoes, "motivo": "parou de crescer"}
-            antes_do_laco = agora
+                # Uma rodada sem crescer pode ser lentidao. Duas seguidas e o
+                # fim de verdade.
+                try:
+                    pagina.wait_for_timeout(2500)
+                except Exception:
+                    pass
+                if contar(pagina) <= antes_do_laco:
+                    return {"expansoes": expansoes, "motivo": "parou de crescer"}
+            antes_do_laco = max(agora, contar(pagina))
     return {"expansoes": expansoes, "motivo": "teto de expansoes atingido"}
 
 
@@ -675,13 +690,33 @@ def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> list[Any]:
 # viu e informou. O mesmo caminho resolveu a palavra "Mais" nas movimentacoes,
 # depois de o identificador conhecido falhar.
 BOTAO_VISUALIZAR_AUTOS = "#linkPasta"
-MARCAR_TODAS = 'text="Todas"'
-BAIXAR_PDF = 'text="Baixar PDF"'
-ARQUIVO_UNICO = 'text="Arquivo único"'
-CONFIRMAR_DOWNLOAD = 'text="Continuar"'
+
+# Conferido em campo em 22 de setembro de 2026, no relato da propria Pasta
+# Digital. Os botoes da barra inferior NAO tem texto: sao icones, e o relato os
+# mostrou com `texto=''`. Por isso os seletores por texto nao achavam nada,
+# embora o operador visse as palavras na tela: o que ele le e a legenda ao lado
+# do icone, nao o conteudo do botao.
+#
+# Cada passo aceita varios candidatos, com o identificador primeiro. E o mesmo
+# arranjo que resolveu a palavra "Mais": o declarado tem precedencia, e o texto
+# fica como rede, para o caso de o portal mudar os identificadores.
+MARCAR_TODAS = ("#selecionarButton", 'text="Todas"')
+BAIXAR_PDF = ("#salvarButton", 'text="Baixar PDF"')
+ARQUIVO_UNICO = ('text="Arquivo único"', 'text="Arquivo unico"')
+CONFIRMAR_DOWNLOAD = ('text="Continuar"', "#btnContinuar")
 
 
-def _clicar_na_pasta(janela: Any, guarda: Any, seletor: str, rotulo: str) -> bool:
+def _primeiro_visivel(janela: Any, candidatos) -> Optional[tuple[Any, str]]:
+    from .portal import elemento_visivel
+
+    for candidato in candidatos:
+        alvo = elemento_visivel(janela, candidato)
+        if alvo is not None:
+            return alvo, candidato
+    return None
+
+
+def _clicar_na_pasta(janela: Any, guarda: Any, candidatos, rotulo: str) -> bool:
     """Clica um alvo da Pasta Digital, sob autorizacao nominal.
 
     Cada alvo entra na lista de permissao por si, no momento de usa-lo. Uma
@@ -690,12 +725,14 @@ def _clicar_na_pasta(janela: Any, guarda: Any, seletor: str, rotulo: str) -> boo
     previsto quando a tela mudar.
     """
     from .core.guarda_navegacao import Acao, Permissao
-    from .portal import elemento_visivel, permissao_efemera
+    from .portal import permissao_efemera
 
-    alvo = elemento_visivel(janela, seletor)
-    if alvo is None:
-        print(f"    [PAROU] Nao encontrei {rotulo} ({seletor}) na Pasta Digital.")
+    achado = _primeiro_visivel(janela, candidatos)
+    if achado is None:
+        print(f"    [PAROU] Nao encontrei {rotulo} na Pasta Digital.")
+        print(f"            Tentados: {', '.join(candidatos)}")
         return False
+    alvo, seletor = achado
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(janela.url).padrao_url,
         descricao=f"Pasta Digital: {rotulo}, autorizado pelo operador",
@@ -772,17 +809,18 @@ def copiar_autos_pelo_visualizador(
     # barato e protege do caso de o portal mudar o padrao; nao achar nao e erro.
     _clicar_na_pasta(janela, guarda, ARQUIVO_UNICO, "Arquivo unico")
 
-    alvo = elemento_visivel(janela, CONFIRMAR_DOWNLOAD)
-    if alvo is None:
+    achado = _primeiro_visivel(janela, CONFIRMAR_DOWNLOAD)
+    if achado is None:
         return {"situacao": "parou_no_passo", "passo": "Continuar", "janela": janela}
+    alvo, seletor = achado
 
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(janela.url).padrao_url,
         descricao="Pasta Digital: Continuar, autorizado pelo operador",
         conferido_em="execucao atual",
-        seletores_clicaveis=(CONFIRMAR_DOWNLOAD,),
+        seletores_clicaveis=(seletor,),
     ))
-    guarda.pode_executar(Acao.CLICAR, CONFIRMAR_DOWNLOAD, url=janela.url)
+    guarda.pode_executar(Acao.CLICAR, seletor, url=janela.url)
     print("    Continuar: clicado, aguardando o arquivo...")
     try:
         with janela.expect_download(timeout=max(segundos, 120) * 1000) as baixa:

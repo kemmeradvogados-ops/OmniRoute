@@ -1695,7 +1695,7 @@ def _relatar_estrutura_de_dados(pagina, teto: int = 40) -> None:
     # esses vinham depois do corte. Perder uma execucao autenticada por causa
     # de um teto de listagem e caro: custa uma tentativa e um codigo lido no
     # celular.
-    teto_ids = 300
+    teto_ids = 500
     if nomes:
         print(f"    ELEMENTOS COM IDENTIFICADOR ({len(nomes)}"
               + (f", mostrando {teto_ids}" if len(nomes) > teto_ids else "") + "):")

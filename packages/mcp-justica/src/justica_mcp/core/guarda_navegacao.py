@@ -75,7 +75,21 @@ TERMOS_DE_RISCO = (
     # Terceira classe, descoberta na tela "Alterar Cadastro" do eproc, onde a
     # autenticacao desemboca quando o portal exige atualizacao cadastral:
     # acoes que gravam alteracao no cadastro do advogado no tribunal.
-    "salvar", "gravar", "excluir", "remover",
+    # "salvar" e "gravar" crus foram estreitados em 22 de setembro de 2026. Eles
+    # existiam para impedir GRAVAR ALTERACAO DE CADASTRO, e estavam impedindo
+    # tambem `#salvarButton`, que na Pasta Digital do e-SAJ baixa um arquivo e
+    # nao altera nada. Termo largo demais que barra leitura nao protege: ensina
+    # a contorna-lo, que e pior que nao te-lo.
+    #
+    # As formas compostas cobrem o que o termo cru pretendia, e o alvo de
+    # verdade, a tela de alteracao de cadastro, passou a ser barrado tambem
+    # pelo endereco, que e onde o risco mora.
+    "salvarcadastro", "salvar-cadastro", "gravarcadastro", "gravar-cadastro",
+    "salvaralteracao", "salvar-alteracao", "gravaralteracao", "gravar-alteracao",
+    "salvarsenha", "salvar-senha", "salvarperfil", "salvar-perfil",
+    "salvarconfiguracao", "salvar-configuracao",
+    "alterarcadastro", "alterar-cadastro", "pessoa-alterar",
+    "excluir", "remover",
 )
 
 # Baixar documento foi proibido em qualquer modo ate 21 de setembro de 2026,

@@ -1159,8 +1159,8 @@ def test_sem_endereco_real_segue_com_o_de_passagem():
 # --------------------------------------------------------------------------
 
 from justica_mcp.esaj import (
-    BAIXAR_PDF, BOTAO_VISUALIZAR_AUTOS, CONFIRMAR_DOWNLOAD, MARCAR_TODAS,
-    copiar_autos_pelo_visualizador,
+    ARQUIVO_UNICO, BAIXAR_PDF, BOTAO_VISUALIZAR_AUTOS, CONFIRMAR_DOWNLOAD,
+    MARCAR_TODAS, copiar_autos_pelo_visualizador,
 )
 
 
@@ -1257,27 +1257,27 @@ def test_a_sequencia_inteira_grava_o_pdf(tmp_path):
     r = copiar_autos_pelo_visualizador(p, _guarda(), tmp_path, "123", 10)
     assert r["situacao"] == "gravada"
     assert (tmp_path / "integra-autos.pdf").read_bytes().startswith(b"%PDF")
-    assert MARCAR_TODAS in janela.clicados
-    assert BAIXAR_PDF in janela.clicados
-    assert CONFIRMAR_DOWNLOAD in janela.clicados
+    assert "#selecionarButton" in janela.clicados
+    assert "#salvarButton" in janela.clicados
+    assert 'text="Continuar"' in janela.clicados
 
 
 def test_a_ordem_dos_passos_e_a_que_o_operador_descreveu(tmp_path):
     """Marcar depois de baixar nao selecionaria nada, e o PDF viria vazio."""
     janela = _Janela()
     copiar_autos_pelo_visualizador(_PaginaComAutos(janela), _guarda(), tmp_path, "1", 10)
-    assert janela.clicados.index(MARCAR_TODAS) < janela.clicados.index(BAIXAR_PDF)
-    assert janela.clicados.index(BAIXAR_PDF) < janela.clicados.index(CONFIRMAR_DOWNLOAD)
+    assert janela.clicados.index("#selecionarButton") < janela.clicados.index("#salvarButton")
+    assert janela.clicados.index("#salvarButton") < janela.clicados.index('text="Continuar"')
 
 
 def test_para_e_relata_quando_um_passo_some(tmp_path):
     """A tela pode mudar. Continuar sem o passo baixaria outra coisa, ou nada,
     e gravaria como se fosse a integra."""
-    janela = _Janela(faltando={BAIXAR_PDF})
+    janela = _Janela(faltando=set(BAIXAR_PDF))
     r = copiar_autos_pelo_visualizador(_PaginaComAutos(janela), _guarda(), tmp_path, "1", 10)
     assert r["situacao"] == "parou_no_passo"
     assert r["passo"] == "Baixar PDF"
-    assert CONFIRMAR_DOWNLOAD not in janela.clicados
+    assert 'text="Continuar"' not in janela.clicados
 
 
 def test_sem_o_botao_de_visualizar_autos_nao_clica_nada(tmp_path):
@@ -1292,7 +1292,7 @@ def test_sem_o_botao_de_visualizar_autos_nao_clica_nada(tmp_path):
 def test_arquivo_unico_ausente_nao_interrompe(tmp_path):
     """Ele ja vem marcado na tela fotografada: clicar e so protecao contra o
     portal mudar o padrao, e nao achar nao pode custar o download."""
-    janela = _Janela(faltando={'text="Arquivo único"'})
+    janela = _Janela(faltando=set(ARQUIVO_UNICO))
     r = copiar_autos_pelo_visualizador(_PaginaComAutos(janela), _guarda(), tmp_path, "1", 10)
     assert r["situacao"] == "gravada"
 
@@ -1307,10 +1307,10 @@ def test_cada_alvo_entra_na_permissao_por_si(tmp_path):
     liberados = set()
     for perm in guarda.permissoes:
         liberados.update(perm.seletores_clicaveis)
-    assert liberados <= {
-        BOTAO_VISUALIZAR_AUTOS, MARCAR_TODAS, BAIXAR_PDF,
-        'text="Arquivo único"', CONFIRMAR_DOWNLOAD,
-    }
+    permitidos = {BOTAO_VISUALIZAR_AUTOS}
+    for grupo in (MARCAR_TODAS, BAIXAR_PDF, ARQUIVO_UNICO, CONFIRMAR_DOWNLOAD):
+        permitidos.update(grupo)
+    assert liberados <= permitidos
 
 
 def test_o_botao_de_ciencia_continua_barrado_durante_a_copia(tmp_path):
@@ -1322,3 +1322,29 @@ def test_o_botao_de_ciencia_continua_barrado_durante_a_copia(tmp_path):
         url="https://esaj.tjsp.jus.br/cpopg/show.do",
     )
     assert d.permitido is False
+
+
+def test_uma_rodada_sem_crescer_nao_encerra_a_expansao():
+    """A pagina monta as linhas depois de a rede sossegar. Concluir "parou de
+    crescer" na primeira rodada lenta deixou o historico em cinco linhas quando
+    havia quase cinquenta."""
+    class Lenta(_PaginaQueExpande):
+        def __init__(self):
+            super().__init__(ate=99)
+            self.leituras = 0
+
+        def wait_for_timeout(self, ms):
+            pass
+
+    p = Lenta()
+    # Cresce, finge estagnar numa leitura, e volta a crescer na seguinte.
+    leituras = iter([10, 10, 20, 20, 30, 30, 30, 30, 30, 30])
+
+    def contar(_):
+        try:
+            return next(leituras)
+        except StopIteration:
+            return 30
+
+    r = expandir_movimentacoes_ate_o_fim(p, _guarda(), 5, contar=contar)
+    assert p.cliques >= 2, "desistiu na primeira rodada sem crescimento"
