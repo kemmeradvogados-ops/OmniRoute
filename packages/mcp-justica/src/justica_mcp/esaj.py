@@ -1038,11 +1038,21 @@ def _gravar_baixado(
     return None
 
 
-def _escutar_descargas(janela: Any, capturados: list) -> None:
-    """Passa a ouvir os downloads da janela e das abas que ela abrir."""
+def _escutar_descargas(janela: Any, capturados: list, gravar: Any) -> None:
+    """Ouve os downloads da janela e das abas que ela abrir, e GRAVA na hora.
+
+    Gravar aqui dentro, e nao depois de o laco perceber, e o que salva o
+    arquivo: em campo, em 22/09/2026, a Pasta Digital se fechou entre o aviso
+    de download e a gravacao, e meio segundo de atraso custou a copia inteira.
+    """
 
     def guardar(baixado: Any) -> None:
-        capturados.append(baixado)
+        registro: dict[str, Any] = {"baixado": baixado, "arquivo": None, "erro": None}
+        capturados.append(registro)
+        try:
+            registro["arquivo"] = gravar(baixado)
+        except Exception as exc:
+            registro["erro"] = f"{type(exc).__name__}: {exc}"
 
     janela.on("download", guardar)
     try:
@@ -1201,6 +1211,21 @@ def copiar_autos_pelo_visualizador(
     _assentar(janela, segundos)
     print(f"    Pasta Digital aberta: {janela.url[:90]}")
 
+    # A janela e NOSSA: foi este programa que a abriu, com um clique
+    # autorizado. Ela se fecha sozinha depois de entregar o arquivo, e fechar a
+    # janela mata o canal no meio da gravacao, que foi como duas copias se
+    # perderam em 22/09/2026. Suspender o fechamento automatico ate a gravacao
+    # terminar nao contorna controle nenhum do portal: a janela e fechada logo
+    # em seguida, por este programa, no lugar certo do fluxo.
+    try:
+        janela.evaluate("window.close = function () {}")
+    except Exception:
+        # Sem isso a copia ainda funciona, com os outros caminhos de gravacao.
+        pass
+
+    destino = Path(destino)
+    destino.mkdir(parents=True, exist_ok=True)
+
     passos = (
         (MARCAR_TODAS, "Todas"),
         (BAIXAR_PDF, "Baixar PDF"),
@@ -1244,20 +1269,31 @@ def copiar_autos_pelo_visualizador(
     # guarda o download a qualquer momento, inclusive numa aba que o portal
     # abra no meio do caminho.
     capturados: list[Any] = []
-    _escutar_descargas(janela, capturados)
+
+    def gravar_na_hora(baixado: Any) -> str:
+        sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
+        arquivo = destino / f"integra-{sugerido}"
+        baixado.save_as(str(arquivo))
+        return str(arquivo)
+
+    _escutar_descargas(janela, capturados, gravar_na_hora)
     alvo.click()
 
     parada = _esperar_o_documento_ficar_pronto(janela, guarda, capturados, segundos)
     if parada is not None:
         parada["janela"] = janela
         return parada
-    baixado = capturados[0]
 
-    destino = Path(destino)
-    destino.mkdir(parents=True, exist_ok=True)
+    registro = capturados[0]
+    if registro["arquivo"]:
+        return {"situacao": "gravada", "arquivo": registro["arquivo"], "janela": janela}
+    baixado = registro["baixado"]
+
     sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
     arquivo = destino / f"integra-{sugerido}"
     erro = _gravar_baixado(baixado, arquivo, descargas, desde)
     if erro is not None:
+        if registro["erro"]:
+            erro = f"{erro} A gravacao imediata falhou antes: {registro['erro']}."
         return {"situacao": "download_perdido", "detalhe": erro, "janela": janela}
     return {"situacao": "gravada", "arquivo": str(arquivo), "janela": janela}

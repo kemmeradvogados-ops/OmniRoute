@@ -1366,9 +1366,13 @@ class _Janela:
         self.ouvintes = {}
         self.baixado = _Baixado()
         self.tentativas = []
+        self.avaliados = []
 
     def on(self, evento, funcao):
         self.ouvintes.setdefault(evento, []).append(funcao)
+
+    def evaluate(self, script):
+        self.avaliados.append(script)
 
     def _apos_clique(self, seletor):
         if seletor in self.ENTREGAM and self.baixado is not None:
@@ -2189,3 +2193,84 @@ def test_o_texto_de_reserva_funciona_quando_o_identificador_some(tmp_path, monke
     )
     assert r["situacao"] == "gravada"
     assert 'text="Salvar o documento"' in janela.clicados
+
+
+# --------------------------------------------------------------------------
+# A janela que se fecha no instante da entrega
+#
+# Em campo em 22/09/2026, quinta execucao: a sequencia inteira funcionou,
+# "Salvar o documento" foi clicado, o download comecou, e `save_as` e `path()`
+# morreram os dois com TargetClosedError. A Pasta Digital se fechou entre o
+# aviso do download e a gravacao. Meio segundo de atraso custou a copia.
+# --------------------------------------------------------------------------
+
+class _BaixadoSensivelAoFechamento:
+    """So grava enquanto a janela estiver viva, como o canal de verdade."""
+
+    suggested_filename = "autos.pdf"
+
+    def __init__(self, dono):
+        self._dono = dono
+
+    def save_as(self, caminho):
+        if self._dono.fechada:
+            raise RuntimeError("Target page, context or browser has been closed")
+        from pathlib import Path as _P
+
+        _P(caminho).write_bytes(b"%PDF-1.4 integra")
+
+    def path(self):
+        raise RuntimeError(
+            "Download.path: Target page, context or browser has been closed")
+
+
+class _JanelaQueFechaNaEntrega(_JanelaQueGera):
+    def __init__(self):
+        super().__init__(com_espera=False)
+        self.baixado = _BaixadoSensivelAoFechamento(self)
+
+    def _apos_clique(self, seletor):
+        super()._apos_clique(seletor)
+        if seletor == "#btnDownloadDocumento":
+            self.fechada = True
+
+
+def test_o_arquivo_e_gravado_no_instante_do_aviso_de_download(tmp_path, monkeypatch):
+    """Gravar depois de o laco perceber ja e tarde: a janela fecha antes."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    destino = tmp_path / "copias"
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(_JanelaQueFechaNaEntrega()), _guarda(), destino, "123", 0
+    )
+    assert r["situacao"] == "gravada"
+    assert (destino / "integra-autos.pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_o_fechamento_automatico_da_janela_fica_suspenso(tmp_path, monkeypatch):
+    """A janela e nossa: foi este programa que a abriu. Suspender o fechamento
+    automatico ate a gravacao terminar nao contorna controle do portal."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    janela = _JanelaQueGera(com_espera=False)
+    copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert any("window.close" in s for s in janela.avaliados)
+
+
+def test_falha_da_gravacao_imediata_entra_no_relato(tmp_path, monkeypatch):
+    """O operador precisa saber que houve uma primeira tentativa e por que ela
+    falhou, e nao so a ultima."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    janela = _JanelaQueGera(com_espera=False)
+    janela.baixado = _BaixadoSemCanal()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path / "c", "123", 0
+    )
+    assert r["situacao"] == "download_perdido"
+    assert "gravacao imediata falhou antes" in r["detalhe"]
