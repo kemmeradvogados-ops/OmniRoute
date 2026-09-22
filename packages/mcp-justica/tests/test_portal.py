@@ -1351,3 +1351,45 @@ def test_desiste_apos_tres_erros_em_vez_de_insistir(monkeypatch, capsys):
 def test_campo_sem_tamanho_declarado_aceita_qualquer_quantidade(monkeypatch):
     _com_terminal(monkeypatch, ["12345678"])
     assert _codigo_do_operador("TJSP / esaj", None, oculto=False) == "12345678"
+
+
+# --------------------------------------------------------------------------
+# Seletores na linha de comando
+#
+# `autenticar` e `consultar` nasceram com os seletores do eproc fixos, o que
+# bastou enquanto so havia um portal. No e-SAJ de Sao Paulo, cujos campos sao
+# outros, os dois comandos ficaram inalcancaveis.
+# --------------------------------------------------------------------------
+
+def test_autenticar_e_consultar_aceitam_os_seletores_de_qualquer_portal():
+    import argparse
+    import contextlib
+    import io
+
+    from justica_mcp.portal import main
+
+    esperados = ["--campo-usuario", "--campo-senha", "--campo-senha-oculto",
+                 "--botao-entrar", "--campo-codigo", "--botao-validar"]
+    for comando in ("autenticar", "consultar"):
+        saida = io.StringIO()
+        with contextlib.redirect_stdout(saida):
+            with pytest.raises(SystemExit):
+                main([comando, "--help"])
+        texto = saida.getvalue()
+        for opcao in esperados:
+            assert opcao in texto, f"{comando} sem {opcao}"
+
+
+def test_consultar_repassa_os_seletores_para_a_autenticacao():
+    """Aceitar na linha de comando e nao repassar seria pior que nao aceitar:
+    o operador veria a opcao, passaria o seletor certo, e o comando usaria o
+    do eproc assim mesmo."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    for nome in ("campo_usuario=campo_usuario", "campo_senha=campo_senha",
+                 "campo_senha_oculto=campo_senha_oculto", "botao_entrar=botao_entrar",
+                 "campo_codigo=campo_codigo", "botao_validar=botao_validar"):
+        assert nome in fonte, nome

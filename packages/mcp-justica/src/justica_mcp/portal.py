@@ -1799,6 +1799,12 @@ def consultar_processo(
     sistema: str,
     numero_processo: str,
     *,
+    campo_usuario: str = "#txtUsuario",
+    campo_senha: str = "#pwdSenha",
+    campo_senha_oculto: str = "input[name=pwdSenha]",
+    botao_entrar: str = "#sbmEntrar",
+    campo_codigo: str = "#txtAcessoCodigo",
+    botao_validar: str = "#btnValidar",
     documentos: str = "auto",
     confirmado: bool = False,
     perfil: Optional[str] = None,
@@ -2054,6 +2060,9 @@ def consultar_processo(
 
     return autenticar(
         url, tribunal, sistema, confirmado=confirmado, perfil=perfil,
+        campo_usuario=campo_usuario, campo_senha=campo_senha,
+        campo_senha_oculto=campo_senha_oculto, botao_entrar=botao_entrar,
+        campo_codigo=campo_codigo, botao_validar=botao_validar,
         oculto=oculto, segundos=segundos, espera_humana=espera_humana,
         reenviar=reenviar, cofre=cofre, estado=estado, apos_autenticar=depois,
     )
@@ -2140,6 +2149,10 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--tribunal", required=True)
     a.add_argument("--sistema", required=True)
     a.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
+    a.add_argument("--campo-usuario", default="#txtUsuario")
+    a.add_argument("--campo-senha", default="#pwdSenha")
+    a.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
+    a.add_argument("--botao-entrar", default="#sbmEntrar")
     a.add_argument("--campo-codigo", default="#txtAcessoCodigo")
     a.add_argument("--botao-validar", default="#btnValidar")
     a.add_argument("--perfil", default=None,
@@ -2160,6 +2173,12 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--processo", default=None,
                     help="numero no padrao da numeracao unica; quando omitido, vem do .env "
                          "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_PROCESSO_TESTE)")
+    cp.add_argument("--campo-usuario", default="#txtUsuario")
+    cp.add_argument("--campo-senha", default="#pwdSenha")
+    cp.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
+    cp.add_argument("--botao-entrar", default="#sbmEntrar")
+    cp.add_argument("--campo-codigo", default="#txtAcessoCodigo")
+    cp.add_argument("--botao-validar", default="#btnValidar")
     cp.add_argument("--perfil", default=None)
     cp.add_argument("--documentos", default="auto",
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
@@ -2196,6 +2215,9 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             return consultar_processo(
                 args.url, args.tribunal, args.sistema, args.processo,
+                campo_usuario=args.campo_usuario, campo_senha=args.campo_senha,
+                campo_senha_oculto=args.campo_senha_oculto, botao_entrar=args.botao_entrar,
+                campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 documentos=args.documentos, confirmado=args.confirmado,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
@@ -2203,6 +2225,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.comando == "autenticar":
             return autenticar(
                 args.url, args.tribunal, args.sistema, confirmado=args.confirmado,
+                campo_usuario=args.campo_usuario, campo_senha=args.campo_senha,
+                campo_senha_oculto=args.campo_senha_oculto, botao_entrar=args.botao_entrar,
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
