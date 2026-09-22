@@ -116,6 +116,72 @@ def cmd_listar(cofre: Cofre) -> int:
     return 0
 
 
+def pedir_em_janela(rotulo: str, confirmar: bool = True, _construtor=None) -> "str | None":
+    """Pede um segredo numa janelinha, com os pontinhos e com Ctrl+V.
+
+    Nasceu de um impedimento real, em 22 de setembro de 2026: o operador guarda
+    as senhas num cofre de senhas e precisa COLAR. O prompt de terminal esconde
+    o que se digita, o que e certo, mas em varios terminais do Windows ele nao
+    aceita colar, e ai a senha simplesmente nao entra. Digitar a mao uma senha
+    longa, as cegas, e o caminho mais curto para grava-la errada.
+
+    A janela nao afrouxa nada: o campo continua mascarado, o valor nao passa
+    por arquivo nem por variavel de ambiente, nao entra no historico do
+    terminal e vai direto para o cofre do sistema.
+    """
+    construtor = _construtor
+    if construtor is None:
+        try:
+            import tkinter
+            from tkinter import simpledialog
+        except Exception:
+            return None
+
+        def construtor(titulo, mensagem):
+            raiz = tkinter.Tk()
+            raiz.withdraw()
+            raiz.attributes("-topmost", True)
+            try:
+                return simpledialog.askstring(titulo, mensagem, show="*", parent=raiz)
+            finally:
+                raiz.destroy()
+
+    primeira = construtor("justica-mcp", f"{rotulo}:")
+    if primeira is None:
+        return None
+    if not confirmar:
+        return primeira
+    segunda = construtor("justica-mcp", f"Repita {rotulo.lower()}:")
+    if segunda is None:
+        return None
+    if primeira != segunda:
+        return ""
+    return primeira
+
+
+def pedir_segredo(rotulo: str, janela: bool, confirmar: bool = True) -> "str | None":
+    """Pede um segredo pela janela, quando pedida, ou pelo terminal."""
+    if janela:
+        valor = pedir_em_janela(rotulo, confirmar=confirmar)
+        if valor is None:
+            print("\n  Nao consegui abrir a janela (ou voce cancelou).")
+            print("  Repita sem --janela para digitar no terminal.")
+            return None
+        if valor == "" and confirmar:
+            print("\n  As duas digitacoes diferem. Nada foi gravado.")
+            return None
+        return valor
+
+    primeira = getpass.getpass(f"  {rotulo}: ")
+    if not confirmar:
+        return primeira
+    segunda = getpass.getpass("  Repita:  ")
+    if primeira != segunda:
+        print("\n  As duas digitacoes diferem. Nada foi gravado.")
+        return None
+    return primeira
+
+
 def motivo_para_recusar_login(login: str) -> str:
     """Diz por que este texto nao pode ser um login, ou devolve vazio.
 
@@ -135,7 +201,8 @@ def motivo_para_recusar_login(login: str) -> str:
     return ""
 
 
-def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool, so_semente: bool) -> int:
+def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
+                so_semente: bool, janela: bool = False) -> int:
     identidade = _resolver(tribunal, sistema)
     print(f"\nGravando credencial de {identidade.rotulo}.")
     print("O que voce digitar NAO aparece na tela e NAO fica em arquivo.\n")
@@ -157,10 +224,10 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool, so_se
                     return 1
                 cofre.guardar_login(identidade, login)
                 print("  Login gravado.")
-        senha = getpass.getpass("  Senha do portal: ")
-        confere = getpass.getpass("  Repita a senha:  ")
-        if senha != confere:
-            print("\n  As duas digitacoes diferem. Nada foi gravado.")
+        if janela:
+            print("  Abrindo a janela para a senha. Ela aceita colar (Ctrl+V).")
+        senha = pedir_segredo("Senha do portal", janela)
+        if senha is None:
             return 1
         try:
             cofre.guardar_senha(identidade, senha)
@@ -173,7 +240,9 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool, so_se
         print("\n  Semente do segundo fator: e o codigo longo do QR Code, com")
         print("  32 caracteres, e nao o codigo de 6 digitos do aplicativo.")
         print("  Pode colar com espacos; eles sao ignorados.")
-        semente = getpass.getpass("  Semente: ")
+        semente = pedir_segredo("Semente", janela, confirmar=False)
+        if semente is None:
+            return 1
         try:
             cofre.guardar_semente(identidade, semente)
         except SementeInvalida as exc:
@@ -238,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--sistema", required=True)
     g.add_argument("--so-senha", action="store_true", help="grava apenas a senha")
     g.add_argument("--so-semente", action="store_true", help="grava apenas a semente")
+    g.add_argument("--janela", action="store_true",
+                   help="pede o segredo numa janela, que aceita colar do cofre de senhas")
 
     t = sub.add_parser("testar", help="gera um codigo para conferir com o aplicativo")
     t.add_argument("--tribunal", required=True)
@@ -277,7 +348,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.comando == "importar":
         return cmd_importar(cofre, args.planilha, args.simular)
     if args.comando == "guardar":
-        return cmd_guardar(cofre, args.tribunal, args.sistema, args.so_senha, args.so_semente)
+        return cmd_guardar(cofre, args.tribunal, args.sistema, args.so_senha,
+                           args.so_semente, args.janela)
     if args.comando == "testar":
         return cmd_testar(cofre, args.tribunal, args.sistema)
     if args.comando == "remover":
