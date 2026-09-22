@@ -1758,3 +1758,86 @@ def test_o_navegador_escreve_os_downloads_em_pasta_conhecida(tmp_path, monkeypat
     assert p.chromium.opcoes["accept_downloads"] is True
     assert pasta_de_descargas() == tmp_path / "descargas"
     assert pasta_de_descargas().is_dir()
+
+
+# --------------------------------------------------------------------------
+# Conferencia de sessao: saber sem gastar
+#
+# Em 22/09/2026 foram seis execucoes num dia so para vencer degraus de UMA
+# tela, e cada uma custou uma tentativa do teto da conta e um codigo lido no
+# celular. Abrir o portal com o perfil que ja esta no disco e ler a tela nao
+# custa nem uma coisa nem outra.
+# --------------------------------------------------------------------------
+
+def test_prova_positiva_diz_que_a_sessao_esta_aberta():
+    from justica_mcp.portal import SESSAO_ABERTA, veredicto_da_sessao
+
+    codigo, linhas = veredicto_da_sessao(True, False)
+    assert codigo == SESSAO_ABERTA
+    assert "SESSAO ABERTA" in linhas[0]
+
+
+def test_formulario_de_login_diz_que_a_sessao_caiu():
+    from justica_mcp.portal import SESSAO_FECHADA, veredicto_da_sessao
+
+    codigo, linhas = veredicto_da_sessao(False, True)
+    assert codigo == SESSAO_FECHADA
+    assert "SESSAO FECHADA" in linhas[0]
+
+
+def test_ausencia_de_formulario_nao_e_prova_de_sessao_aberta():
+    """Concluir por ausencia levaria a consulta a seguir como autenticada
+    quando nao esta, e isso custa uma tentativa do teto da conta."""
+    from justica_mcp.portal import SESSAO_INDEFINIDA, veredicto_da_sessao
+
+    codigo, linhas = veredicto_da_sessao(False, False)
+    assert codigo == SESSAO_INDEFINIDA
+    assert "INDEFINIDO" in linhas[0]
+    assert any("NAO e prova" in linha for linha in linhas)
+
+
+def test_prova_positiva_vence_o_formulario_na_tela():
+    """Portal que mostra login e area logada ao mesmo tempo existe: a prova
+    positiva e mais forte que a presenca do formulario."""
+    from justica_mcp.portal import SESSAO_ABERTA, veredicto_da_sessao
+
+    codigo, _ = veredicto_da_sessao(True, True)
+    assert codigo == SESSAO_ABERTA
+
+
+def test_campo_de_senha_visivel_marca_o_formulario_de_login(monkeypatch):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import Campo, _tem_formulario_de_login
+
+    senha = Campo(marcador="input", tipo="password", nome="pwd", identificador="pwd",
+                  rotulo=None, texto_visivel=None, e_senha=True, visivel=True)
+    monkeypatch.setattr(portal_mod, "_coletar", lambda p: ([senha], []))
+    assert _tem_formulario_de_login(object()) is True
+
+
+def test_campo_de_senha_fora_da_tela_nao_conta():
+    """Campo espelho empurrado para fora da tela e o padrao que ja enganou o
+    preenchimento; nao pode enganar tambem a leitura da sessao."""
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import Campo, _tem_formulario_de_login
+
+    espelho = Campo(marcador="input", tipo="password", nome="pwd", identificador="pwd",
+                    rotulo=None, texto_visivel=None, e_senha=True, visivel=True,
+                    na_tela=False)
+    portal_mod._coletar_original = portal_mod._coletar
+    try:
+        portal_mod._coletar = lambda p: ([espelho], [])
+        assert _tem_formulario_de_login(object()) is False
+    finally:
+        portal_mod._coletar = portal_mod._coletar_original
+
+
+def test_leitura_que_falha_nao_inventa_formulario(monkeypatch):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import _tem_formulario_de_login
+
+    def explode(_):
+        raise RuntimeError("tela ilegivel")
+
+    monkeypatch.setattr(portal_mod, "_coletar", explode)
+    assert _tem_formulario_de_login(object()) is False

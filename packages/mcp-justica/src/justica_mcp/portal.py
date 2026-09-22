@@ -987,6 +987,133 @@ def _casar_perfil(
     return None
 
 
+def conferir_sessao(
+    url: str, tribunal: str, sistema: str, *, oculto: bool = False, segundos: int = 30
+) -> int:
+    """Diz se a sessao guardada no perfil ainda vale, SEM gastar tentativa.
+
+    Por que existe: cada execucao de `consultar` custa uma tentativa de login
+    do teto da conta e um codigo lido no celular, e em 22/09/2026 foram seis
+    execucoes num dia so para vencer degraus de UMA tela. Este comando nao
+    preenche, nao clica e nao autentica: abre o portal com o perfil que ja
+    esta no disco e relata o que aparece. Se a sessao ainda valer, a consulta
+    seguinte pode aproveita-la; se nao valer, o relato mostra a tela real, que
+    e o que permite escrever a prova de sessao aberta sem adivinhar.
+
+    A conclusao vem rotulada: a AUSENCIA do formulario de login nao prova que
+    a sessao esta aberta, so sugere. Prova positiva exige elemento que so
+    exista depois da autenticacao, e e isso que o relato procura.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(INSTRUCAO_INSTALACAO, file=sys.stderr)
+        return 2
+
+    guarda = GuardaNavegacao(modo=Modo.ENSAIO, permissoes=[permissao_efemera(url)])
+
+    print("=" * LARGURA)
+    print("CONFERENCIA DE SESSAO".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Portal: {tribunal.upper()} / {sistema}")
+    print(f"Endereco: {url}")
+    print("NAO preenche, NAO clica, NAO autentica. Nao gasta tentativa nem codigo.\n")
+
+    try:
+        guarda.avaliar(Acao.NAVEGAR, url).exigir()
+    except NavegacaoBloqueada as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
+    executavel = os.environ.get("JUSTICA_CHROMIUM") or None
+    with sync_playwright() as p:
+        try:
+            navegador, pagina = abrir_navegador(p, oculto, executavel)
+        except Exception as exc:
+            if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
+                print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
+                return 2
+            raise
+        try:
+            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+            _assentar(pagina, segundos)
+            final = pagina.url
+            print(f"  Endereco final: {final}")
+            try:
+                print(f"  Titulo: {pagina.title()!r}")
+            except Exception:
+                pass
+
+            formulario_de_login = _tem_formulario_de_login(pagina)
+            prova_positiva = _ja_autenticado(pagina)
+            if _desafio_reprovado(pagina):
+                print("  VERIFICACAO HUMANA: presente e JA REPROVOU o navegador.")
+            elif _ha_desafio_humano(pagina):
+                print("  VERIFICACAO HUMANA: presente, aguardando resposta.")
+
+            situacao, linhas = veredicto_da_sessao(prova_positiva, formulario_de_login)
+            print()
+            for linha in linhas:
+                print(f"  {linha}")
+
+            _relatar_tela(pagina, "TELA ENCONTRADA")
+            return situacao
+        finally:
+            try:
+                for aberta in getattr(navegador, "pages", []):
+                    try:
+                        aberta.close()
+                    except Exception:
+                        pass
+                navegador.close()
+            except Exception:
+                pass
+
+
+SESSAO_ABERTA, SESSAO_FECHADA, SESSAO_INDEFINIDA = 0, 1, 3
+
+
+def veredicto_da_sessao(
+    prova_positiva: bool, formulario_de_login: bool
+) -> tuple[int, list[str]]:
+    """Traduz o que se viu na tela em veredicto, com o rotulo certo.
+
+    A ausencia do formulario de login NAO prova sessao aberta: o portal pode
+    ter devolvido uma tela de erro, de manutencao ou de escolha de perfil.
+    Concluir por ausencia aqui levaria a consulta a seguir como autenticada
+    quando nao esta, e o preco disso e uma tentativa do teto da conta.
+    """
+    if prova_positiva:
+        return SESSAO_ABERTA, [
+            "SESSAO ABERTA (prova positiva na tela).",
+            "A consulta pode aproveitar esta sessao sem novo codigo.",
+        ]
+    if formulario_de_login:
+        return SESSAO_FECHADA, [
+            "SESSAO FECHADA: o portal mostrou o formulario de login.",
+            "A proxima consulta vai pedir credencial e codigo.",
+        ]
+    return SESSAO_INDEFINIDA, [
+        "INDEFINIDO: nao ha formulario de login, mas tambem nao ha prova",
+        "positiva de sessao aberta. Ausencia de formulario NAO e prova: o",
+        "relato abaixo mostra a tela real para que a prova seja escrita a",
+        "partir dela, e nao adivinhada.",
+    ]
+
+
+def _tem_formulario_de_login(pagina) -> bool:
+    """Diz se ha campo de senha visivel na tela: e o formulario de login.
+
+    Campo de senha e a marca mais estavel do formulario de login, porque o
+    identificador muda de portal para portal e o tipo nao muda.
+    """
+    try:
+        campos, _ = _coletar(pagina)
+    except Exception:
+        return False
+    return any(c.e_senha and c.na_tela for c in campos)
+
+
 def autenticar(
     url: str,
     tribunal: str,
@@ -2538,6 +2665,16 @@ def main(argv: list[str] | None = None) -> int:
                    help="nao mostra a janela do navegador (o padrao e mostrar)")
     r.add_argument("--segundos", type=int, default=30, help="tempo limite de carregamento")
 
+    s = sub.add_parser(
+        "sessao",
+        help="diz se a sessao guardada ainda vale, sem gastar tentativa nem codigo",
+    )
+    s.add_argument("--url", default=None, help=AJUDA_URL)
+    s.add_argument("--tribunal", required=True)
+    s.add_argument("--sistema", required=True)
+    s.add_argument("--oculto", action="store_true")
+    s.add_argument("--segundos", type=int, default=30)
+
     e = sub.add_parser(
         "ensaiar-login",
         help="preenche o formulario e confere o efeito, SEM clicar em Entrar",
@@ -2638,6 +2775,9 @@ def main(argv: list[str] | None = None) -> int:
             _do_ambiente(args)
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "sessao":
+            return conferir_sessao(args.url, args.tribunal, args.sistema,
+                                   oculto=args.oculto, segundos=args.segundos)
         if args.comando == "consultar":
             if not args.processo:
                 print(
