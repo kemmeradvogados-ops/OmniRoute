@@ -88,6 +88,30 @@ def contar_paginas(arquivo: Path) -> Optional[int]:
         return None
 
 
+def impressao_do_arquivo(arquivo: Path) -> Optional[str]:
+    """Impressao digital do conteudo, para reconhecer copia repetida.
+
+    Lida em pedacos: a integra de um processo grande nao cabe confortavelmente
+    na memoria, e ler tudo de uma vez para calcular um resumo seria desperdicio
+    em cima de arquivo que ja esta no disco.
+    """
+    import hashlib
+
+    try:
+        digestor = hashlib.sha256()
+        with open(arquivo, "rb") as fonte:
+            for pedaco in iter(lambda: fonte.read(1024 * 1024), b""):
+                digestor.update(pedaco)
+        return digestor.hexdigest()
+    except OSError:
+        return None
+
+
+REPETIDA_IGUAL = "igual"
+REPETIDA_SUSPEITA = "suspeita"
+NOVA = "nova"
+
+
 @dataclass
 class Item:
     tipo: str                      # "integra" ou "documento"
@@ -102,6 +126,9 @@ class Item:
     # Sem isso o complemento recopia o processo inteiro, porque a integra ja
     # contem os documentos dos eventos anteriores a ela.
     evento_ate: Optional[int] = None
+    # Resumo do conteudo, para reconhecer a mesma copia baixada duas vezes.
+    # Nasceu vazio nos indices antigos, e e por isso que ele tem valor padrao.
+    impressao: Optional[str] = None
 
     @property
     def chave(self) -> Optional[str]:
@@ -144,6 +171,37 @@ class Indice:
         """Ate qual evento a integra mais recente cobre. Zero se nao ha."""
         return max((i.evento_ate or 0) for i in self.itens) if self.itens else 0
 
+    def avaliar_repeticao(self, arquivo: Path) -> tuple[str, Optional[Item]]:
+        """Diz se este arquivo ja esta no acervo, antes de gastar numeracao.
+
+        Em 22 de setembro de 2026 a integra do mesmo processo entrou duas
+        vezes, e a segunda foi numerada como fls. 115/228: o acervo passou a
+        dizer que o processo tem 228 folhas quando tem 114. Folha errada em
+        citacao e o pior defeito possivel neste indice, porque o advogado cita
+        "fls. 245/250 da copia" e o juiz procura no lugar que nao existe.
+
+        Tres desfechos, e nao dois, porque as certezas sao diferentes:
+
+        `igual`    o conteudo bate byte a byte. E a mesma copia, sem duvida.
+        `suspeita` e uma integra com o mesmo numero de paginas de outra que ja
+                   esta no acervo, mas o conteudo difere. Provavelmente e a
+                   mesma copia com data de geracao diferente, coisa que o
+                   proprio portal escreve dentro do PDF; pode tambem ser outra
+                   coisa. Quem decide e o operador, nao este codigo.
+        `nova`     nao se parece com nada que ja esteja aqui.
+        """
+        impressao = impressao_do_arquivo(arquivo)
+        if impressao:
+            for item in self.itens:
+                if item.impressao and item.impressao == impressao:
+                    return REPETIDA_IGUAL, item
+        paginas = contar_paginas(arquivo)
+        if paginas:
+            for item in self.itens:
+                if item.tipo == "integra" and item.paginas == paginas:
+                    return REPETIDA_SUSPEITA, item
+        return NOVA, None
+
     def acrescentar(
         self, arquivo: Path, tipo: str, *,
         evento: Optional[str] = None, rotulo: Optional[str] = None,
@@ -159,6 +217,7 @@ class Indice:
             em=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             paginas=paginas, folha_inicial=inicial, folha_final=final,
             evento=evento, rotulo=rotulo, evento_ate=evento_ate,
+            impressao=impressao_do_arquivo(arquivo),
         )
         self.itens.append(item)
         return item

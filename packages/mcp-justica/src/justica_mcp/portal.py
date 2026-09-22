@@ -2503,15 +2503,52 @@ def consultar_processo(
                 if resultado["situacao"] == "gravada":
                     from pathlib import Path as _P
 
-                    item = indice.acrescentar(_P(resultado["arquivo"]), "integra")
-                    indice.gravar()
-                    print(f"    COPIA INTEGRAL gravada: {_P(resultado['arquivo']).name} "
-                          f"({item.faixa()})")
-                    estado_local.registrar(
-                        acao="copia_integral", tribunal=identidade.tribunal,
-                        sistema=identidade.sistema, numero=numero.formatado,
-                        documento=resultado["arquivo"], resultado=item.faixa(),
-                    )
+                    from .core.acervo import REPETIDA_IGUAL, REPETIDA_SUSPEITA
+
+                    baixado = _P(resultado["arquivo"])
+                    veredicto, gemeo = indice.avaliar_repeticao(baixado)
+                    if veredicto == REPETIDA_IGUAL:
+                        # Indexar de novo diria que o processo tem o dobro de
+                        # folhas que tem. Folha errada em citacao e o pior
+                        # defeito possivel neste indice.
+                        print(f"    COPIA REPETIDA: identica a "
+                              f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), ja no acervo.")
+                        print("    O indice NAO foi alterado, para nao renumerar folhas.")
+                        if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
+                            try:
+                                baixado.unlink()
+                                print("    O arquivo repetido foi removido da pasta.")
+                            except OSError as exc:
+                                print(f"    Nao consegui remover o repetido: {exc}")
+                        estado_local.registrar(
+                            acao="copia_repetida", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, numero=numero.formatado,
+                            documento=str(baixado), resultado=gemeo.faixa(),
+                        )
+                    elif veredicto == REPETIDA_SUSPEITA:
+                        print(f"    ATENCAO: esta copia tem o mesmo numero de paginas de "
+                              f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), mas o "
+                              "conteudo difere.")
+                        print("    Pode ser a MESMA copia com data de geracao diferente,")
+                        print("    que o proprio portal escreve dentro do PDF. NAO indexei:")
+                        print("    numerar folha errada e pior que nao numerar. O arquivo")
+                        print(f"    esta em {baixado}. Confira e me diga o que fazer.")
+                        estado_local.registrar(
+                            acao="copia_suspeita_de_repeticao",
+                            tribunal=identidade.tribunal, sistema=identidade.sistema,
+                            numero=numero.formatado, documento=str(baixado),
+                            resultado=gemeo.faixa(),
+                        )
+                    else:
+                        item = indice.acrescentar(baixado, "integra")
+                        indice.gravar()
+                        print(f"    COPIA INTEGRAL gravada: {baixado.name} "
+                              f"({item.faixa()})")
+                        estado_local.registrar(
+                            acao="copia_integral", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, numero=numero.formatado,
+                            documento=resultado["arquivo"], resultado=item.faixa(),
+                        )
                 else:
                     print(f"    COPIA NAO CONCLUIDA ({resultado['situacao']}): "
                           f"{resultado.get('detalhe', '')}")

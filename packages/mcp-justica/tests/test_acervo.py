@@ -219,3 +219,106 @@ def test_pasta_inexistente_nao_quebra_a_varredura(tmp_path, monkeypatch):
     monkeypatch.setenv(VARIAVEL_PASTA, str(tmp_path / "nunca-criada"))
     indice = carregar_indice("123", "0000123-00.0000.0.00.0000")
     assert pdfs_fora_do_indice(indice) == []
+
+
+# --------------------------------------------------------------------------
+# Copia repetida nao pode virar folha nova
+#
+# Em 22/09/2026 a integra do mesmo processo entrou duas vezes, e a segunda foi
+# numerada como fls. 115/228: o acervo passou a dizer que o processo tem 228
+# folhas quando tem 114. Folha errada em citacao e o pior defeito possivel
+# neste indice: o advogado cita "fls. 245/250 da copia" e o juiz procura no
+# lugar que nao existe.
+# --------------------------------------------------------------------------
+
+def _pdf_marcado(caminho, paginas=1, marca="manha"):
+    """Como `_pdf`, mas com marca no conteudo: dois PDFs de mesmo tamanho e
+    conteudo diferente, que e o caso que o portal produz ao regerar a integra
+    com outra data de geracao dentro do arquivo."""
+    from pypdf import PdfWriter
+
+    escritor = PdfWriter()
+    for _ in range(paginas):
+        escritor.add_blank_page(width=595, height=842)
+    escritor.add_metadata({"/Producer": marca})
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    with open(caminho, "wb") as saida:
+        escritor.write(saida)
+    return caminho
+
+
+def test_arquivo_identico_e_reconhecido_como_repeticao(tmp_path):
+    from justica_mcp.core.acervo import REPETIDA_IGUAL, Indice
+
+    indice = Indice(numero="1", pasta=tmp_path)
+    primeiro = _pdf(tmp_path / "integra-a.pdf", 3)
+    indice.acrescentar(primeiro, "integra")
+
+    import shutil
+
+    segundo = tmp_path / "integra-b.pdf"
+    shutil.copyfile(primeiro, segundo)
+
+    veredicto, gemeo = indice.avaliar_repeticao(segundo)
+    assert veredicto == REPETIDA_IGUAL
+    assert gemeo.arquivo == str(primeiro)
+
+
+def test_integra_com_o_mesmo_numero_de_paginas_vira_suspeita_e_nao_certeza(tmp_path):
+    """O portal escreve a data de geracao dentro do PDF, entao a mesma copia
+    pode ter conteudo diferente. Decidir sozinho aqui seria concluir demais."""
+    from justica_mcp.core.acervo import REPETIDA_SUSPEITA, Indice
+
+    indice = Indice(numero="1", pasta=tmp_path)
+    indice.acrescentar(_pdf_marcado(tmp_path / "integra-a.pdf", 3, "manha"), "integra")
+    outro = _pdf_marcado(tmp_path / "integra-b.pdf", 3, "tarde")
+
+    veredicto, gemeo = indice.avaliar_repeticao(outro)
+    assert veredicto == REPETIDA_SUSPEITA
+    assert gemeo is not None
+
+
+def test_copia_realmente_nova_passa(tmp_path):
+    from justica_mcp.core.acervo import NOVA, Indice
+
+    indice = Indice(numero="1", pasta=tmp_path)
+    indice.acrescentar(_pdf(tmp_path / "integra.pdf", 3), "integra")
+    veredicto, gemeo = indice.avaliar_repeticao(_pdf(tmp_path / "novo.pdf", 5))
+    assert veredicto == NOVA
+    assert gemeo is None
+
+
+def test_indice_vazio_nao_ve_repeticao_em_lugar_nenhum(tmp_path):
+    from justica_mcp.core.acervo import NOVA, Indice
+
+    indice = Indice(numero="1", pasta=tmp_path)
+    veredicto, _ = indice.avaliar_repeticao(_pdf(tmp_path / "integra.pdf", 1))
+    assert veredicto == NOVA
+
+
+def test_indice_antigo_sem_impressao_continua_carregando(tmp_path):
+    """Indices gravados antes desta mudanca nao tem o campo. Quebrar na leitura
+    apagaria o historico de folhas ja citadas."""
+    import json
+
+    from justica_mcp.core.acervo import NOME_INDICE, carregar_indice, pasta_do_processo
+
+    pasta = pasta_do_processo("123")
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / NOME_INDICE).write_text(json.dumps({
+        "numero": "1", "itens": [
+            {"tipo": "integra", "arquivo": "x.pdf", "em": "2026-09-21T00:00:00+00:00",
+             "paginas": 114, "folha_inicial": 1, "folha_final": 114},
+        ],
+    }), encoding="utf-8")
+    indice = carregar_indice("123", "1")
+    assert indice.ultima_folha == 114
+    assert indice.itens[0].impressao is None
+
+
+def test_a_impressao_e_gravada_para_as_copias_novas(tmp_path):
+    from justica_mcp.core.acervo import Indice
+
+    indice = Indice(numero="1", pasta=tmp_path)
+    item = indice.acrescentar(_pdf(tmp_path / "integra.pdf", 1), "integra")
+    assert item.impressao and len(item.impressao) == 64
