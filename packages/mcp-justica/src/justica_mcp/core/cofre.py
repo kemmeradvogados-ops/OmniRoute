@@ -162,13 +162,24 @@ class Cofre:
     def guardar_semente(self, identidade: Identidade, semente: str) -> None:
         self._gravar(SERVICO_SEMENTE, identidade.chave, normalizar_semente(semente))
 
-    def remover(self, identidade: Identidade) -> list[str]:
+    def remover(self, identidade: Identidade, pecas=None) -> list[str]:
+        """Remove a credencial, ou apenas as pecas pedidas.
+
+        A remocao por peca nasceu de um caso real, em 22/09/2026: a semente do
+        PJe estava errada e fazia o portal recusar o codigo, mas login e senha
+        estavam certos e custaram trabalho para gravar. Apagar tudo para
+        corrigir uma peca e desproporcional, e sem semente o programa volta a
+        pedir o codigo ao operador, que o le no aplicativo: o acesso continua
+        funcionando enquanto a semente certa nao aparece.
+        """
         removidos = []
         for servico, nome in (
             (SERVICO_LOGIN, "login"),
             (SERVICO_SENHA, "senha"),
             (SERVICO_SEMENTE, "semente"),
         ):
+            if pecas is not None and nome not in pecas:
+                continue
             try:
                 if self._backend.get_password(servico, identidade.chave) is not None:
                     self._backend.delete_password(servico, identidade.chave)

@@ -182,3 +182,45 @@ def test_codigo_nao_espera_com_janela_folgada(cofre, tjrj, monkeypatch):
 
     cofre._codigo_segundo_fator(tjrj, minimo_segundos=8)
     assert not dormiu
+
+
+# --------------------------------------------------------------------------
+# Remover uma peca so
+#
+# Em 22/09/2026 a semente do PJe estava errada e fazia o portal recusar o
+# codigo, mas login e senha estavam certos e custaram trabalho para gravar.
+# Apagar tudo para corrigir uma peca e desproporcional. Sem semente, o
+# programa volta a pedir o codigo ao operador, que o le no aplicativo: o
+# acesso continua funcionando enquanto a semente certa nao aparece.
+# --------------------------------------------------------------------------
+
+def test_remover_so_a_semente_preserva_login_e_senha():
+    cofre = Cofre(BackendMemoria())
+    identidade = Identidade("TJRJ", "pje")
+    cofre.guardar_login(identidade, "218174")
+    cofre.guardar_senha(identidade, "senha-boa")
+    cofre.guardar_semente(identidade, SEMENTE)
+
+    assert cofre.remover(identidade, ["semente"]) == ["semente"]
+    assert cofre.tem_login(identidade) is True
+    assert cofre.tem_senha(identidade) is True
+    assert cofre.tem_semente(identidade) is False
+
+
+def test_remover_sem_pecas_continua_apagando_tudo():
+    cofre = Cofre(BackendMemoria())
+    identidade = Identidade("TJRJ", "pje")
+    cofre.guardar_login(identidade, "218174")
+    cofre.guardar_senha(identidade, "senha-boa")
+
+    assert sorted(cofre.remover(identidade)) == ["login", "senha"]
+    assert cofre.tem_login(identidade) is False
+
+
+def test_sem_semente_o_portal_passa_a_depender_do_operador():
+    """E a razao de existir da remocao por peca: o acesso continua possivel."""
+    cofre = Cofre(BackendMemoria())
+    identidade = Identidade("TJRJ", "pje")
+    cofre.guardar_semente(identidade, SEMENTE)
+    cofre.remover(identidade, ["semente"])
+    assert cofre.tem_semente(identidade) is False

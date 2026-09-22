@@ -300,13 +300,19 @@ def cmd_testar(cofre: Cofre, tribunal: str, sistema: str) -> int:
     return 0
 
 
-def cmd_remover(cofre: Cofre, tribunal: str, sistema: str) -> int:
+def cmd_remover(cofre: Cofre, tribunal: str, sistema: str,
+                so_semente: bool = False) -> int:
     identidade = _resolver(tribunal, sistema)
-    resposta = input(f"Remover a credencial de {identidade.rotulo}? (digite SIM) ")
+    pecas = ["semente"] if so_semente else None
+    o_que = "a semente do segundo fator" if so_semente else "a credencial"
+    resposta = input(f"Remover {o_que} de {identidade.rotulo}? (digite SIM) ")
     if resposta.strip() != "SIM":
         print("Nada foi removido.")
         return 1
-    removidos = cofre.remover(identidade)
+    removidos = cofre.remover(identidade, pecas)
+    if so_semente:
+        print("  Sem semente, o programa passa a PEDIR o codigo a voce na hora")
+        print("  do login, e voce o le no seu aplicativo autenticador.")
     print(f"Removido: {', '.join(removidos) if removidos else 'nada havia gravado'}.")
     return 0
 
@@ -339,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--sistema", required=True)
 
     r = sub.add_parser("remover", help="apaga a credencial do cofre")
+    r.add_argument("--so-semente", action="store_true",
+                   help="apaga apenas a semente do segundo fator, preservando login e senha")
     r.add_argument("--tribunal", required=True)
     r.add_argument("--sistema", required=True)
 
@@ -377,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.comando == "testar":
         return cmd_testar(cofre, args.tribunal, args.sistema)
     if args.comando == "remover":
-        return cmd_remover(cofre, args.tribunal, args.sistema)
+        return cmd_remover(cofre, args.tribunal, args.sistema, args.so_semente)
     return 2
 
 
