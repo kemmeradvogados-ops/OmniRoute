@@ -2137,3 +2137,22 @@ def test_tela_sem_campo_nenhum_diz_isso(monkeypatch, capsys):
     monkeypatch.setattr(portal_mod, "_coletar", lambda p: ([], []))
     _relatar_tela(_PaginaDeRelato(), "TELA")
     assert "(nenhum)" in capsys.readouterr().out
+
+
+def test_pje_recebe_o_segundo_fator_lido_da_tela_real():
+    """Campo `#otp` e botao `#kc-login` ("Validar"), vistos na tela de segundo
+    fator do PJe do Rio em 22/09/2026, depois de a credencial ser aceita."""
+    from justica_mcp.portal import completar_seletores
+
+    args = _Args("pje")
+    completar_seletores(args)
+    assert args.campo_codigo == "#otp"
+    assert args.botao_validar == "#kc-login"
+
+
+def test_o_botao_do_segundo_fator_do_pje_repete_o_do_login_de_proposito():
+    """E outra tela do mesmo Keycloak, e nao um engano de copia."""
+    from justica_mcp.portal import seletores_do_sistema
+
+    pje = seletores_do_sistema("pje")
+    assert pje["botao_entrar"] == pje["botao_validar"] == "#kc-login"

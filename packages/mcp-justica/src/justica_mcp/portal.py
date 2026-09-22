@@ -1213,8 +1213,13 @@ SELETORES_POR_SISTEMA = {
         # fica preso ao formulario que o mapa mostrou.
         "campo_senha_oculto": "#loginForm input[type=password]",
         "botao_entrar": "#kc-login",
-        "campo_codigo": None,
-        "botao_validar": None,
+        # Lidos da tela de segundo fator do PJe do Rio em 22/09/2026, depois de
+        # a credencial ser aceita: um campo so, `#otp`, com o rotulo "Entre no
+        # seu aplicativo de autenticacao", e o mesmo `#kc-login` do login,
+        # agora escrito "Validar". O identificador do botao se repete porque e
+        # outra tela do mesmo Keycloak, e nao um engano.
+        "campo_codigo": "#otp",
+        "botao_validar": "#kc-login",
     },
 }
 
