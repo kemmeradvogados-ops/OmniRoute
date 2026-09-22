@@ -478,3 +478,44 @@ def test_linha_com_data_mas_sem_descricao_e_descartada():
 
 def test_sem_tabela_alguma_devolve_lista_vazia_sem_quebrar():
     assert extrair_movimentacoes(_Pagina({})) == []
+
+
+# --------------------------------------------------------------------------
+# De onde as linhas vieram importa mais que as linhas
+#
+# Em campo em 22/09/2026 a varredura trouxe tres linhas com data, e elas
+# pareciam peticoes, nao movimentacoes: um processo de execucao de 2023 nao tem
+# tres andamentos, e as datas vinham em ordem crescente. A pagina do e-SAJ tem
+# varias tabelas com data.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import extrair_movimentacoes_com_origem
+
+
+def test_origem_container_quando_o_lugar_declarado_responde():
+    p = _Pagina({"#containerMovimentacoes": _El(filhos={"tr": [
+        _linha("01/01/2026", "Despacho"),
+    ]})})
+    assert extrair_movimentacoes_com_origem(p)[1] == "container"
+
+
+def test_origem_varredura_quando_veio_de_tabela_sem_identificador():
+    """A varredura acha ALGO com data, nao necessariamente o historico."""
+    p = _Pagina({}, tabelas=[_El(filhos={"tr": [_linha("01/01/2026", "Peticao")]})])
+    assert extrair_movimentacoes_com_origem(p)[1] == "varredura"
+
+
+def test_origem_nenhuma_quando_nao_ha_linha_com_data():
+    assert extrair_movimentacoes_com_origem(_Pagina({}))[1] == "nenhuma"
+
+
+def test_a_consulta_avisa_quando_a_origem_e_incerta():
+    """Chamar de movimentacoes o que veio de tabela anonima seria afirmar o que
+    nao se sabe, e o advogado leria um historico que talvez nao seja."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert 'movimentacoes_origem"] == "varredura"' in fonte
+    assert "CONFIRA no portal" in fonte

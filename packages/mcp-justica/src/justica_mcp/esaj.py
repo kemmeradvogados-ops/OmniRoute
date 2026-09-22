@@ -275,16 +275,16 @@ def _linhas_com_cara_de_movimentacao(elemento: Any) -> list[dict[str, str]]:
     return achadas
 
 
-def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:
-    """Movimentacoes, na ordem em que a pagina as mostra.
+def extrair_movimentacoes_com_origem(pagina: Any) -> tuple[list[dict[str, str]], str]:
+    """Devolve as linhas e DE ONDE elas vieram.
 
-    A tabela nao tem identificador proprio: vive dentro de
-    `div#containerMovimentacoes`. Ancorar no container, e nao na tabela, e o que
-    torna a leitura possivel sem inventar seletor.
+    A origem importa mais que as linhas. Vindas do container nomeado, sao
+    movimentacoes por declaracao da propria pagina. Vindas da varredura, sao
+    linhas com data numa tabela sem identificador, e a pagina do e-SAJ tem
+    varias: peticoes diversas, incidentes, audiencias. Chamar qualquer uma
+    delas de "movimentacoes" seria afirmar o que nao se sabe, e o advogado
+    leria um historico que nao e o historico.
     """
-    # Primeiro o container nomeado, que e o lugar declarado. Conferido em campo
-    # em 22 de setembro de 2026: ele existe e vem VAZIO, porque o e-SAJ so o
-    # preenche quando alguem aciona "exibir mais".
     try:
         container = pagina.query_selector(CONTAINER_MOVIMENTACOES)
     except Exception:
@@ -292,21 +292,21 @@ def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:
     if container is not None:
         do_container = _linhas_com_cara_de_movimentacao(container)
         if do_container:
-            return do_container
+            return do_container, "container"
 
-    # Sem nada la, varre as tabelas da pagina procurando linhas com data na
-    # primeira celula. As movimentacoes visiveis vivem numa tabela sem
-    # identificador, e reconhece-la pelo formato do dado e verificavel; chutar
-    # um identificador nao seria.
     try:
         tabelas = pagina.query_selector_all("table")
     except Exception:
-        return []
+        return [], "nenhuma"
     for tabela in tabelas:
         achadas = _linhas_com_cara_de_movimentacao(tabela)
         if achadas:
-            return achadas
-    return []
+            return achadas, "varredura"
+    return [], "nenhuma"
+
+
+def extrair_movimentacoes(pagina: Any) -> list[dict[str, str]]:
+    return extrair_movimentacoes_com_origem(pagina)[0]
 
 
 def lista_de_movimentacoes_esta_completa(pagina: Any) -> bool:
@@ -333,11 +333,12 @@ def link_da_pasta_digital(pagina: Any) -> Optional[str]:
 
 
 def extrair(pagina: Any) -> dict[str, Any]:
-    movimentacoes = extrair_movimentacoes(pagina)
+    movimentacoes, origem = extrair_movimentacoes_com_origem(pagina)
     return {
         "principais": extrair_dados_principais(pagina),
         "partes": extrair_partes(pagina),
         "movimentacoes": movimentacoes,
+        "movimentacoes_origem": origem,
         "movimentacoes_completas": lista_de_movimentacoes_esta_completa(pagina),
         "pasta_digital": link_da_pasta_digital(pagina),
         "totais": {

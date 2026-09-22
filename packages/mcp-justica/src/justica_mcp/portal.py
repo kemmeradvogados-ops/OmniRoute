@@ -2053,6 +2053,15 @@ def consultar_processo(
                     print(f"    {rotulo}: {principais[rotulo]}")
             print(f"    partes: {dados['totais']['partes']}   "
                   f"movimentacoes: {dados['totais']['movimentacoes']}")
+            if dados["movimentacoes_origem"] == "varredura":
+                # Vindas de tabela sem identificador. A pagina do e-SAJ tem
+                # varias com data: peticoes diversas, incidentes, audiencias.
+                # Chama-las de movimentacoes seria afirmar o que nao se sabe, e
+                # o advogado leria um historico que talvez nao seja o historico.
+                print("    ATENCAO: estas linhas vieram de uma tabela SEM identificador,")
+                print("    achada por ter datas. A pagina tem outras tabelas com data")
+                print("    (peticoes, incidentes, audiencias). CONFIRA no portal se e")
+                print("    mesmo o historico de movimentacoes antes de confiar nelas.")
             if not dados["movimentacoes_completas"]:
                 # Entregar a lista parcial como completa faria o advogado
                 # concluir que nao ha andamento anterior, que e pior que nao
