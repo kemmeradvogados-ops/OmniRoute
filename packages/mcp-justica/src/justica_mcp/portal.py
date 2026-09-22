@@ -2037,7 +2037,19 @@ def consultar_processo(
                 return 1
             print(f"  Endereco: {pagina.url}")
 
+            from .esaj import expandir_movimentacoes
             from .esaj import extrair as extrair_esaj
+
+            # O historico verdadeiro so existe depois deste clique: o container
+            # nomeado vem vazio e o portal so o preenche aqui. Autorizado pelo
+            # operador em 22 de setembro de 2026.
+            if expandir_movimentacoes(pagina, guarda, segundos):
+                print("  Movimentacoes expandidas (clique autorizado pelo operador).")
+                estado_local.registrar(
+                    acao="expandir_movimentacoes", tribunal=identidade.tribunal,
+                    sistema=identidade.sistema, numero=numero.formatado,
+                    resultado="clicado",
+                )
 
             dados = extrair_esaj(pagina)
             dados["numero"] = numero.formatado
@@ -2074,6 +2086,36 @@ def consultar_processo(
                 print(f"    integra disponivel em: {dados['pasta_digital'][:70]}")
             for m in dados["movimentacoes"][:5]:
                 print(f"      {m['data']}  {m['descricao'][:70]}")
+
+            if documentos and documentos != "nenhum":
+                from .core.acervo import carregar_indice, garantir_pasta
+                from .esaj import copiar_pasta_digital
+
+                indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+                pasta = garantir_pasta(numero.apenas_digitos)
+                print(f"\n  Pasta do processo: {pasta}")
+                guarda.permitir_download = True
+                resultado = copiar_pasta_digital(
+                    pagina, guarda, pasta, numero.apenas_digitos, segundos
+                )
+                guarda.permitir_download = False
+                if resultado["situacao"] == "gravada":
+                    from pathlib import Path as _P
+
+                    item = indice.acrescentar(_P(resultado["arquivo"]), "integra")
+                    indice.gravar()
+                    print(f"    COPIA INTEGRAL gravada: {_P(resultado['arquivo']).name} "
+                          f"({item.faixa()})")
+                    estado_local.registrar(
+                        acao="copia_integral", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, numero=numero.formatado,
+                        documento=resultado["arquivo"], resultado=item.faixa(),
+                    )
+                else:
+                    print(f"    COPIA NAO CONCLUIDA ({resultado['situacao']}): "
+                          f"{resultado.get('detalhe', '')}")
+                    print("    Nada foi inventado: o download real sera escrito depois")
+                    print("    de conferido o que a pasta digital devolve.")
 
             dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
             # Alimenta a comparacao de novidades, igual ao eproc. Sem isto, Sao

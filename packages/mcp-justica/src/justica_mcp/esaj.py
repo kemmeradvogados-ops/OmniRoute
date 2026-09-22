@@ -346,3 +346,105 @@ def extrair(pagina: Any) -> dict[str, Any]:
             "movimentacoes": len(movimentacoes),
         },
     }
+
+
+def expandir_movimentacoes(pagina: Any, guarda: Any, segundos: int) -> bool:
+    """Aciona "exibir mais movimentacoes". Autorizado pelo operador em 22/09/2026.
+
+    O historico verdadeiro do e-SAJ so existe depois deste clique: o container
+    nomeado vem vazio e o portal so o preenche aqui. Sem isso a consulta entrega
+    o que achar numa tabela anonima, e o advogado le como historico o que talvez
+    nao seja.
+
+    A autorizacao e nominal e efemera, do mesmo feitio da copia integral do
+    eproc: vale para ESTE seletor, nesta tela, nesta execucao. Nao alarga nada,
+    e em especial nao alcanca `#botaoConfirmarRebebimentoIntimacao`, que mora na
+    mesma pagina e continua barrado pelo termo de risco, que e conferido antes
+    de qualquer lista.
+
+    Devolve True quando clicou.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import _assentar, elemento_visivel, permissao_efemera
+
+    botao = elemento_visivel(pagina, LINK_EXPANDIR_MOVIMENTACOES)
+    if botao is None:
+        return False
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="exibir mais movimentacoes, autorizado pelo operador",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(LINK_EXPANDIR_MOVIMENTACOES,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, LINK_EXPANDIR_MOVIMENTACOES, url=pagina.url)
+    botao.click()
+    try:
+        pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+    except Exception:
+        pass
+    _assentar(pagina, segundos)
+    return True
+
+
+def copiar_pasta_digital(pagina: Any, guarda: Any, destino: Any, chave: str,
+                         segundos: int) -> dict[str, Any]:
+    """Tenta copiar a integra pelo endereco da pasta digital.
+
+    Diferenca importante em relacao ao eproc: aqui a integra TEM endereco
+    proprio (`/cpopg/abrirPastaDigital.do?processo.codigo=...`), entao a copia
+    nao precisa de clique. Buscar pelo endereco nao clica, nao navega e nao muda
+    a pagina, que e o padrao deste projeto desde a Fase 2.
+
+    A pasta digital e outra aplicacao do portal (`/pastadigital/`), e o que ela
+    devolve nunca foi visto. Por isso este passo tem dois desfechos honestos:
+    ou vem arquivo e ele e gravado, ou nao vem e o comando RELATA o que
+    encontrou, para o download real ser escrito depois de conferido. Nao ha
+    terceiro desfecho em que se finge que deu certo.
+    """
+    from pathlib import Path
+
+    from .core.guarda_navegacao import Acao
+    from .portal import permissao_de_origem
+
+    endereco = link_da_pasta_digital(pagina)
+    if not endereco:
+        return {"situacao": "sem_link", "detalhe": "A pagina nao traz link de pasta digital."}
+
+    absoluto = endereco if endereco.startswith("http") else (
+        f"{pagina.url.split('/cpopg')[0]}{endereco}"
+        if endereco.startswith("/") else endereco
+    )
+
+    guarda.permissoes.append(permissao_de_origem(
+        pagina.url, "pasta digital, mesma origem do portal"
+    ))
+    decisao = guarda.avaliar(Acao.BAIXAR, absoluto, url=absoluto)
+    if not decisao.permitido:
+        return {"situacao": "barrado", "detalhe": decisao.motivo}
+
+    try:
+        resposta = pagina.context.request.get(absoluto, timeout=segundos * 1000)
+    except Exception as exc:
+        return {"situacao": "falhou", "detalhe": f"{type(exc).__name__}: {exc}"}
+
+    try:
+        tipo = (resposta.headers or {}).get("content-type", "")
+        corpo = resposta.body()
+    except Exception as exc:
+        return {"situacao": "falhou", "detalhe": f"{type(exc).__name__}: {exc}"}
+
+    if "pdf" not in tipo.lower():
+        # Nao e arquivo: e a tela do visualizador. Relatar o tipo e o tamanho
+        # permite escrever o download de verdade sem adivinhar.
+        return {
+            "situacao": "nao_e_arquivo",
+            "detalhe": f"content-type {tipo!r}, {len(corpo)} bytes. "
+                       "Provavelmente a tela do visualizador, nao o PDF.",
+            "endereco": absoluto,
+        }
+
+    destino = Path(destino)
+    destino.mkdir(parents=True, exist_ok=True)
+    arquivo = destino / f"integra-{chave}.pdf"
+    arquivo.write_bytes(corpo)
+    return {"situacao": "gravada", "arquivo": str(arquivo), "bytes": len(corpo)}

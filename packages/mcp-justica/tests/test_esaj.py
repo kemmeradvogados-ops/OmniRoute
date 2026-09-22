@@ -519,3 +519,191 @@ def test_a_consulta_avisa_quando_a_origem_e_incerta():
     fonte = inspect.getsource(portal.consultar_processo)
     assert 'movimentacoes_origem"] == "varredura"' in fonte
     assert "CONFIRA no portal" in fonte
+
+
+# --------------------------------------------------------------------------
+# Expandir movimentacoes
+#
+# Autorizado pelo operador em 22/09/2026. O historico verdadeiro so existe
+# depois deste clique: o container nomeado vem vazio e o portal so o preenche
+# aqui.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import LINK_EXPANDIR_MOVIMENTACOES, expandir_movimentacoes
+
+
+class _PaginaExpansivel:
+    def __init__(self, tem_botao=True):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do"
+        self.cliques = 0
+        self.tem_botao = tem_botao
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def query_selector_all(self, seletor):
+        if seletor == LINK_EXPANDIR_MOVIMENTACOES and self.tem_botao:
+            return [self]
+        return []
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 10, "y": 10, "width": 80, "height": 20}
+
+    def click(self):
+        self.cliques += 1
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+def test_expande_quando_o_botao_existe():
+    p = _PaginaExpansivel()
+    assert expandir_movimentacoes(p, _guarda(), 5) is True
+    assert p.cliques == 1
+
+
+def test_sem_botao_nao_clica_e_avisa_pelo_retorno():
+    """Processo sem movimentacao escondida nao tem o botao, e isso nao e erro."""
+    p = _PaginaExpansivel(tem_botao=False)
+    assert expandir_movimentacoes(p, _guarda(), 5) is False
+    assert p.cliques == 0
+
+
+def test_a_autorizacao_do_clique_alcanca_so_esse_seletor():
+    p = _PaginaExpansivel()
+    guarda = _guarda()
+    expandir_movimentacoes(p, guarda, 5)
+    liberados = set()
+    for perm in guarda.permissoes:
+        liberados.update(perm.seletores_clicaveis)
+        liberados.update(perm.seletores_preenchiveis)
+    assert liberados == {LINK_EXPANDIR_MOVIMENTACOES}
+
+
+def test_o_botao_de_ciencia_continua_barrado_depois_da_expansao():
+    """Ele mora na MESMA pagina. A autorizacao do clique de expandir nao pode
+    respingar nele, e o termo de risco garante isso antes de qualquer lista."""
+    p = _PaginaExpansivel()
+    guarda = _guarda()
+    expandir_movimentacoes(p, guarda, 5)
+    d = guarda.avaliar(
+        Acao.CLICAR, "#botaoConfirmarRebebimentoIntimacao", url=p.url
+    )
+    assert d.permitido is False
+    assert "ciencia" in d.motivo
+
+
+# --------------------------------------------------------------------------
+# Copia da integra
+#
+# Diferenca em relacao ao eproc: aqui a integra TEM endereco proprio, entao a
+# copia nao precisa de clique. A pasta digital e outra aplicacao do portal e o
+# que ela devolve nunca foi visto.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import copiar_pasta_digital
+
+
+class _Resposta:
+    def __init__(self, tipo, corpo):
+        self.headers = {"content-type": tipo}
+        self._corpo = corpo
+
+    def body(self):
+        return self._corpo
+
+
+class _Requisicao:
+    def __init__(self, resposta):
+        self._resposta = resposta
+        self.pedido = None
+
+    def get(self, endereco, **kw):
+        self.pedido = endereco
+        if isinstance(self._resposta, Exception):
+            raise self._resposta
+        return self._resposta
+
+
+class _Contexto:
+    def __init__(self, resposta):
+        self.request = _Requisicao(resposta)
+
+
+class _PaginaComPasta:
+    def __init__(self, href, resposta=None):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do?processo.codigo=X"
+        self._href = href
+        self.context = _Contexto(resposta)
+
+    def query_selector(self, seletor):
+        if seletor == "#linkPasta" and self._href:
+            return _El(atributos={"href": self._href})
+        return None
+
+
+def test_pdf_e_gravado_na_pasta_do_processo(tmp_path):
+    p = _PaginaComPasta("/cpopg/abrirPastaDigital.do?processo.codigo=X",
+                        _Resposta("application/pdf", b"%PDF-1.4 conteudo"))
+    r = copiar_pasta_digital(p, _guarda_com_download(), tmp_path, "123", 10)
+    assert r["situacao"] == "gravada"
+    assert (tmp_path / "integra-123.pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_endereco_relativo_vira_absoluto():
+    """O link vem relativo na pagina. Buscar sem completar daria 404 e
+    pareceria processo sem autos."""
+    p = _PaginaComPasta("/cpopg/abrirPastaDigital.do?processo.codigo=X",
+                        _Resposta("application/pdf", b"%PDF"))
+    copiar_pasta_digital(p, _guarda_com_download(), "/tmp", "123", 10)
+    assert p.context.request.pedido.startswith("https://esaj.tjsp.jus.br/")
+
+
+def test_resposta_que_nao_e_pdf_e_relatada_e_nao_gravada(tmp_path):
+    """A pasta digital e um visualizador: provavelmente devolve tela, nao
+    arquivo. Gravar HTML como se fosse a integra seria pior que nao gravar."""
+    p = _PaginaComPasta("/cpopg/abrirPastaDigital.do?processo.codigo=X",
+                        _Resposta("text/html; charset=utf-8", b"<html>visualizador"))
+    r = copiar_pasta_digital(p, _guarda_com_download(), tmp_path, "123", 10)
+    assert r["situacao"] == "nao_e_arquivo"
+    assert "text/html" in r["detalhe"]
+    assert not list(tmp_path.iterdir())
+
+
+def test_sem_link_de_pasta_diz_isso_em_vez_de_quebrar(tmp_path):
+    r = copiar_pasta_digital(_PaginaComPasta(None), _guarda_com_download(), tmp_path, "123", 10)
+    assert r["situacao"] == "sem_link"
+
+
+def test_falha_de_rede_e_relatada(tmp_path):
+    p = _PaginaComPasta("/cpopg/abrirPastaDigital.do?processo.codigo=X",
+                        RuntimeError("sem rede"))
+    r = copiar_pasta_digital(p, _guarda_com_download(), tmp_path, "123", 10)
+    assert r["situacao"] == "falhou"
+    assert "sem rede" in r["detalhe"]
+
+
+def _guarda_com_download():
+    """A copia exige autorizacao explicita: `permitir_download` e falso por
+    padrao, e e o comando que o liga, so durante a copia."""
+    g = _guarda()
+    g.permitir_download = True
+    return g
+
+
+def test_sem_autorizacao_de_download_a_copia_e_barrada(tmp_path):
+    """A garantia central: baixar autos e negado por padrao, e listar a
+    permissao de origem nao basta."""
+    p = _PaginaComPasta("/cpopg/abrirPastaDigital.do?processo.codigo=X",
+                        _Resposta("application/pdf", b"%PDF"))
+    r = copiar_pasta_digital(p, _guarda(), tmp_path, "123", 10)
+    assert r["situacao"] == "barrado"
+    assert not list(tmp_path.iterdir())
