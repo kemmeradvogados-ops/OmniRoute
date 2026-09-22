@@ -1282,6 +1282,10 @@ def mostrar_ambiente() -> int:
         except OSError:
             tamanho = -1
         print(f"  Existe, com {tamanho} byte(s).")
+        if tamanho == 0:
+            print("  ESTA VAZIO. Foi o que aconteceu em 22/09/2026, quando uma")
+            print("  edicao esvaziou o arquivo e o programa passou a nao enxergar")
+            print("  portal nenhum, sem nada na tela explicando por que.")
         print(f"  Codificacao que serve para le-lo: {codificacao_do_env(arquivo)}")
 
     lidas = carregar_env()
@@ -1291,6 +1295,15 @@ def mostrar_ambiente() -> int:
         print(f"    {chave}")
     if not nossas:
         print("    (nenhuma)")
+
+    from .core.config import pasta_das_copias_do_env
+
+    copias = sorted(pasta_das_copias_do_env().glob("env-*.txt"))
+    if copias:
+        print(f"\n  COPIAS DE SEGURANCA DA CONFIGURACAO ({len(copias)}), a mais nova primeiro:")
+        for copia in reversed(copias[-3:]):
+            print(f"    {copia}")
+        print("  Para repor, copie o conteudo da mais recente para o .env.")
 
     rotulos = rotulos_no_ambiente()
     print(f"\n  PORTAIS QUE O PROGRAMA ENXERGA ({len(rotulos)}):")

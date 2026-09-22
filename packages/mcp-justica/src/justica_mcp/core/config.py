@@ -95,11 +95,60 @@ def codificacao_do_env(arquivo: Path) -> str:
     return "nenhuma das conhecidas"
 
 
+def pasta_das_copias_do_env() -> Path:
+    """Onde ficam as copias de seguranca da configuracao."""
+    from .estado import diretorio_estado
+
+    destino = Path(diretorio_estado()) / "config-copias"
+    destino.mkdir(parents=True, exist_ok=True)
+    return destino
+
+
+COPIAS_DO_ENV_MANTIDAS = 10
+
+
+def guardar_copia_do_env(arquivo: Path) -> Optional[Path]:
+    """Guarda uma copia da configuracao do dia, se ainda nao houver.
+
+    Em 22 de setembro de 2026 o `.env` do escritorio amanheceu com zero bytes:
+    uma edicao o esvaziou. O programa continuou funcionando e simplesmente
+    parou de enxergar portal nenhum, e reconstruir os enderecos exigiu garimpar
+    relatorios antigos. Configuracao nao e segredo, e perde-la por um comando
+    de shell malfeito e um estrago barato demais para nao ter rede.
+
+    Uma copia por dia, as dez ultimas. Nao entra senha aqui: o proprio arquivo
+    nao pode conter senha, e essa regra esta escrita nele.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        conteudo = arquivo.read_bytes()
+    except OSError:
+        return None
+    if not conteudo.strip():
+        return None
+
+    pasta = pasta_das_copias_do_env()
+    dia = datetime.now(timezone.utc).strftime("%Y%m%d")
+    destino = pasta / f"env-{dia}.txt"
+    try:
+        if not destino.exists():
+            destino.write_bytes(conteudo)
+        antigas = sorted(pasta.glob("env-*.txt"))
+        for velha in antigas[:-COPIAS_DO_ENV_MANTIDAS]:
+            velha.unlink()
+    except OSError:
+        return None
+    return destino
+
+
 def carregar_env(caminho: Optional[Path] = None) -> list[str]:
     """Carrega o `.env` e devolve os NOMES das chaves lidas, nunca os valores."""
     arquivo = caminho or (raiz_do_pacote() / ".env")
     if not arquivo.is_file():
         return []
+
+    guardar_copia_do_env(arquivo)
 
     lidas: list[str] = []
     for linha in _ler(arquivo).splitlines():

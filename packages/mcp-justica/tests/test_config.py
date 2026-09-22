@@ -212,3 +212,78 @@ def test_arquivo_inexistente_nao_explode(tmp_path):
     from justica_mcp.core.config import codificacao_do_env
 
     assert "nao deu para abrir" in codificacao_do_env(tmp_path / "nao-existe")
+
+
+# --------------------------------------------------------------------------
+# Copia de seguranca da configuracao
+#
+# Em 22/09/2026 o `.env` do escritorio amanheceu com zero bytes: uma edicao o
+# esvaziou. O programa continuou funcionando e simplesmente parou de enxergar
+# portal nenhum, e reconstruir os enderecos exigiu garimpar relatorios
+# antigos. Configuracao nao e segredo, e perde-la assim e estrago barato
+# demais para nao ter rede.
+# --------------------------------------------------------------------------
+
+def test_ler_a_configuracao_deixa_uma_copia(tmp_path, monkeypatch):
+    from justica_mcp.core.config import carregar_env, pasta_das_copias_do_env
+
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path / "estado"))
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE_URL=https://exemplo\n", encoding="utf-8")
+    carregar_env(arquivo)
+
+    copias = list(pasta_das_copias_do_env().glob("env-*.txt"))
+    assert len(copias) == 1
+    assert "JUSTICA_PORTAL_TJRJ_PJE_URL" in copias[0].read_text(encoding="utf-8")
+
+
+def test_arquivo_vazio_nao_apaga_a_copia_boa(tmp_path, monkeypatch):
+    """E o caso exato do estrago: se a copia fosse feita do arquivo vazio, ela
+    apagaria a unica chance de recuperar a configuracao."""
+    from justica_mcp.core.config import carregar_env, pasta_das_copias_do_env
+
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path / "estado"))
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE_URL=https://exemplo\n", encoding="utf-8")
+    carregar_env(arquivo)
+
+    arquivo.write_text("", encoding="utf-8")
+    carregar_env(arquivo)
+
+    copias = list(pasta_das_copias_do_env().glob("env-*.txt"))
+    assert len(copias) == 1
+    assert "JUSTICA_PORTAL_TJRJ_PJE_URL" in copias[0].read_text(encoding="utf-8")
+
+
+def test_a_copia_do_dia_nao_e_reescrita_a_cada_execucao(tmp_path, monkeypatch):
+    """Reescrever a cada execucao faria uma edicao ruim sobrescrever a copia
+    boa em segundos."""
+    from justica_mcp.core.config import carregar_env, pasta_das_copias_do_env
+
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path / "estado"))
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE_URL=https://primeiro\n", encoding="utf-8")
+    carregar_env(arquivo)
+
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE_URL=https://segundo\n", encoding="utf-8")
+    carregar_env(arquivo)
+
+    copia = next(pasta_das_copias_do_env().glob("env-*.txt"))
+    assert "primeiro" in copia.read_text(encoding="utf-8")
+
+
+def test_so_as_ultimas_copias_ficam(tmp_path, monkeypatch):
+    from justica_mcp.core.config import (
+        COPIAS_DO_ENV_MANTIDAS, carregar_env, pasta_das_copias_do_env,
+    )
+
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path / "estado"))
+    pasta = pasta_das_copias_do_env()
+    for dia in range(1, 20):
+        (pasta / f"env-2026090{dia:02d}.txt").write_text("velho", encoding="utf-8")
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE_URL=https://exemplo\n", encoding="utf-8")
+    carregar_env(arquivo)
+
+    assert len(list(pasta.glob("env-*.txt"))) == COPIAS_DO_ENV_MANTIDAS
