@@ -1351,12 +1351,28 @@ class _Espera:
 
 
 class _Janela:
+    """Pasta Digital que entrega o arquivo no clique, como o portal faz quando
+    o PDF ja esta montado. Foi assim numa execucao de campo."""
+
+    # Clicar aqui faz o navegador anunciar o download.
+    ENTREGAM = ('text="Continuar"', "#btnContinuar", "#btnDownloadDocumento")
+
     def __init__(self, faltando=()):
         self.url = "https://esaj.tjsp.jus.br/pastadigital/abrirPastaProcessoDigital.do?t=1"
         self.faltando = set(faltando)
         self.clicados = []
         self.fechada = False
         self.viewport_size = {"width": 1280, "height": 720}
+        self.ouvintes = {}
+        self.baixado = _Baixado()
+
+    def on(self, evento, funcao):
+        self.ouvintes.setdefault(evento, []).append(funcao)
+
+    def _apos_clique(self, seletor):
+        if seletor in self.ENTREGAM and self.baixado is not None:
+            for funcao in self.ouvintes.get("download", []):
+                funcao(self.baixado)
 
     def query_selector_all(self, seletor):
         return [] if seletor in self.faltando else [_AlvoClicavel(self, seletor)]
@@ -1364,9 +1380,6 @@ class _Janela:
     def query_selector(self, seletor):
         achados = self.query_selector_all(seletor)
         return achados[0] if achados else None
-
-    def expect_download(self, timeout=None):
-        return _Espera(_Baixado())
 
     def wait_for_load_state(self, *a, **kw):
         pass
@@ -1390,6 +1403,9 @@ class _AlvoClicavel:
 
     def click(self):
         self._dono.clicados.append(self._seletor)
+        apos = getattr(self._dono, "_apos_clique", None)
+        if apos is not None:
+            apos(self._seletor)
 
 
 class _PaginaComAutos:
@@ -1597,10 +1613,7 @@ class _BaixadoQueMorre:
 class _JanelaQueMorre(_Janela):
     def __init__(self, baixado):
         super().__init__()
-        self._baixado = baixado
-
-    def expect_download(self, timeout=None):
-        return _Espera(self._baixado)
+        self.baixado = baixado
 
 
 def test_arquivo_e_salvo_do_temporario_quando_a_janela_morre(tmp_path):
@@ -1777,3 +1790,124 @@ def test_o_caminho_do_navegador_continua_vindo_antes_do_disco(tmp_path, monkeypa
         _PaginaComAutos(_Janela()), _guarda(), destino, "123", 10
     )
     assert r["situacao"] == "gravada"
+
+
+# --------------------------------------------------------------------------
+# O portal MONTA o documento antes de entrega-lo
+#
+# Em campo em 22/09/2026: depois do "Continuar" a espera de 120s terminou em
+# TimeoutError sem arquivo nenhum. O relato da tela explicou: o portal tinha
+# aberto #popupGerarDocumento e estava montando o PDF dos 115 documentos. O
+# arquivo nao vem do "Continuar": vem de "Salvar o documento", que so nasce
+# quando a montagem termina.
+# --------------------------------------------------------------------------
+
+class _JanelaQueGera(_Janela):
+    """Pasta Digital que monta o PDF: tela de espera, depois o botao de salvar,
+    e so entao o arquivo."""
+
+    def __init__(self, com_espera=True, aviso=None):
+        super().__init__()
+        self.visiveis = {
+            "#selecionarButton", "#salvarButton", 'text="Arquivo único"',
+            'text="Continuar"',
+        }
+        self.com_espera = com_espera
+        self.aviso = aviso
+
+    def query_selector_all(self, seletor):
+        return [_AlvoClicavel(self, seletor)] if seletor in self.visiveis else []
+
+    def _apos_clique(self, seletor):
+        if seletor == 'text="Continuar"':
+            self.visiveis.discard('text="Continuar"')
+            if self.aviso:
+                self.visiveis.add(self.aviso)
+            elif self.com_espera:
+                self.visiveis |= {"#radioAguardar", "#btnAguardarProcessamento"}
+            else:
+                self.visiveis.add("#btnDownloadDocumento")
+        elif seletor == "#btnAguardarProcessamento":
+            self.visiveis -= {"#radioAguardar", "#btnAguardarProcessamento"}
+            self.visiveis.add("#btnDownloadDocumento")
+        elif seletor == "#btnDownloadDocumento":
+            for funcao in self.ouvintes.get("download", []):
+                funcao(self.baixado)
+
+
+def test_espera_o_portal_montar_o_pdf_e_clica_em_salvar_o_documento(tmp_path):
+    janela = _JanelaQueGera()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 1
+    )
+    assert r["situacao"] == "gravada"
+    assert "#btnDownloadDocumento" in janela.clicados
+
+
+def test_a_espera_e_escolhida_e_o_envio_por_email_nunca_e_clicado(tmp_path):
+    """Mandar os autos do cliente por e-mail e ato externo: ninguem autorizou."""
+    janela = _JanelaQueGera()
+    copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 1
+    )
+    assert "#radioAguardar" in janela.clicados
+    assert "#btnAguardarProcessamento" in janela.clicados
+    for proibido in ("#radioEmail", "#btnConfirmarEnvioEmail",
+                     "#btnCancelarProcessamento"):
+        assert proibido not in janela.clicados
+
+
+def test_arquivo_que_vem_direto_continua_sendo_aceito(tmp_path):
+    """Numa execucao de campo o portal entregou na hora, porque ja tinha o PDF
+    montado. Os dois casos precisam funcionar."""
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(_Janela()), _guarda(), tmp_path, "123", 1
+    )
+    assert r["situacao"] == "gravada"
+
+
+def test_aviso_de_intimacao_pendente_para_tudo_e_chama_o_operador(tmp_path):
+    """Confirmar esse aviso fica a um passo de dar ciencia, e ciencia abre
+    prazo. Prazo aberto por engano e dano que automatismo nenhum repara."""
+    janela = _JanelaQueGera(aviso="#divMensagemIntimacaoPendente")
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 1
+    )
+    assert r["situacao"] == "aviso_de_intimacao"
+    assert "ciencia" in r["detalhe"]
+    assert "#buttonOk" not in janela.clicados
+
+
+def test_o_aviso_de_somente_pendente_tambem_para(tmp_path):
+    janela = _JanelaQueGera(aviso="#divMensagemIntimacaoSomentePendente")
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 1
+    )
+    assert r["situacao"] == "aviso_de_intimacao"
+
+
+def test_tempo_esgotado_na_geracao_explica_o_que_aconteceu(tmp_path, monkeypatch):
+    """'Timeout waiting for event download' mandava procurar no lugar errado: o
+    portal nao estava parado, estava montando o PDF."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 0)
+    janela = _JanelaQueGera()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert r["situacao"] == "sem_arquivo"
+    assert "montando o PDF" in r["detalhe"]
+    assert "--segundos" in r["detalhe"]
+
+
+def test_lista_de_alvos_proibidos_nao_pode_ser_clicada_nem_por_engano(tmp_path):
+    """Trava de bancada: uma lista montada errado nao pode virar um e-mail com
+    os autos do cliente."""
+    import pytest
+
+    from justica_mcp.esaj import NUNCA_CLICAR, _clicar_na_pasta
+
+    for proibido in NUNCA_CLICAR:
+        with pytest.raises(AssertionError):
+            _clicar_na_pasta(_Janela(), _guarda(), (proibido,), "proibido")

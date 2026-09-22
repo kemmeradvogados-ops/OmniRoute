@@ -777,6 +777,33 @@ BAIXAR_PDF = ("#salvarButton", 'text="Baixar PDF"')
 ARQUIVO_UNICO = ('text="Arquivo único"', 'text="Arquivo unico"')
 CONFIRMAR_DOWNLOAD = ('text="Continuar"', "#btnContinuar")
 
+# Conferido em campo em 22 de setembro de 2026, no relato da Pasta Digital
+# apos o "Continuar": o portal NAO entrega o arquivo na hora. Ele abre o
+# `#popupGerarDocumento`, monta o PDF em segundo plano e so entao mostra
+# "Salvar o documento". Numa execucao anterior o arquivo veio direto, porque o
+# portal ja o tinha montado: por isso o codigo precisa aceitar os dois casos.
+ESCOLHER_AGUARDAR = ("#radioAguardar",)
+CONFIRMAR_AGUARDAR = ("#btnAguardarProcessamento",)
+SALVAR_DOCUMENTO = ("#btnDownloadDocumento",)
+
+# NUNCA clicados, e por motivos diferentes:
+#   #radioEmail / #btnConfirmarEnvioEmail mandariam os autos do cliente para
+#   fora por e-mail, que e ato externo e ninguem autorizou;
+#   #btnCancelarProcessamento jogaria fora o documento ja em producao.
+NUNCA_CLICAR = ("#radioEmail", "#btnConfirmarEnvioEmail", "#btnCancelarProcessamento")
+
+# Avisos de intimacao pendente. Se aparecerem, o programa PARA e chama o
+# operador: o "Ok" desses avisos fica a um passo de dar ciencia, e ciencia
+# dispara prazo. Um prazo aberto por engano e dano que nenhum automatismo
+# repara, entao a escolha e do advogado, nunca do programa.
+AVISOS_DE_INTIMACAO = ("#divMensagemIntimacaoPendente",
+                       "#divMensagemIntimacaoSomentePendente")
+
+# Montar a integra de um processo grande leva minutos e nao ha como saber
+# quantos de antemao. Teto generoso de proposito: desistir cedo custa a
+# tentativa inteira, com o codigo ja lido no celular e o advogado parado.
+TETO_DE_GERACAO = 600
+
 
 def _primeiro_visivel(janela: Any, candidatos) -> Optional[tuple[Any, str]]:
     from .portal import elemento_visivel
@@ -798,6 +825,13 @@ def _clicar_na_pasta(janela: Any, guarda: Any, candidatos, rotulo: str) -> bool:
     """
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import permissao_efemera
+
+    proibidos = [c for c in candidatos if c in NUNCA_CLICAR]
+    if proibidos:
+        # Trava de bancada: uma lista de candidatos montada errado nao pode
+        # virar um e-mail com os autos do cliente nem um cancelamento.
+        raise AssertionError(
+            f"Alvo proibido na Pasta Digital: {', '.join(proibidos)}")
 
     achado = _primeiro_visivel(janela, candidatos)
     if achado is None:
@@ -941,6 +975,78 @@ def _gravar_baixado(
     return None
 
 
+def _escutar_descargas(janela: Any, capturados: list) -> None:
+    """Passa a ouvir os downloads da janela e das abas que ela abrir."""
+
+    def guardar(baixado: Any) -> None:
+        capturados.append(baixado)
+
+    janela.on("download", guardar)
+    try:
+        janela.context.on("page", lambda outra: outra.on("download", guardar))
+    except Exception:
+        # Sem acesso ao contexto, a janela principal ainda esta sendo ouvida:
+        # e menos cobertura, nao um erro que justifique parar a copia.
+        pass
+
+
+def _esperar_o_documento_ficar_pronto(
+    janela: Any, guarda: Any, capturados: list, segundos: int
+) -> Optional[dict[str, Any]]:
+    """Acompanha a geracao do PDF ate o arquivo chegar. None quando chegou.
+
+    Em campo em 22/09/2026 a espera de 120s terminou em TimeoutError sem
+    arquivo nenhum, e o relato da tela explicou por que: o portal tinha aberto
+    `#popupGerarDocumento` e estava montando o PDF dos 115 documentos. O
+    arquivo nao vem do "Continuar": vem de "Salvar o documento", que so nasce
+    quando a montagem termina.
+    """
+    import time
+
+    limite = time.time() + max(segundos * 3, TETO_DE_GERACAO)
+    pedi_para_aguardar = False
+    mandei_salvar = False
+    proximo_aviso = time.time() + 20
+
+    while time.time() < limite:
+        if capturados:
+            return None
+
+        aviso = _primeiro_visivel(janela, AVISOS_DE_INTIMACAO)
+        if aviso is not None:
+            return {"situacao": "aviso_de_intimacao", "detalhe": (
+                "O portal mostrou aviso de intimacao pendente. O programa parou "
+                "aqui de proposito: confirmar esse aviso fica a um passo de dar "
+                "ciencia, e ciencia abre prazo. Veja a janela e decida.")}
+
+        if not mandei_salvar and _primeiro_visivel(janela, SALVAR_DOCUMENTO):
+            if not _clicar_na_pasta(janela, guarda, SALVAR_DOCUMENTO,
+                                    "Salvar o documento"):
+                return {"situacao": "parou_no_passo", "passo": "Salvar o documento"}
+            mandei_salvar = True
+            proximo_aviso = time.time() + 20
+        elif not pedi_para_aguardar and _primeiro_visivel(janela, ESCOLHER_AGUARDAR):
+            # "Aguardar" e escolhido explicitamente para NAO cair no envio por
+            # e-mail, que mandaria os autos do cliente para fora.
+            _clicar_na_pasta(janela, guarda, ESCOLHER_AGUARDAR, "Aguardar nesta tela")
+            _clicar_na_pasta(janela, guarda, CONFIRMAR_AGUARDAR, "Confirmar a espera")
+            pedi_para_aguardar = True
+            proximo_aviso = time.time() + 20
+
+        if time.time() >= proximo_aviso:
+            falta = int(limite - time.time())
+            print(f"    O portal ainda esta montando o PDF... ({falta}s de margem)")
+            proximo_aviso = time.time() + 20
+
+        time.sleep(1)
+
+    if capturados:
+        return None
+    return {"situacao": "sem_arquivo", "detalhe": (
+        "O portal nao entregou o arquivo dentro do tempo. Ele estava montando o "
+        "PDF; processos grandes demoram. Vale repetir com --segundos maior.")}
+
+
 def copiar_autos_pelo_visualizador(
     pagina: Any, guarda: Any, destino: Any, chave: str, segundos: int
 ) -> dict[str, Any]:
@@ -1029,13 +1135,20 @@ def copiar_autos_pelo_visualizador(
         descargas = pasta_de_descargas()
     except Exception:
         descargas = None
-    try:
-        with janela.expect_download(timeout=max(segundos, 120) * 1000) as baixa:
-            alvo.click()
-        baixado = baixa.value
-    except Exception as exc:
-        return {"situacao": "sem_arquivo",
-                "detalhe": f"{type(exc).__name__}: {exc}", "janela": janela}
+
+    # O ouvinte entra ANTES do clique. `expect_download` esperava um evento
+    # numa janela so, e o arquivo podia chegar antes ou depois dela; o ouvinte
+    # guarda o download a qualquer momento, inclusive numa aba que o portal
+    # abra no meio do caminho.
+    capturados: list[Any] = []
+    _escutar_descargas(janela, capturados)
+    alvo.click()
+
+    parada = _esperar_o_documento_ficar_pronto(janela, guarda, capturados, segundos)
+    if parada is not None:
+        parada["janela"] = janela
+        return parada
+    baixado = capturados[0]
 
     destino = Path(destino)
     destino.mkdir(parents=True, exist_ok=True)
