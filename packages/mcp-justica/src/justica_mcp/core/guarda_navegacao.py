@@ -57,6 +57,15 @@ TERMOS_DE_RISCO = (
     "intimacao/abrir", "expediente/abrir",
     "peticionar", "protocolar", "assinar",
     "confirmar-leitura", "registrar-leitura",
+    # Achado em campo em 22 de setembro de 2026, na propria pagina do processo
+    # do e-SAJ de Sao Paulo: `button#botaoConfirmarRebebimentoIntimacao`, dentro
+    # de `div#modalRecebimentoIntimacao`. O ato que dispara a ciencia nao mora
+    # numa tela separada, mora a poucos nos dos dados que sao lidos. "rebebimento"
+    # nao e erro de digitacao meu: e como o portal escreve, e por isso entra.
+    "recebimentointimacao", "recebimento-intimacao",
+    "rebebimentointimacao", "rebebimento-intimacao",
+    "confirmarrecebimento", "confirmar-recebimento",
+    "receberintimacao", "receber-intimacao",
     # Segunda classe de risco, descoberta na tela de segundo fator do eproc em
     # 21 de setembro de 2026: acoes que enfraquecem a seguranca da conta.
     # Nao consomem prazo, mas o dano e duradouro e silencioso.

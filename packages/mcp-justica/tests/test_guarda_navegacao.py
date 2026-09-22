@@ -218,3 +218,71 @@ def test_somar_permissoes_nao_libera_o_que_nenhuma_libera():
     d = g.avaliar(Acao.CLICAR, "#btnQualquer", url="https://eproc.tjrj.jus.br/painel")
     assert d.permitido is False
     assert "#btnPermitido" in d.motivo, "o motivo lista o que de fato esta liberado"
+
+
+# --------------------------------------------------------------------------
+# O botao de ciencia mora na pagina do processo
+#
+# Achado em campo em 22 de setembro de 2026, no e-SAJ de Sao Paulo: a pagina do
+# processo, a mesma de onde se leem partes e movimentacoes, contem
+# `div#modalRecebimentoIntimacao` e `button#botaoConfirmarRebebimentoIntimacao`.
+# O ato que dispara a ciencia e inicia o prazo esta a poucos nos do que se le.
+# --------------------------------------------------------------------------
+
+def test_botao_de_confirmar_recebimento_de_intimacao_e_barrado():
+    """Exatamente como o portal o escreve, com o erro de digitacao dele."""
+    guarda = GuardaNavegacao(
+        modo=Modo.LEITURA,
+        permissoes=[Permissao(
+            padrao_url="^https://esaj\\.tjsp\\.jus\\.br/",
+            descricao="pagina do processo",
+            conferido_em="teste",
+            seletores_clicaveis=("#botaoConfirmarRebebimentoIntimacao",),
+        )],
+    )
+    d = guarda.avaliar(
+        Acao.CLICAR, "#botaoConfirmarRebebimentoIntimacao",
+        url="https://esaj.tjsp.jus.br/cpopg/show.do",
+    )
+    assert d.permitido is False
+    assert "ciencia" in d.motivo
+
+
+def test_a_grafia_correta_tambem_e_barrada():
+    """O portal pode corrigir o erro de digitacao a qualquer momento, e a trava
+    nao pode depender de ele continuar errado."""
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+    for alvo in ("#botaoConfirmarRecebimentoIntimacao",
+                 "#modalRecebimentoIntimacao",
+                 "#btnReceberIntimacao"):
+        assert guarda.avaliar(Acao.CLICAR, alvo).permitido is False
+
+
+def test_a_permissao_explicita_nao_contorna_o_termo_de_risco():
+    """Listar o seletor na permissao nao libera: o termo de risco e conferido
+    antes, e e por isso que ele e a garantia e a lista e so a conveniencia."""
+    guarda = GuardaNavegacao(
+        modo=Modo.LEITURA,
+        permissoes=[Permissao(
+            padrao_url="^https://esaj\\.tjsp\\.jus\\.br/",
+            descricao="permissao ampla de proposito, para o teste",
+            conferido_em="teste",
+            seletores_clicaveis=("#botaoConfirmarRebebimentoIntimacao",),
+            seletores_preenchiveis=("#botaoConfirmarRebebimentoIntimacao",),
+        )],
+    )
+    for acao in (Acao.CLICAR, Acao.PREENCHER):
+        d = guarda.avaliar(acao, "#botaoConfirmarRebebimentoIntimacao",
+                           url="https://esaj.tjsp.jus.br/cpopg/show.do")
+        assert d.permitido is False
+
+
+def test_ler_a_pagina_do_processo_continua_permitido():
+    """A trava precisa barrar o ato, nao a leitura: barrar a pagina inteira
+    inutilizaria a consulta, que e o que o advogado pediu."""
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+    d = guarda.avaliar(
+        Acao.LER, "table#tablePartesPrincipais",
+        url="https://esaj.tjsp.jus.br/cpopg/show.do?processo.numero=1037850-62.2023.8.26.0100",
+    )
+    assert d.permitido is True

@@ -716,6 +716,32 @@ pasta de estado, junto da auditoria, e não em lugar temporário.
 `JUSTICA_NAVEGADOR_EFEMERO=1` devolve o descarte a cada execução, para quem
 preferir pagar o desafio toda vez.
 
+#### O botão que dá ciência mora na página do processo
+
+**Achado em campo em 22 de setembro de 2026, e é o mais importante desta fase.**
+A página do processo do e-SAJ de São Paulo, a mesma de onde se leem partes e
+movimentações, contém:
+
+```
+div#modalRecebimentoIntimacao
+p#conteudoModalRecebimentoIntimacao
+button#botaoConfirmarRebebimentoIntimacao
+```
+
+O ato que dispara a ciência e inicia o prazo do artigo 5º, §3º, da lei nº.
+11.419/06 **não mora numa tela separada**: mora a poucos nós dos dados que são
+lidos, na página mais banal do fluxo.
+
+Os termos de risco passam a cobri-lo, nas duas grafias: `rebebimento` é como o
+portal escreve, e entra porque é o que existe hoje; `recebimento` entra porque o
+portal pode corrigir a qualquer momento e a trava não pode depender de ele
+continuar errado.
+
+Vale lembrar por que o termo de risco existe **além** da lista de permissão:
+ele é conferido **antes** dela, então listar o seletor não libera. Há teste que
+tenta exatamente isso, com uma permissão ampla de propósito, e continua barrado.
+A lista é a conveniência; o termo é a garantia.
+
 #### Dois tipos de segundo fator
 
 Verificado em campo em 21 de setembro de 2026: nem todo portal usa código gerado
