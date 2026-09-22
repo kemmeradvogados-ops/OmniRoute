@@ -455,6 +455,7 @@ def ensaiar_login(
     campo_usuario: str = "#txtUsuario",
     campo_senha: str = "#pwdSenha",
     campo_senha_oculto: str = "input[name=pwdSenha]",
+    botao_entrar: str = "#sbmEntrar",
     oculto: bool = False,
     segundos: int = 30,
     espera_humana: int = ESPERA_HUMANA_PADRAO,
@@ -534,6 +535,18 @@ def ensaiar_login(
 
             botoes_antes = len(pagina.query_selector_all("button, input[type=button]"))
 
+            # O e-SAJ de Sao Paulo entrega o botao Entrar DESABILITADO, e so o
+            # habilita quando o formulario considera os campos preenchidos.
+            # Sem conferir isso, o operador gastaria uma tentativa num clique
+            # que nao faz nada, ou o clique esperaria ate o tempo esgotar.
+            def _estado_do_botao():
+                el = pagina.query_selector(botao_entrar)
+                if el is None:
+                    return None
+                return el.is_enabled()
+
+            habilitado_antes = _estado_do_botao()
+
             for seletor, valor, rotulo in (
                 (campo_usuario, login, "usuario"),
                 (campo_senha, senha, "senha"),
@@ -555,6 +568,20 @@ def ensaiar_login(
             tam_oculto = oculto_el.evaluate("e => (e.value || '').length") if oculto_el else None
             tam_visivel = visivel_el.evaluate("e => (e.value || '').length") if visivel_el else None
             esperado = len(senha)
+
+            habilitado_depois = _estado_do_botao()
+            print(f"  BOTAO DE ENVIO ({botao_entrar}):")
+            if habilitado_antes is None:
+                print("    nao encontrado nesta tela; confira o seletor com `reconhecer`.")
+            elif habilitado_depois:
+                print("    habilitado" + (" (ja estava)" if habilitado_antes
+                                          else " apos o preenchimento"))
+            else:
+                print("    DESABILITADO mesmo com os campos preenchidos.")
+                print("    Clicar nao surtiria efeito, e gastaria tentativa a toa.")
+                print("    O formulario provavelmente exige algo mais: outra aba,")
+                print("    um aceite, ou evento que o preenchimento nao disparou.")
+            print()
 
             print("  CONFERENCIA (comprimentos, nunca o conteudo):")
             print(f"    senha no cofre           : {esperado} caracteres")
@@ -2012,6 +2039,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--campo-usuario", default="#txtUsuario")
     e.add_argument("--campo-senha", default="#pwdSenha")
     e.add_argument("--campo-senha-oculto", default="input[name=pwdSenha]")
+    e.add_argument("--botao-entrar", default="#sbmEntrar",
+                   help="conferido, NUNCA clicado: o ensaio so relata se ele habilitou")
     e.add_argument("--oculto", action="store_true")
     e.add_argument("--segundos", type=int, default=30)
     e.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
@@ -2118,6 +2147,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_usuario=args.campo_usuario,
                 campo_senha=args.campo_senha,
                 campo_senha_oculto=args.campo_senha_oculto,
+                botao_entrar=args.botao_entrar,
                 oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana,
             )

@@ -1249,3 +1249,28 @@ def test_espera_de_rede_e_limitada_mesmo_com_segundos_alto():
 
     _assentar(Tela(), 600)
     assert registrado["timeout"] == 20_000
+
+
+# --------------------------------------------------------------------------
+# Botao de envio desabilitado
+#
+# No e-SAJ de Sao Paulo, 21/09/2026: `#pbEntrar` vem DESABILITADO e so habilita
+# quando o formulario considera os campos preenchidos. Sem conferir, um clique
+# gastaria tentativa sem surtir efeito, ou esperaria ate o tempo esgotar.
+# --------------------------------------------------------------------------
+
+def test_ensaio_nunca_clica_no_botao_de_envio():
+    """A garantia central do ensaio: ele confere o botao, jamais o aciona.
+    Se isto quebrar, o ensaio deixa de ser seguro e vira uma tentativa."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.ensaiar_login)
+    assert "is_enabled()" in fonte
+    assert ".click()" in fonte  # o foco nos campos, que e permitido
+    # nenhum clique no botao de envio: o seletor dele nunca aparece num clique
+    for linha in fonte.splitlines():
+        if ".click()" in linha:
+            assert "botao_entrar" not in linha, linha
+    assert "Acao.CLICAR" not in fonte
