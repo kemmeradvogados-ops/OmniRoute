@@ -2116,12 +2116,16 @@ def consultar_processo(
 
                     print("\n  ABRINDO A JANELA DOS AUTOS, so para reconhecer.")
                     try:
-                        aba = abrir_pasta_digital(pagina, guarda, segundos)
+                        abas = abrir_pasta_digital(pagina, guarda, segundos)
                     except Exception as exc:
-                        aba = None
+                        abas = []
                         print(f"    Nao abriu: {type(exc).__name__}: {exc}")
-                    if aba is not None:
-                        _relatar_tela(aba, "JANELA DOS AUTOS")
+                    if not abas:
+                        print("    Nenhuma janela sobrou aberta. A pagina de passagem")
+                        print("    pode ter aberto e fechado, ou aberto fora deste")
+                        print("    navegador. Nada foi lido.")
+                    for i, aba in enumerate(abas, 1):
+                        _relatar_tela(aba, f"JANELA DOS AUTOS {i} de {len(abas)}")
                         _relatar_estrutura_de_dados(aba)
                         _listar_ligacoes(aba, teto=25)
                         try:

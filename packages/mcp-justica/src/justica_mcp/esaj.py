@@ -171,6 +171,18 @@ TABELA_TODAS_PARTES = "#tableTodasPartes"
 TABELA_PARTES_PRINCIPAIS = "#tablePartesPrincipais"
 CONTAINER_MOVIMENTACOES = "#containerMovimentacoes"
 LINK_EXPANDIR_MOVIMENTACOES = "#btnExibirMovimentacoes"
+
+# O operador informou em 22 de setembro de 2026: na secao de andamentos e
+# preciso clicar na palavra "mais". O identificador conhecido some depois de uma
+# expansao e o historico continuava parando em cinco linhas, entao ele nao e o
+# unico controle. A palavra e o que o operador ve; o identificador e o que a
+# pagina declara. Tentar os dois, nesta ordem, cobre os dois mundos sem supor
+# qual deles o portal usa em cada tela.
+CANDIDATOS_EXPANDIR = (
+    LINK_EXPANDIR_MOVIMENTACOES,
+    'text="mais"',
+    'text="Mais"',
+)
 LINK_PASTA_DIGITAL = "#linkPasta"
 
 
@@ -404,16 +416,22 @@ def expandir_movimentacoes(pagina: Any, guarda: Any, segundos: int) -> bool:
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import _assentar, elemento_visivel, permissao_efemera
 
-    botao = elemento_visivel(pagina, LINK_EXPANDIR_MOVIMENTACOES)
+    seletor = None
+    botao = None
+    for candidato in CANDIDATOS_EXPANDIR:
+        botao = elemento_visivel(pagina, candidato)
+        if botao is not None:
+            seletor = candidato
+            break
     if botao is None:
         return False
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,
-        descricao="exibir mais movimentacoes, autorizado pelo operador",
+        descricao=f"exibir mais movimentacoes ({seletor}), autorizado pelo operador",
         conferido_em="execucao atual",
-        seletores_clicaveis=(LINK_EXPANDIR_MOVIMENTACOES,),
+        seletores_clicaveis=(seletor,),
     ))
-    guarda.pode_executar(Acao.CLICAR, LINK_EXPANDIR_MOVIMENTACOES, url=pagina.url)
+    guarda.pode_executar(Acao.CLICAR, seletor, url=pagina.url)
     botao.click()
     try:
         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
@@ -520,27 +538,25 @@ def copiar_pasta_digital(pagina: Any, guarda: Any, destino: Any, chave: str,
     return {"situacao": "gravada", "arquivo": str(arquivo), "bytes": len(corpo)}
 
 
-def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> Any:
-    """Abre a janela dos autos numa ABA NOVA da mesma sessao, e a devolve.
+def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> list[Any]:
+    """Abre a janela dos autos e devolve TODAS as abas que sobraram abertas.
 
-    O operador descreveu o caminho em 22 de setembro de 2026: clicar em
-    "Visualizar autos" abre uma janela onde se selecionam todos os documentos e
-    se pede o download dos selecionados.
+    Conferido em campo em 22 de setembro de 2026: a aba que eu abro MORRE. O
+    endereco da pasta digital devolve 954 bytes de `text/html`, que e pagina de
+    passagem: ela abre outra janela e se encerra. Ler a aba que eu abri dava
+    `TargetClosedError`, e o relato vinha vazio.
 
-    Abrir pelo endereco em vez de clicar no link faz a mesma coisa sem os riscos
-    do clique: nao pode cair em elemento vizinho, nao depende de a janela nova
-    ser capturada a tempo, e a aba original continua na pagina do processo, com
-    seus dados ja lidos.
-
-    A pagina do processo contem o botao de ciencia. Sair dela para uma aba nova
-    e mais seguro que continuar agindo nela.
+    Por isso o que interessa nao e a aba aberta aqui, e sim as que existirem
+    depois. Sao coletadas por diferenca com as de antes, e as fechadas ficam de
+    fora. Devolver lista, e nao uma aba, evita supor que ela abre exatamente
+    uma.
     """
     from .core.guarda_navegacao import Acao
     from .portal import _assentar, permissao_de_origem
 
     endereco = link_da_pasta_digital(pagina)
     if not endereco:
-        return None
+        return []
     absoluto = endereco if endereco.startswith("http") else (
         f"{pagina.url.split('/cpopg')[0]}{endereco}"
         if endereco.startswith("/") else endereco
@@ -549,7 +565,43 @@ def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> Any:
         pagina.url, "janela dos autos, mesma origem do portal"
     ))
     guarda.avaliar(Acao.NAVEGAR, absoluto, url=absoluto).exigir()
-    aba = pagina.context.new_page()
-    aba.goto(absoluto, timeout=segundos * 1000, wait_until="domcontentloaded")
-    _assentar(aba, segundos)
-    return aba
+
+    contexto = pagina.context
+    try:
+        antes = set(contexto.pages)
+    except Exception:
+        antes = {pagina}
+
+    aba = contexto.new_page()
+    try:
+        aba.goto(absoluto, timeout=segundos * 1000, wait_until="domcontentloaded")
+    except Exception:
+        # A propria navegacao pode morrer se a pagina se encerrar durante ela.
+        pass
+    # A janela filha nao nasce instantaneamente: sem esta pausa a coleta
+    # acontece antes de ela existir e o relato volta vazio de novo.
+    try:
+        pagina.wait_for_timeout(3000)
+    except Exception:
+        pass
+
+    novas: list[Any] = []
+    try:
+        for p in contexto.pages:
+            if p in antes or p is pagina:
+                continue
+            try:
+                if p.is_closed():
+                    continue
+            except Exception:
+                continue
+            novas.append(p)
+    except Exception:
+        return []
+
+    for p in novas:
+        try:
+            _assentar(p, segundos)
+        except Exception:
+            continue
+    return novas

@@ -835,22 +835,35 @@ def test_pagina_sem_botao_nao_expande_nada():
 
 
 class _ContextoComAbas:
-    def __init__(self, aba):
+    """Simula o comportamento visto em campo: a aba aberta morre e uma janela
+    filha aparece no contexto."""
+
+    def __init__(self, aba, filhas=(), mata_a_aba=False):
         self._aba = aba
         self.abriu = False
+        self.pages = []
+        self._filhas = list(filhas)
+        self._mata = mata_a_aba
 
     def new_page(self):
         self.abriu = True
+        if not self._mata:
+            self.pages = self.pages + [self._aba]
+        self.pages = self.pages + self._filhas
         return self._aba
 
 
 class _AbaNova:
-    def __init__(self):
+    def __init__(self, fechada=False):
         self.url = ""
         self.viewport_size = {"width": 1280, "height": 720}
+        self._fechada = fechada
 
     def goto(self, destino, **kw):
         self.url = destino
+
+    def is_closed(self):
+        return self._fechada
 
     def wait_for_load_state(self, *a, **kw):
         pass
@@ -860,26 +873,139 @@ class _AbaNova:
 
 
 class _PaginaDoProcesso:
-    def __init__(self, href, aba=None):
+    def __init__(self, href, aba=None, filhas=(), mata_a_aba=False):
         self.url = "https://esaj.tjsp.jus.br/cpopg/show.do?processo.codigo=X"
         self._href = href
-        self.context = _ContextoComAbas(aba or _AbaNova())
+        self.context = _ContextoComAbas(
+            aba or _AbaNova(), filhas=filhas, mata_a_aba=mata_a_aba
+        )
 
     def query_selector(self, seletor):
         return _El(atributos={"href": self._href}) if (
             seletor == "#linkPasta" and self._href) else None
 
+    def wait_for_timeout(self, ms):
+        pass
+
 
 def test_abre_os_autos_em_aba_nova_sem_clicar():
     """Abrir pelo endereco nao pode cair em elemento vizinho, e a aba original
     continua na pagina do processo, com os dados ja lidos."""
-    p = _PaginaDoProcesso("/cpopg/abrirPastaDigital.do?processo.codigo=X")
-    aba = abrir_pasta_digital(p, _guarda(), 5)
+    aba = _AbaNova()
+    p = _PaginaDoProcesso("/cpopg/abrirPastaDigital.do?processo.codigo=X", aba=aba)
+    abas = abrir_pasta_digital(p, _guarda(), 5)
     assert p.context.abriu is True
     assert aba.url.startswith("https://esaj.tjsp.jus.br/cpopg/abrirPastaDigital.do")
+    assert abas == [aba]
+
+
+def test_devolve_a_janela_FILHA_quando_a_aba_aberta_morre():
+    """Conferido em campo: a pagina de passagem abre outra janela e se encerra.
+    Ler a aba que abrimos dava TargetClosedError e o relato vinha vazio."""
+    filha = _AbaNova()
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X",
+        filhas=[filha], mata_a_aba=True,
+    )
+    assert abrir_pasta_digital(p, _guarda(), 5) == [filha]
+
+
+def test_aba_fechada_fica_de_fora_da_lista():
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X",
+        aba=_AbaNova(fechada=True),
+    )
+    assert abrir_pasta_digital(p, _guarda(), 5) == []
+
+
+def test_devolve_lista_e_nao_supoe_uma_janela_so():
+    """Supor exatamente uma janela seria adivinhar o comportamento do portal."""
+    duas = [_AbaNova(), _AbaNova()]
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X",
+        filhas=duas, mata_a_aba=True,
+    )
+    assert len(abrir_pasta_digital(p, _guarda(), 5)) == 2
 
 
 def test_sem_link_nao_abre_aba_alguma():
     p = _PaginaDoProcesso(None)
-    assert abrir_pasta_digital(p, _guarda(), 5) is None
+    assert abrir_pasta_digital(p, _guarda(), 5) == []
     assert p.context.abriu is False
+
+
+# --------------------------------------------------------------------------
+# A palavra "mais"
+#
+# O operador informou em 22/09/2026: na secao de andamentos e preciso clicar na
+# palavra "mais". O identificador conhecido some depois de uma expansao e o
+# historico continuava em cinco linhas, entao ele nao e o unico controle.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import CANDIDATOS_EXPANDIR
+
+
+class _PaginaComPalavraMais:
+    """So responde ao seletor de texto, nunca ao identificador."""
+
+    def __init__(self):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do"
+        self.cliques = 0
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def query_selector_all(self, seletor):
+        return [self] if seletor == 'text="mais"' else []
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def click(self):
+        self.cliques += 1
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+def test_clica_na_palavra_mais_quando_nao_ha_identificador():
+    p = _PaginaComPalavraMais()
+    assert expandir_movimentacoes(p, _guarda(), 5) is True
+    assert p.cliques == 1
+
+
+def test_o_identificador_tem_precedencia_sobre_a_palavra():
+    """O que a pagina declara vem antes do que o olho ve: assim o resultado nao
+    depende de haver outra palavra "mais" em algum canto da tela."""
+    assert CANDIDATOS_EXPANDIR[0] == LINK_EXPANDIR_MOVIMENTACOES
+
+
+def test_a_autorizacao_nomeia_o_seletor_que_foi_de_fato_usado():
+    """Auditoria com o seletor errado nao prova o que aconteceu."""
+    p = _PaginaComPalavraMais()
+    guarda = _guarda()
+    expandir_movimentacoes(p, guarda, 5)
+    descricoes = [perm.descricao for perm in guarda.permissoes]
+    assert any('text="mais"' in d for d in descricoes)
+
+
+def test_expande_pela_palavra_ate_o_fim():
+    """Cada expansao revela outra palavra "mais"; o laco para quando ela some."""
+    class Ate3(_PaginaComPalavraMais):
+        def query_selector_all(self, seletor):
+            if seletor == 'text="mais"' and self.cliques < 3:
+                return [self]
+            return []
+
+    p = Ate3()
+    r = expandir_movimentacoes_ate_o_fim(p, _guarda(), 5, contar=lambda _: p.cliques * 10)
+    assert p.cliques == 3
+    assert r["motivo"] == "botao sumiu"
