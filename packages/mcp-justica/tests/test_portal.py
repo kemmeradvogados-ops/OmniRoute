@@ -2163,3 +2163,53 @@ def test_o_botao_do_segundo_fator_do_pje_repete_o_do_login_de_proposito():
 
     pje = seletores_do_sistema("pje")
     assert pje["botao_entrar"] == pje["botao_validar"] == "#kc-login"
+
+
+# --------------------------------------------------------------------------
+# A recusa do codigo precisa dizer o que o portal falou
+#
+# Em 22/09/2026 o PJe recusou o codigo gerado pela semente e o relato disse
+# apenas "nao passou". Codigo errado e codigo vencido levam a providencias
+# diferentes: o primeiro e semente errada no cofre, o segundo e so tempo.
+# --------------------------------------------------------------------------
+
+class _ElementoComTexto:
+    def __init__(self, texto):
+        self._texto = texto
+
+    def is_visible(self):
+        return True
+
+    def inner_text(self):
+        return self._texto
+
+
+class _PaginaComRecado:
+    def __init__(self, seletor, texto):
+        self._seletor, self._texto = seletor, texto
+
+    def query_selector_all(self, seletor):
+        return [_ElementoComTexto(self._texto)] if seletor == self._seletor else []
+
+
+def test_recado_do_keycloak_e_lido():
+    """O Keycloak, que atende o PJe, escreve em classe propria."""
+    from justica_mcp.portal import _mensagens_de_erro
+
+    pagina = _PaginaComRecado(".kc-feedback-text", "Código de autenticação inválido.")
+    assert _mensagens_de_erro(pagina) == ["Código de autenticação inválido."]
+
+
+def test_recado_do_campo_de_codigo_e_lido():
+    from justica_mcp.portal import _mensagens_de_erro
+
+    pagina = _PaginaComRecado("#input-error-otp-code", "Código inválido")
+    assert _mensagens_de_erro(pagina) == ["Código inválido"]
+
+
+def test_recado_antigo_continua_sendo_lido():
+    """As classes que ja funcionavam no eproc e no e-SAJ nao podem sair."""
+    from justica_mcp.portal import _mensagens_de_erro
+
+    assert _mensagens_de_erro(_PaginaComRecado(".alert", "Senha invalida")) == [
+        "Senha invalida"]

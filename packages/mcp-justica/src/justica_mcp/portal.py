@@ -705,7 +705,12 @@ def _parece_segundo_fator(campo: "Campo") -> bool:
 
 def _mensagens_de_erro(pagina: Any) -> list[str]:
     saida = []
-    for seletor in (".alert", ".erro", ".error", "[role=alert]", ".infraAviso", ".msgErro"):
+    # O Keycloak, que atende o PJe, escreve o recado em classe propria: sem
+    # ela, a recusa do codigo chegava ao operador como "nao passou", sem dizer
+    # se o codigo estava errado, vencido ou se a conta e que foi bloqueada.
+    for seletor in (".alert", ".erro", ".error", "[role=alert]", ".infraAviso",
+                    ".msgErro", ".kc-feedback-text", ".pf-c-alert__title",
+                    "#input-error-otp-code", ".input-error"):
         for elemento in pagina.query_selector_all(seletor):
             if not elemento.is_visible():
                 continue
@@ -1786,6 +1791,16 @@ def autenticar(
             ainda_pede_codigo = achar_opcional(pagina, campo_codigo) is not None
             if ainda_pede_codigo:
                 print("  A tela ainda pede o codigo: a validacao NAO passou.")
+                # O recado do portal e o que separa codigo errado de codigo
+                # vencido, e um do outro muda o que se faz em seguida: o
+                # primeiro e semente errada no cofre, o segundo e so tempo.
+                recados = _mensagens_de_erro(pagina)
+                if recados:
+                    print("  O portal disse:")
+                    for recado in recados:
+                        print(f"    {recado}")
+                else:
+                    print("  O portal nao deixou mensagem nenhuma na tela.")
                 print("  NAO repita o comando. Confira a semente com:")
                 print("    justica-credenciais testar --tribunal "
                       f"{identidade.tribunal} --sistema {identidade.sistema}")
