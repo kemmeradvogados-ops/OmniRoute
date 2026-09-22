@@ -937,6 +937,7 @@ def autenticar(
     reenviar: bool = False,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
+    reconhecer_apos: Optional[str] = None,
     apos_autenticar: Optional[Any] = None,
 ) -> int:
     """Autenticacao completa: credencial, segundo fator, perfil, e para ali.
@@ -1300,6 +1301,9 @@ def autenticar(
                 print(f"  Titulo: {pagina.title()!r}")
                 campos, botoes = _coletar(pagina)
 
+            if reconhecer_apos:
+                _reconhecer_dentro_da_sessao(pagina, guarda, reconhecer_apos, segundos)
+
             if apos_autenticar is not None:
                 # Quem precisa continuar dentro da sessao recebe a pagina ja
                 # autenticada. Evita duplicar o fluxo de login, que e a parte
@@ -1501,6 +1505,67 @@ def _aguardar_desafio_humano(
     return False
 
 
+def _esvaziar_teclado() -> None:
+    """Descarta o que foi digitado antes da pergunta.
+
+    Best-effort e silencioso: falhar aqui nao pode atrapalhar a pergunta, que
+    e o que importa.
+    """
+    try:
+        import msvcrt
+
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+        return
+    except Exception:
+        pass
+    try:
+        import termios
+
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except Exception:
+        pass
+
+
+def _reconhecer_dentro_da_sessao(pagina, guarda, destino: str, segundos: int) -> None:
+    """Le a estrutura de uma tela DENTRO da sessao ja autenticada.
+
+    O comando `reconhecer` abre sessao nova e por isso nunca enxerga o que so
+    existe depois do login: a tela de consulta, a lista de intimacoes, o
+    processo. Sem isto, escrever o adaptador de cada portal novo exigiria
+    adivinhar seletores, que e o erro que este projeto existe para evitar.
+
+    So LE. A autorizacao e de mesma origem do portal e nao libera clique nem
+    preenchimento nenhum, e o destino passa pelos termos de risco como qualquer
+    outro endereco.
+    """
+    print(f"\n  RECONHECENDO DENTRO DA SESSAO: {destino}")
+    guarda.permissoes.append(permissao_de_origem(
+        pagina.url, "reconhecimento de tela interna, somente leitura"
+    ))
+    try:
+        guarda.avaliar(Acao.NAVEGAR, destino, url=destino).exigir()
+    except NavegacaoBloqueada as exc:
+        print(f"    TRAVA: {exc}")
+        print("    Nada foi lido. O destino precisa ser do mesmo portal.")
+        return
+    try:
+        pagina.goto(destino, timeout=segundos * 1000, wait_until="domcontentloaded")
+    except Exception as exc:
+        print(f"    Nao carregou: {type(exc).__name__}: {exc}")
+        return
+    _assentar(pagina, segundos)
+    _relatar_tela(pagina, "TELA INTERNA")
+    try:
+        campos, _ = _coletar(pagina)
+    except Exception as exc:
+        print(f"    Estrutura ilegivel: {type(exc).__name__}: {exc}")
+        return
+    print(f"    CAMPOS ({len(campos)}):")
+    for c in campos:
+        print(f"      {c.linha()}")
+
+
 def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool) -> Optional[str]:
     """Pede ao operador o codigo que o PORTAL enviou.
 
@@ -1522,6 +1587,11 @@ def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool) -> Op
         print("  [PARADO] O portal pede um codigo enviado por ele, e esta execucao")
         print("           nao tem terminal para perguntar. Rode direto no PowerShell.")
         return None
+
+    # Teclas digitadas enquanto o navegador carregava ficam na fila e sao
+    # consumidas pela primeira pergunta, que entao recusa um codigo que o
+    # operador nem chegou a digitar. Visto em campo em 21 de setembro de 2026.
+    _esvaziar_teclado()
 
     limite = f" ({tamanho} digitos)" if tamanho else ""
     print(f"\n  O portal enviou um codigo{limite}. Confira sua mensagem ou e-mail.")
@@ -2169,6 +2239,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--botao-entrar", default="#sbmEntrar")
     a.add_argument("--campo-codigo", default="#txtAcessoCodigo")
     a.add_argument("--botao-validar", default="#btnValidar")
+    a.add_argument("--reconhecer-apos", default=None, dest="reconhecer_apos",
+                   help="apos autenticar, LE a estrutura desta tela interna e para; "
+                        "nao clica nem preenche nada nela")
     a.add_argument("--perfil", default=None,
                    help="inscricao a usar quando houver mais de um perfil, "
                         "por exemplo RJ168943")
@@ -2244,6 +2317,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
+                reconhecer_apos=args.reconhecer_apos,
             )
         if args.comando == "entrar":
             return entrar(

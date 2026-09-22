@@ -1450,3 +1450,87 @@ def test_sem_semente_avisa_para_ter_o_codigo_em_maos(capsys):
         oculto=True, cofre=_CofreSemSemente(), estado=_EstadoMudo(),
     )
     assert "sera pedido a voce" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Reconhecimento dentro da sessao autenticada
+#
+# `reconhecer` abre sessao nova e por isso nunca enxerga o que so existe depois
+# do login. Sem isto, escrever o adaptador de cada portal novo exigiria
+# adivinhar seletores.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _reconhecer_dentro_da_sessao, permissao_de_origem
+
+
+class _PaginaInterna:
+    def __init__(self, url="https://portal.exemplo/painel"):
+        self.url = url
+        self.navegou_para = None
+        self.frames = []
+
+    def goto(self, destino, **kw):
+        self.navegou_para = destino
+        self.url = destino
+
+    def title(self):
+        return "Tela interna"
+
+    def inner_text(self, _):
+        return ""
+
+    def query_selector_all(self, seletor):
+        return []
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+def test_le_tela_do_mesmo_portal(monkeypatch, capsys):
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], []))
+    pagina = _PaginaInterna()
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+    _reconhecer_dentro_da_sessao(
+        pagina, guarda, "https://portal.exemplo/consulta", 10
+    )
+    assert pagina.navegou_para == "https://portal.exemplo/consulta"
+    assert "TELA INTERNA" in capsys.readouterr().out
+
+
+def test_recusa_destino_de_outro_portal(monkeypatch, capsys):
+    """A sessao autenticada e do portal; leva-la para outro dominio seria
+    entregar a sessao a quem escolheu o endereco."""
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], []))
+    pagina = _PaginaInterna()
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+    _reconhecer_dentro_da_sessao(pagina, guarda, "https://outro.exemplo/x", 10)
+    assert pagina.navegou_para is None
+    assert "TRAVA" in capsys.readouterr().out
+
+
+def test_recusa_destino_com_termo_de_risco(monkeypatch, capsys):
+    """Mesma origem nao basta: `dar-ciencia` no proprio portal e justamente o
+    que nao pode ser tocado."""
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], []))
+    pagina = _PaginaInterna()
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+    _reconhecer_dentro_da_sessao(
+        pagina, guarda, "https://portal.exemplo/intimacao/abrir", 10
+    )
+    assert pagina.navegou_para is None
+    assert "TRAVA" in capsys.readouterr().out
+
+
+def test_nao_libera_clique_nem_preenchimento_na_tela_interna(monkeypatch):
+    """A permissao acrescentada e de leitura: se liberasse clique, uma tela
+    interna viraria superficie de acao sem conferencia em campo."""
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], []))
+    pagina = _PaginaInterna()
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+    _reconhecer_dentro_da_sessao(pagina, guarda, "https://portal.exemplo/consulta", 10)
+    for p in guarda.permissoes:
+        assert not p.seletores_clicaveis
+        assert not p.seletores_preenchiveis
