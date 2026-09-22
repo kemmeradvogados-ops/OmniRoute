@@ -31,7 +31,7 @@ from .core.cofre import Cofre, CredencialAusente, Identidade
 from .core.config import carregar_env
 from .core.estado import Estado
 from .core.limite_tentativas import (
-    LimiteTentativas, TetoDeTentativasAtingido,
+    ACAO_SUCESSO, LimiteTentativas, TetoDeTentativasAtingido,
 )
 from .core.guarda_navegacao import (
     Acao, GuardaNavegacao, Modo, NavegacaoBloqueada, Permissao,
@@ -1242,6 +1242,9 @@ def autenticar(
             else:
                 print("  AUTENTICADO. A sessao esta aberta neste navegador.")
                 estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                 sistema=identidade.sistema, resultado="autenticado")
+                # Zera o teto: a sequencia de falhas que ele mede terminou aqui.
+                estado.registrar(acao=ACAO_SUCESSO, tribunal=identidade.tribunal,
                                  sistema=identidade.sistema, resultado="autenticado")
 
             termo = guarda._termo_de_risco(final)

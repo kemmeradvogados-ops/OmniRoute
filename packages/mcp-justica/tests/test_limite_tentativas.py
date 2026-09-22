@@ -131,3 +131,46 @@ def test_destino_bloqueado_nao_conta_como_novo_envio(estado):
     estado.registrar(acao="login_tentativa_unica", resultado="enviado")
     estado.registrar(acao="login_resultado_credencial", resultado="destino_bloqueado")
     assert LimiteTentativas(estado=estado).situacao()["tentativas_na_janela"] == 1
+
+
+# --------------------------------------------------------------------------
+# Sucesso zera o contador
+#
+# Decidido pelo operador em 22/09/2026, depois de o teto barra-lo duas vezes
+# por trabalho legitimo. Bloqueio de conta vem de falhas CONSECUTIVAS, nao de
+# login que deu certo: seis autenticacoes bem sucedidas numa hora nao ameacam
+# conta nenhuma.
+# --------------------------------------------------------------------------
+
+def test_sucesso_zera_o_contador(estado):
+    for _ in range(5):
+        estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    estado.registrar(acao="login_sucesso", resultado="autenticado")
+    assert LimiteTentativas(estado=estado).situacao()["tentativas_na_janela"] == 0
+
+
+def test_tentativas_depois_do_sucesso_voltam_a_contar(estado):
+    estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    estado.registrar(acao="login_sucesso", resultado="autenticado")
+    estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    assert LimiteTentativas(estado=estado).situacao()["tentativas_na_janela"] == 2
+
+
+def test_falhas_consecutivas_sem_sucesso_continuam_barrando(estado):
+    """O teto existe contra o laco descontrolado. Zerar no sucesso nao pode
+    enfraquecer isso: sem sucesso nenhum, seis falhas seguidas barram."""
+    for _ in range(6):
+        estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    with pytest.raises(TetoDeTentativasAtingido):
+        LimiteTentativas(estado=estado).exigir_folga()
+
+
+def test_sucesso_antigo_nao_apaga_falhas_recentes(estado):
+    """Um sucesso de ontem nao pode absolver uma sequencia de falhas de agora:
+    o corte e o mais recente entre o inicio da janela e o ultimo sucesso."""
+    estado.registrar(acao="login_sucesso", resultado="autenticado")
+    for _ in range(6):
+        estado.registrar(acao="login_etapa_credencial", resultado="enviado")
+    with pytest.raises(TetoDeTentativasAtingido):
+        LimiteTentativas(estado=estado).exigir_folga()

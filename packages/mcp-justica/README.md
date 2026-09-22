@@ -519,6 +519,21 @@ O endereço e o perfil de cada portal ficam no ambiente, não como parâmetro de
 ferramenta: o agente não deve precisar saber o endereço do portal nem ter como
 apontar a autenticação para outro lugar.
 
+**Sucesso zera o contador.** Decidido pelo operador em 22 de setembro de 2026,
+depois de o teto barrar trabalho legítimo duas vezes no mesmo dia. Bloqueio de
+conta vem de falhas **consecutivas**, não de login que deu certo: seis
+autenticações bem sucedidas numa hora não ameaçam conta nenhuma, e contá-las
+punia o advogado por trabalhar.
+
+A proteção contra o laço descontrolado, que é o motivo de o teto existir,
+permanece inteira: sem nenhum sucesso, seis falhas seguidas continuam barrando, e
+um sucesso antigo não absolve uma sequência de falhas recente.
+
+A varredura é pela **ordem** dos registros, não por comparação de horário. A
+auditoria grava com precisão de segundo, e sucesso e tentativa gravados no mesmo
+segundo empatam; comparando horários, a tentativa que o sucesso encerrou contaria
+como pendente.
+
 **O que conta como tentativa.** Conta o ato de a credencial **chegar ao
 portal**, venha do comando `autenticar` ou do `entrar`: o bloqueio da conta não
 distingue por qual comando a senha foi enviada. O **desfecho** de uma tentativa,

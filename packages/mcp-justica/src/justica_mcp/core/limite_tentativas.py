@@ -27,6 +27,12 @@ from .estado import Estado
 # conta nao distingue por qual comando ela foi enviada.
 ACOES_TENTATIVA = frozenset({"login_etapa_credencial", "login_tentativa_unica"})
 
+# Bloqueio de conta vem de falhas CONSECUTIVAS, nao de login que deu certo.
+# Contar tentativas bem sucedidas barrava o advogado por trabalhar, e nao por
+# risco: seis autenticacoes bem sucedidas numa hora nao ameacam conta nenhuma.
+# Um sucesso zera o contador, que e como as politicas de bloqueio funcionam.
+ACAO_SUCESSO = "login_sucesso"
+
 # Mantido porque e o nome usado nos registros do fluxo completo.
 ACAO_TENTATIVA = "login_etapa_credencial"
 
@@ -71,16 +77,29 @@ class LimiteTentativas:
         )
 
     def _tentativas_na_janela(self) -> list[str]:
+        """Tentativas desde o ultimo sucesso, dentro da janela.
+
+        A varredura e pela ORDEM dos registros, e nao por comparacao de
+        horario: a auditoria grava com precisao de segundo, e sucesso e
+        tentativa gravados no mesmo segundo empatam. Com empate, comparar
+        horarios contaria como pendente a tentativa que o sucesso encerrou.
+        """
         corte = datetime.now(timezone.utc) - timedelta(minutes=self.janela_minutos)
-        # O limite protege a conta como um todo, entao conta tentativas de
-        # qualquer tribunal: o bloqueio costuma ser por credencial, nao por
-        # sistema, e varias identidades podem compartilhar o mesmo cadastro.
-        return [
-            r["ocorrido_em"]
-            for r in self.estado.auditoria_recente(limite=200)
-            if r["acao"] in ACOES_TENTATIVA
-            and datetime.fromisoformat(r["ocorrido_em"]) >= corte
-        ]
+        # A lista vem da mais recente para a mais antiga, entao a varredura
+        # caminha para tras no tempo e para no primeiro sucesso que encontrar.
+        pendentes: list[str] = []
+        for r in self.estado.auditoria_recente(limite=200):
+            quando = datetime.fromisoformat(r["ocorrido_em"])
+            if quando < corte:
+                break
+            if r["acao"] == ACAO_SUCESSO:
+                break
+            # O limite protege a conta como um todo, entao conta tentativas de
+            # qualquer tribunal: o bloqueio costuma ser por credencial, nao por
+            # sistema, e varias identidades podem compartilhar o mesmo cadastro.
+            if r["acao"] in ACOES_TENTATIVA:
+                pendentes.append(r["ocorrido_em"])
+        return pendentes
 
     def situacao(self) -> dict[str, object]:
         usadas = self._tentativas_na_janela()
