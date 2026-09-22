@@ -751,3 +751,135 @@ def test_a_copia_devolve_as_pistas_quando_nao_e_pdf(tmp_path):
     r = copiar_pasta_digital(p, _guarda_com_download(), tmp_path, "123", 10)
     assert r["situacao"] == "nao_e_arquivo"
     assert any("pastadigital" in pista for pista in r["pistas"])
+
+
+# --------------------------------------------------------------------------
+# Expandir ate o fim, e abrir a janela dos autos
+#
+# Instrucoes do operador em 22/09/2026: clicar em "exibir movimentacoes" ate a
+# opcao sumir; e, para as copias, abrir a janela dos autos, selecionar todos os
+# documentos e baixar os selecionados.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import (
+    MAXIMO_DE_EXPANSOES, abrir_pasta_digital, expandir_movimentacoes_ate_o_fim,
+)
+
+
+class _PaginaQueExpande:
+    """Some com o botao depois de N expansoes, crescendo a cada uma."""
+
+    def __init__(self, ate=3, cresce=True):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do"
+        self.cliques = 0
+        self.ate = ate
+        self.cresce = cresce
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def query_selector_all(self, seletor):
+        if seletor == LINK_EXPANDIR_MOVIMENTACOES and self.cliques < self.ate:
+            return [self]
+        return []
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def click(self):
+        self.cliques += 1
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+def test_expande_ate_o_botao_sumir():
+    """Uma expansao so trazia um pedaco, e entregar o pedaco como o todo faria
+    o advogado concluir que nao ha andamento anterior."""
+    p = _PaginaQueExpande(ate=4)
+    r = expandir_movimentacoes_ate_o_fim(
+        p, _guarda(), 5, contar=lambda _: p.cliques * 10
+    )
+    assert p.cliques == 4
+    assert r == {"expansoes": 4, "motivo": "botao sumiu"}
+
+
+def test_para_quando_a_lista_deixa_de_crescer():
+    """Botao que nao some e lista que nao cresce e clique inutil repetido."""
+    p = _PaginaQueExpande(ate=99)
+    r = expandir_movimentacoes_ate_o_fim(p, _guarda(), 5, contar=lambda _: 7)
+    assert r["motivo"] == "parou de crescer"
+    assert p.cliques < MAXIMO_DE_EXPANSOES
+
+
+def test_o_teto_impede_laco_sem_fim():
+    """Protecao contra o botao nunca sumir por motivo que nao previmos."""
+    p = _PaginaQueExpande(ate=9999)
+    r = expandir_movimentacoes_ate_o_fim(
+        p, _guarda(), 5, contar=lambda _: p.cliques * 10
+    )
+    assert r == {"expansoes": MAXIMO_DE_EXPANSOES, "motivo": "teto de expansoes atingido"}
+
+
+def test_pagina_sem_botao_nao_expande_nada():
+    p = _PaginaQueExpande(ate=0)
+    assert expandir_movimentacoes_ate_o_fim(p, _guarda(), 5)["expansoes"] == 0
+
+
+class _ContextoComAbas:
+    def __init__(self, aba):
+        self._aba = aba
+        self.abriu = False
+
+    def new_page(self):
+        self.abriu = True
+        return self._aba
+
+
+class _AbaNova:
+    def __init__(self):
+        self.url = ""
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def goto(self, destino, **kw):
+        self.url = destino
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+class _PaginaDoProcesso:
+    def __init__(self, href, aba=None):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do?processo.codigo=X"
+        self._href = href
+        self.context = _ContextoComAbas(aba or _AbaNova())
+
+    def query_selector(self, seletor):
+        return _El(atributos={"href": self._href}) if (
+            seletor == "#linkPasta" and self._href) else None
+
+
+def test_abre_os_autos_em_aba_nova_sem_clicar():
+    """Abrir pelo endereco nao pode cair em elemento vizinho, e a aba original
+    continua na pagina do processo, com os dados ja lidos."""
+    p = _PaginaDoProcesso("/cpopg/abrirPastaDigital.do?processo.codigo=X")
+    aba = abrir_pasta_digital(p, _guarda(), 5)
+    assert p.context.abriu is True
+    assert aba.url.startswith("https://esaj.tjsp.jus.br/cpopg/abrirPastaDigital.do")
+
+
+def test_sem_link_nao_abre_aba_alguma():
+    p = _PaginaDoProcesso(None)
+    assert abrir_pasta_digital(p, _guarda(), 5) is None
+    assert p.context.abriu is False

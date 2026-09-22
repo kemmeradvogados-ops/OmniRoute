@@ -348,6 +348,43 @@ def extrair(pagina: Any) -> dict[str, Any]:
     }
 
 
+# Teto do laco de expansao. Nao e desconfianca do portal: e a diferenca entre
+# parar e ficar clicando para sempre se o botao nao sumir por algum motivo que
+# nao previmos. Trinta cobre processo longo com folga.
+MAXIMO_DE_EXPANSOES = 30
+
+
+def expandir_movimentacoes_ate_o_fim(
+    pagina: Any, guarda: Any, segundos: int, contar=None
+) -> dict[str, Any]:
+    """Aciona "exibir mais movimentacoes" ATE a opcao sumir.
+
+    Uma expansao so trazia um pedaco: conferido em campo em 22 de setembro de
+    2026, o processo tinha mais historico do que uma rodada revelava, e entregar
+    o pedaco como se fosse o todo faria o advogado concluir que nao ha andamento
+    anterior.
+
+    Para por tres motivos, e os tres importam:
+
+    - o botao sumiu, que e o fim normal;
+    - o numero de linhas parou de crescer, o que significa que clicar de novo
+      nao traz nada e so gasta tempo;
+    - o teto foi atingido, que e a protecao contra um laco sem fim.
+    """
+    expansoes = 0
+    antes_do_laco = contar(pagina) if contar else None
+    while expansoes < MAXIMO_DE_EXPANSOES:
+        if not expandir_movimentacoes(pagina, guarda, segundos):
+            return {"expansoes": expansoes, "motivo": "botao sumiu"}
+        expansoes += 1
+        if contar is not None:
+            agora = contar(pagina)
+            if antes_do_laco is not None and agora <= antes_do_laco:
+                return {"expansoes": expansoes, "motivo": "parou de crescer"}
+            antes_do_laco = agora
+    return {"expansoes": expansoes, "motivo": "teto de expansoes atingido"}
+
+
 def expandir_movimentacoes(pagina: Any, guarda: Any, segundos: int) -> bool:
     """Aciona "exibir mais movimentacoes". Autorizado pelo operador em 22/09/2026.
 
@@ -481,3 +518,38 @@ def copiar_pasta_digital(pagina: Any, guarda: Any, destino: Any, chave: str,
     arquivo = destino / f"integra-{chave}.pdf"
     arquivo.write_bytes(corpo)
     return {"situacao": "gravada", "arquivo": str(arquivo), "bytes": len(corpo)}
+
+
+def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> Any:
+    """Abre a janela dos autos numa ABA NOVA da mesma sessao, e a devolve.
+
+    O operador descreveu o caminho em 22 de setembro de 2026: clicar em
+    "Visualizar autos" abre uma janela onde se selecionam todos os documentos e
+    se pede o download dos selecionados.
+
+    Abrir pelo endereco em vez de clicar no link faz a mesma coisa sem os riscos
+    do clique: nao pode cair em elemento vizinho, nao depende de a janela nova
+    ser capturada a tempo, e a aba original continua na pagina do processo, com
+    seus dados ja lidos.
+
+    A pagina do processo contem o botao de ciencia. Sair dela para uma aba nova
+    e mais seguro que continuar agindo nela.
+    """
+    from .core.guarda_navegacao import Acao
+    from .portal import _assentar, permissao_de_origem
+
+    endereco = link_da_pasta_digital(pagina)
+    if not endereco:
+        return None
+    absoluto = endereco if endereco.startswith("http") else (
+        f"{pagina.url.split('/cpopg')[0]}{endereco}"
+        if endereco.startswith("/") else endereco
+    )
+    guarda.permissoes.append(permissao_de_origem(
+        pagina.url, "janela dos autos, mesma origem do portal"
+    ))
+    guarda.avaliar(Acao.NAVEGAR, absoluto, url=absoluto).exigir()
+    aba = pagina.context.new_page()
+    aba.goto(absoluto, timeout=segundos * 1000, wait_until="domcontentloaded")
+    _assentar(aba, segundos)
+    return aba

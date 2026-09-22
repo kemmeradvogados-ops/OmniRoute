@@ -2037,19 +2037,27 @@ def consultar_processo(
                 return 1
             print(f"  Endereco: {pagina.url}")
 
-            from .esaj import expandir_movimentacoes
+            from .esaj import expandir_movimentacoes_ate_o_fim
             from .esaj import extrair as extrair_esaj
+            from .esaj import extrair_movimentacoes as _contar_movs
 
-            # O historico verdadeiro so existe depois deste clique: o container
-            # nomeado vem vazio e o portal so o preenche aqui. Autorizado pelo
-            # operador em 22 de setembro de 2026.
-            if expandir_movimentacoes(pagina, guarda, segundos):
-                print("  Movimentacoes expandidas (clique autorizado pelo operador).")
+            # O historico verdadeiro so existe depois deste clique, e uma
+            # expansao so trazia um pedaco. Autorizado pelo operador em 22 de
+            # setembro de 2026: clicar ate a opcao sumir.
+            expansao = expandir_movimentacoes_ate_o_fim(
+                pagina, guarda, segundos, contar=lambda p: len(_contar_movs(p))
+            )
+            if expansao["expansoes"]:
+                print(f"  Movimentacoes expandidas {expansao['expansoes']}x "
+                      f"({expansao['motivo']}).")
                 estado_local.registrar(
                     acao="expandir_movimentacoes", tribunal=identidade.tribunal,
                     sistema=identidade.sistema, numero=numero.formatado,
-                    resultado="clicado",
+                    resultado=f"{expansao['expansoes']}x, {expansao['motivo']}",
                 )
+                if expansao["motivo"] == "teto de expansoes atingido":
+                    print("    ATENCAO: o teto foi atingido e o botao ainda estava la.")
+                    print("    A lista pode continuar incompleta.")
 
             dados = extrair_esaj(pagina)
             dados["numero"] = numero.formatado
@@ -2098,6 +2106,28 @@ def consultar_processo(
                 resultado = copiar_pasta_digital(
                     pagina, guarda, pasta, numero.apenas_digitos, segundos
                 )
+                if resultado["situacao"] != "gravada":
+                    # A busca pelo endereco devolveu tela de passagem. O
+                    # operador descreveu o caminho de verdade: a janela dos
+                    # autos, onde se selecionam os documentos. Abrir e RELATAR,
+                    # porque os seletores dela nunca foram vistos e nao serao
+                    # adivinhados.
+                    from .esaj import abrir_pasta_digital
+
+                    print("\n  ABRINDO A JANELA DOS AUTOS, so para reconhecer.")
+                    try:
+                        aba = abrir_pasta_digital(pagina, guarda, segundos)
+                    except Exception as exc:
+                        aba = None
+                        print(f"    Nao abriu: {type(exc).__name__}: {exc}")
+                    if aba is not None:
+                        _relatar_tela(aba, "JANELA DOS AUTOS")
+                        _relatar_estrutura_de_dados(aba)
+                        _listar_ligacoes(aba, teto=25)
+                        try:
+                            aba.close()
+                        except Exception:
+                            pass
                 guarda.permitir_download = False
                 if resultado["situacao"] == "gravada":
                     from pathlib import Path as _P
