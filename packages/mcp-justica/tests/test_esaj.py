@@ -1409,6 +1409,11 @@ class _AlvoClicavel:
     def is_enabled(self):
         return self._seletor not in getattr(self._dono, "desabilitados", ())
 
+    def get_attribute(self, nome):
+        if nome != "value":
+            return None
+        return getattr(self._dono, "valores", {}).get(self._seletor)
+
     def click(self, timeout=None):
         # Toda TENTATIVA fica registrada, inclusive a que falha: o dano de
         # mirar um botao desligado e a espera, nao o erro.
@@ -2274,3 +2279,100 @@ def test_falha_da_gravacao_imediata_entra_no_relato(tmp_path, monkeypatch):
     )
     assert r["situacao"] == "download_perdido"
     assert "gravacao imediata falhou antes" in r["detalhe"]
+
+
+# --------------------------------------------------------------------------
+# O caminho que nao depende de aba: buscar o arquivo pelo endereco
+#
+# Em campo em 22/09/2026, sexta execucao: a gravacao imediata, dentro do
+# proprio ouvinte, TAMBEM morreu com TargetClosedError. O clique em "Salvar o
+# documento" abre uma aba que baixa e se fecha, e o Chromium fecha essa aba
+# por conta propria quando a navegacao vira download. Com a aba morta, nao ha
+# rapidez que salve o arquivo. O portal, porem, escreve o endereco do arquivo
+# gerado em #urlAcessoArquivo: buscar por ele usa a sessao, nao a aba.
+# --------------------------------------------------------------------------
+
+class _RespostaDoArquivo:
+    def __init__(self, corpo, tipo="application/pdf"):
+        self._corpo = corpo
+        self.headers = {"content-type": tipo}
+
+    def body(self):
+        return self._corpo
+
+
+class _RequisicaoDoArquivo:
+    def __init__(self, resposta):
+        self.resposta = resposta
+        self.pedidos = []
+
+    def get(self, endereco, timeout=None):
+        self.pedidos.append(endereco)
+        return self.resposta
+
+
+class _ContextoDaJanela:
+    def __init__(self, resposta):
+        self.request = _RequisicaoDoArquivo(resposta)
+
+    def on(self, evento, funcao):
+        pass
+
+
+class _JanelaComEndereco(_JanelaQueGera):
+    def __init__(self, resposta, endereco="https://esaj.tjsp.jus.br/pastadigital/getPDF.do?x=1"):
+        super().__init__(com_espera=False)
+        self.visiveis.add("#urlAcessoArquivo")
+        self.valores = {"#urlAcessoArquivo": endereco}
+        self.context = _ContextoDaJanela(resposta)
+
+
+def test_arquivo_e_buscado_pelo_endereco_sem_clicar_em_salvar(tmp_path):
+    """Com o endereco em maos, nao ha por que abrir a aba que morre."""
+    janela = _JanelaComEndereco(_RespostaDoArquivo(b"%PDF-1.4 integra"))
+    destino = tmp_path / "copias"
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda_com_download(), destino, "123", 1
+    )
+    assert r["situacao"] == "gravada"
+    assert "#btnDownloadDocumento" not in janela.clicados
+    assert (destino / "integra-123.pdf").read_bytes() == b"%PDF-1.4 integra"
+
+
+def test_endereco_que_devolve_html_nao_vira_copia(tmp_path, monkeypatch):
+    """Gravar HTML como se fosse a integra e pior que nao gravar: o arquivo
+    abre, parece a copia e nao e. O clique segue como reserva."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    janela = _JanelaComEndereco(_RespostaDoArquivo(b"<html>sessao expirada</html>", "text/html"))
+    destino = tmp_path / "copias"
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda_com_download(), destino, "123", 1
+    )
+    assert r["situacao"] == "gravada"
+    assert "#btnDownloadDocumento" in janela.clicados
+    assert not (destino / "integra-123.pdf").exists()
+
+
+def test_endereco_relativo_e_resolvido_contra_a_origem_do_portal(tmp_path):
+    janela = _JanelaComEndereco(_RespostaDoArquivo(b"%PDF-1.4"), endereco="/pastadigital/getPDF.do?y=2")
+    copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda_com_download(), tmp_path, "123", 1
+    )
+    pedido = janela.context.request.pedidos[0]
+    assert pedido.startswith("https://esaj.tjsp.jus.br/pastadigital/getPDF.do")
+
+
+def test_sem_endereco_na_tela_o_clique_continua_sendo_o_caminho(tmp_path, monkeypatch):
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    janela = _JanelaComEndereco(_RespostaDoArquivo(b"%PDF-1.4"))
+    janela.valores = {"#urlAcessoArquivo": ""}
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda_com_download(), tmp_path, "123", 1
+    )
+    assert r["situacao"] == "gravada"
+    assert "#btnDownloadDocumento" in janela.clicados
+    assert janela.context.request.pedidos == []

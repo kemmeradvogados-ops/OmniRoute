@@ -832,6 +832,18 @@ MAXIMO_DE_CLIQUES_EM_SALVAR = 4
 # ele deixa de ver o botao que importa enquanto insiste num que nao responde.
 TETO_DO_CLIQUE_MS = 5000
 
+# O campo onde o portal guarda o endereco do arquivo que acabou de montar.
+# Conferido no relato da propria Pasta Digital em 22/09/2026: ele vive no
+# `form#popupGerarDocumento`, ao lado da mensagem de "gerando".
+#
+# Por que este caminho importa: o clique em "Salvar o documento" abre uma aba
+# que baixa e se fecha sozinha, e o Chromium fecha essa aba por conta propria
+# quando a navegacao vira download. Com a aba morta, o canal do Playwright
+# morre junto e o arquivo se perde, por mais rapido que se tente grava-lo.
+# Buscar o endereco pela sessao do navegador nao depende de aba nenhuma.
+CAMPO_DO_ENDERECO_GERADO = "#urlAcessoArquivo"
+MAXIMO_DE_TENTATIVAS_PELO_ENDERECO = 3
+
 
 def _habilitado(alvo: Any) -> bool:
     """Botao desenhado mas desligado nao e alvo.
@@ -1038,6 +1050,61 @@ def _gravar_baixado(
     return None
 
 
+def _endereco_do_arquivo_gerado(janela: Any) -> Optional[str]:
+    """Le, da tela, o endereco do arquivo que o portal acabou de montar."""
+    try:
+        alvo = janela.query_selector(CAMPO_DO_ENDERECO_GERADO)
+        if alvo is None:
+            return None
+        valor = (alvo.get_attribute("value") or "").strip()
+    except Exception:
+        return None
+    return valor or None
+
+
+def _gravar_pelo_endereco(
+    janela: Any, guarda: Any, endereco: str, arquivo: Any, segundos: int
+) -> Optional[str]:
+    """Busca o arquivo pela sessao do navegador. None quando gravou.
+
+    E o mesmo caminho ja usado para a pasta digital: a sessao e a do operador,
+    aberta por ele, e a requisicao sai com os cookies dela. Nao ha aba para
+    morrer no meio.
+    """
+    from .core.guarda_navegacao import Acao
+    from .portal import permissao_de_origem
+
+    absoluto = endereco if endereco.startswith("http") else (
+        f"{janela.url.split('/pastadigital')[0]}{endereco}"
+        if endereco.startswith("/") else endereco
+    )
+    guarda.permissoes.append(permissao_de_origem(
+        janela.url, "arquivo gerado pela Pasta Digital, mesma origem do portal"
+    ))
+    decisao = guarda.avaliar(Acao.BAIXAR, absoluto, url=absoluto)
+    if not decisao.permitido:
+        return f"barrado pela guarda: {decisao.motivo}"
+
+    try:
+        resposta = janela.context.request.get(absoluto, timeout=max(segundos, 60) * 1000)
+        tipo = (resposta.headers or {}).get("content-type", "")
+        corpo = resposta.body()
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+
+    if "pdf" not in tipo.lower() and not corpo[:5].startswith(b"%PDF"):
+        # Gravar HTML como se fosse a integra e pior que nao gravar: o arquivo
+        # abre, parece a copia e nao e.
+        return f"o endereco devolveu {tipo!r}, {len(corpo)} bytes, e nao um PDF"
+    if not corpo:
+        return "o endereco devolveu um arquivo vazio"
+
+    from pathlib import Path as _P
+
+    _P(arquivo).write_bytes(corpo)
+    return None
+
+
 def _escutar_descargas(janela: Any, capturados: list, gravar: Any) -> None:
     """Ouve os downloads da janela e das abas que ela abrir, e GRAVA na hora.
 
@@ -1064,7 +1131,8 @@ def _escutar_descargas(janela: Any, capturados: list, gravar: Any) -> None:
 
 
 def _esperar_o_documento_ficar_pronto(
-    janela: Any, guarda: Any, capturados: list, segundos: int
+    janela: Any, guarda: Any, capturados: list, segundos: int,
+    pelo_endereco: Any = None,
 ) -> Optional[dict[str, Any]]:
     """Acompanha a geracao do PDF ate o arquivo chegar. None quando chegou.
 
@@ -1114,6 +1182,15 @@ def _esperar_o_documento_ficar_pronto(
                 "ciencia, e ciencia abre prazo. Veja a janela e decida.")}
 
         agora = time.time()
+        if vistas["salvar"] >= LEITURAS_PARA_CONFIRMAR and pelo_endereco is not None:
+            # O botao na tela significa que o PDF ficou pronto, e e nesse
+            # momento que o portal escreve o endereco do arquivo. Buscar por
+            # ele dispensa o clique que abre a aba que morre.
+            arquivo = pelo_endereco()
+            if arquivo:
+                capturados.append({"baixado": None, "arquivo": arquivo, "erro": None})
+                return None
+
         pode_reclicar = agora - ultimo_salvar >= ESPERA_ENTRE_CLIQUES_EM_SALVAR
         if vistas["salvar"] >= LEITURAS_PARA_CONFIRMAR and pode_reclicar:
             if cliques_em_salvar >= MAXIMO_DE_CLIQUES_EM_SALVAR:
@@ -1277,9 +1354,30 @@ def copiar_autos_pelo_visualizador(
         return str(arquivo)
 
     _escutar_descargas(janela, capturados, gravar_na_hora)
+
+    tentativas_pelo_endereco = []
+
+    def gravar_pelo_endereco() -> Optional[str]:
+        if len(tentativas_pelo_endereco) >= MAXIMO_DE_TENTATIVAS_PELO_ENDERECO:
+            return None
+        endereco = _endereco_do_arquivo_gerado(janela)
+        if not endereco:
+            return None
+        tentativas_pelo_endereco.append(endereco)
+        arquivo = destino / f"integra-{chave}.pdf"
+        erro = _gravar_pelo_endereco(janela, guarda, endereco, arquivo, segundos)
+        if erro is not None:
+            print(f"    O endereco do arquivo gerado nao serviu: {erro}")
+            return None
+        print(f"    Arquivo buscado pelo endereco, sem depender da aba: "
+              f"{endereco[:60]}")
+        return str(arquivo)
+
     alvo.click()
 
-    parada = _esperar_o_documento_ficar_pronto(janela, guarda, capturados, segundos)
+    parada = _esperar_o_documento_ficar_pronto(
+        janela, guarda, capturados, segundos, pelo_endereco=gravar_pelo_endereco
+    )
     if parada is not None:
         parada["janela"] = janela
         return parada
