@@ -707,3 +707,47 @@ def test_sem_autorizacao_de_download_a_copia_e_barrada(tmp_path):
     r = copiar_pasta_digital(p, _guarda(), tmp_path, "123", 10)
     assert r["situacao"] == "barrado"
     assert not list(tmp_path.iterdir())
+
+
+# --------------------------------------------------------------------------
+# Pistas da tela de passagem da pasta digital
+#
+# Conferido em campo em 22/09/2026: a pasta digital devolveu `text/html` com
+# 948 bytes. Esse tamanho nao comporta uma tela de verdade: e pagina de
+# passagem, que redireciona ou monta o visualizador por script.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import _pistas_do_visualizador
+
+
+def test_acha_o_endereco_para_onde_a_pagina_redireciona():
+    corpo = b"<html><script>location.href='/pastadigital/pg/abrirDocumento.do?x=1'</script>"
+    pistas = _pistas_do_visualizador(corpo)
+    assert any("abrirDocumento.do" in p for p in pistas)
+
+
+def test_acha_formulario_que_a_pagina_envia_sozinha():
+    corpo = b'<form action="/pastadigital/pg/abrir.do" name="frm"><input name="codigo"></form>'
+    pistas = _pistas_do_visualizador(corpo)
+    assert any("action: /pastadigital/pg/abrir.do" in p for p in pistas)
+    assert any("campo: codigo" in p for p in pistas)
+
+
+def test_nao_repete_o_mesmo_endereco():
+    corpo = b'<a href="/x"></a><a href="/x"></a>'
+    assert sum(1 for p in _pistas_do_visualizador(corpo) if p == "href: /x") == 1
+
+
+def test_corpo_ilegivel_nao_quebra():
+    assert _pistas_do_visualizador(b"\\xff\\xfe\\x00binario") == []
+
+
+def test_a_copia_devolve_as_pistas_quando_nao_e_pdf(tmp_path):
+    p = _PaginaComPasta(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X",
+        _Resposta("text/html;charset=UTF-8",
+                  b'<form action="/pastadigital/pg/abrir.do"></form>'),
+    )
+    r = copiar_pasta_digital(p, _guarda_com_download(), tmp_path, "123", 10)
+    assert r["situacao"] == "nao_e_arquivo"
+    assert any("pastadigital" in pista for pista in r["pistas"])

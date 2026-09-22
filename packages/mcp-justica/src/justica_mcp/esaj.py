@@ -386,6 +386,32 @@ def expandir_movimentacoes(pagina: Any, guarda: Any, segundos: int) -> bool:
     return True
 
 
+def _pistas_do_visualizador(corpo: bytes, teto: int = 12) -> list[str]:
+    """Enderecos e nomes de formulario achados numa pagina de passagem.
+
+    So estrutura: endereco, nome de campo, nome de formulario. Nao devolve
+    texto livre, porque o relato e colado em conversa e a promessa do projeto e
+    que nenhum dado de processo apareca nele.
+    """
+    try:
+        texto = corpo.decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    achados: list[str] = []
+    for padrao, rotulo in (
+        (r'action=["\']([^"\']+)', "action"),
+        (r'src=["\']([^"\']+)', "src"),
+        (r'href=["\']([^"\']+)', "href"),
+        (r'location(?:\.href)?\s*=\s*["\']([^"\']+)', "redireciona"),
+        (r'name=["\']([^"\']+)', "campo"),
+    ):
+        for achado in re.findall(padrao, texto)[:teto]:
+            linha = f"{rotulo}: {achado[:110]}"
+            if linha not in achados:
+                achados.append(linha)
+    return achados[:teto * 2]
+
+
 def copiar_pasta_digital(pagina: Any, guarda: Any, destino: Any, chave: str,
                          segundos: int) -> dict[str, Any]:
     """Tenta copiar a integra pelo endereco da pasta digital.
@@ -434,13 +460,20 @@ def copiar_pasta_digital(pagina: Any, guarda: Any, destino: Any, chave: str,
         return {"situacao": "falhou", "detalhe": f"{type(exc).__name__}: {exc}"}
 
     if "pdf" not in tipo.lower():
-        # Nao e arquivo: e a tela do visualizador. Relatar o tipo e o tamanho
-        # permite escrever o download de verdade sem adivinhar.
+        # Nao e arquivo: e a tela do visualizador. Conferido em campo em 22 de
+        # setembro de 2026: `text/html`, 948 bytes. Esse tamanho nao comporta
+        # uma tela de verdade, entao e pagina de passagem, que redireciona ou
+        # monta o visualizador por script.
+        #
+        # O corpo e pequeno e NAO contem dado de processo: e andaime. Relatar
+        # os enderecos que ele carrega e o que permite escrever o download real
+        # sem adivinhar, e e a mesma disciplina do resto do projeto.
         return {
             "situacao": "nao_e_arquivo",
             "detalhe": f"content-type {tipo!r}, {len(corpo)} bytes. "
-                       "Provavelmente a tela do visualizador, nao o PDF.",
+                       "Tela de passagem, nao o PDF.",
             "endereco": absoluto,
+            "pistas": _pistas_do_visualizador(corpo),
         }
 
     destino = Path(destino)

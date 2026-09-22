@@ -2114,6 +2114,8 @@ def consultar_processo(
                 else:
                     print(f"    COPIA NAO CONCLUIDA ({resultado['situacao']}): "
                           f"{resultado.get('detalhe', '')}")
+                    for pista in resultado.get("pistas") or []:
+                        print(f"      {pista}")
                     print("    Nada foi inventado: o download real sera escrito depois")
                     print("    de conferido o que a pasta digital devolve.")
 
