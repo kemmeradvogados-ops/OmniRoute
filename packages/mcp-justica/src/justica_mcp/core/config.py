@@ -43,6 +43,28 @@ def _ler(arquivo: Path) -> str:
     return arquivo.read_text(encoding="utf-8", errors="replace")
 
 
+def limpar_invisiveis(chave: str) -> str:
+    """Tira do NOME da chave os caracteres que nao se veem na tela.
+
+    Conferido em campo em 22 de setembro de 2026: uma chave com um caractere
+    invisivel no meio do nome produz a pior especie de defeito. A listagem de
+    portais mostrava "TJRJ / pje", identico ao que se espera, e a busca pelo
+    mesmo portal dizia que ele nao estava configurado. O arquivo parecia certo
+    na tela, e o operador nao tinha como ver a diferenca.
+
+    Esses caracteres entram sozinhos: `Add-Content -Encoding UTF8` do Windows
+    PowerShell grava marca de ordem de byte, e copiar de pagina ou de documento
+    traz espaco sem quebra e marcas de direcao de texto. Nenhum deles pode
+    fazer parte de um nome de variavel, entao retira-los nao perde nada.
+    """
+    import unicodedata
+
+    return "".join(
+        c for c in chave
+        if not (unicodedata.category(c) in ("Cf", "Cc") or c in "\ufeff\u00a0")
+    )
+
+
 def carregar_env(caminho: Optional[Path] = None) -> list[str]:
     """Carrega o `.env` e devolve os NOMES das chaves lidas, nunca os valores."""
     arquivo = caminho or (raiz_do_pacote() / ".env")
@@ -61,7 +83,7 @@ def carregar_env(caminho: Optional[Path] = None) -> list[str]:
         if not linha or linha.startswith("#") or "=" not in linha:
             continue
         chave, _, valor = linha.partition("=")
-        chave = chave.strip()
+        chave = limpar_invisiveis(chave.strip())
         valor = valor.strip().strip('"').strip("'")
         if not chave or not valor:
             continue

@@ -45,12 +45,46 @@ def _chave(tribunal: str, sistema: str, sufixo: str) -> str:
     return f"JUSTICA_PORTAL_{tribunal.upper()}_{sistema.upper()}_{sufixo}"
 
 
+def rotulos_no_ambiente() -> list[str]:
+    """Portais que o ambiente declara, lidos SO pelo nome da chave.
+
+    Nao passa por `config_portal` de proposito: ele e quem levanta o erro que
+    chama esta funcao, e chama-lo daqui seria recursao. Serve para a mensagem
+    de erro mostrar o que o programa enxerga, que foi o que faltou em
+    22/09/2026, quando a listagem mostrava o portal e a busca nao o achava.
+    """
+    achados = []
+    for chave in os.environ:
+        if chave.startswith("JUSTICA_PORTAL_") and chave.endswith("_URL"):
+            miolo = chave[len("JUSTICA_PORTAL_"):-len("_URL")]
+            if "_" not in miolo:
+                continue
+            tribunal, _, sistema = miolo.rpartition("_")
+            achados.append(f"{tribunal} / {sistema.lower()}")
+    return sorted(achados)
+
+
 class PortalNaoConfigurado(LookupError):
     def __init__(self, tribunal: str, sistema: str) -> None:
+        # A lista do que o programa ENXERGA entra na mensagem porque, em
+        # 22/09/2026, o portal aparecia na listagem e a busca dizia que ele nao
+        # existia: um caractere invisivel no nome da chave. Ver os dois lados
+        # lado a lado e o que transforma um misterio num erro de digitacao.
+        conhecidos = rotulos_no_ambiente()
+        visao = (
+            "\n\n  O programa enxerga estes portais no ambiente:\n    "
+            + "\n    ".join(conhecidos)
+            + "\n  Se o que voce procura ESTA nessa lista, o nome da chave tem"
+              "\n  algum caractere invisivel: reescreva a linha inteira no .env."
+            if conhecidos else
+            "\n\n  O programa nao enxerga portal nenhum no ambiente: o .env pode"
+            "\n  estar em outro lugar ou vazio."
+        )
         super().__init__(
             f"Portal {tribunal}/{sistema} sem endereco configurado. Defina no .env:\n"
             f"    {_chave(tribunal, sistema, 'URL')}=https://...\n"
             f"    {_chave(tribunal, sistema, 'PERFIL')}=<inscricao, se o portal pedir>"
+            f"{visao}"
         )
 
 

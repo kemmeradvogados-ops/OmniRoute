@@ -106,3 +106,71 @@ def test_tolera_marca_de_ordem_de_byte_no_meio_do_arquivo(monkeypatch):
     )
     assert carregar_env(caminho) == ["DATAJUD_API_KEY", "JUSTICA_PASTA_COPIAS"]
     assert os.environ["JUSTICA_PASTA_COPIAS"] == "G:\\Copias"
+
+
+# --------------------------------------------------------------------------
+# Caractere invisivel no nome da chave
+#
+# Em 22/09/2026 o `.env` do operador produziu a pior especie de defeito: a
+# listagem mostrava "TJRJ / pje", identico ao que se espera, e a busca pelo
+# mesmo portal dizia que ele nao estava configurado. O arquivo parecia certo
+# na tela e nao havia como ver a diferenca.
+# --------------------------------------------------------------------------
+
+def test_marca_de_ordem_de_byte_no_meio_do_nome_da_chave(tmp_path):
+    from justica_mcp.core.config import carregar_env
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE﻿_URL=https://exemplo\n",
+                       encoding="utf-8")
+    lidas = carregar_env(arquivo)
+    assert "JUSTICA_PORTAL_TJRJ_PJE_URL" in lidas
+
+
+def test_espaco_de_largura_zero_no_nome_da_chave(tmp_path, monkeypatch):
+    """Vem de copiar e colar de pagina de internet ou de documento."""
+    import os
+
+    from justica_mcp.core.config import carregar_env
+
+    monkeypatch.delenv("JUSTICA_PORTAL_TJRJ_PJE_URL", raising=False)
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE​_URL=https://exemplo\n",
+                       encoding="utf-8")
+    carregar_env(arquivo)
+    assert os.environ.get("JUSTICA_PORTAL_TJRJ_PJE_URL") == "https://exemplo"
+
+
+def test_espaco_sem_quebra_tambem_sai_do_nome(tmp_path):
+    from justica_mcp.core.config import limpar_invisiveis
+
+    assert limpar_invisiveis("JUSTICA _PORTAL") == "JUSTICA_PORTAL"
+
+
+def test_nome_limpo_continua_intacto():
+    """A limpeza nao pode comer caractere legitimo de nome de variavel."""
+    from justica_mcp.core.config import limpar_invisiveis
+
+    assert limpar_invisiveis("JUSTICA_PORTAL_TJRJ_PJE_URL") == "JUSTICA_PORTAL_TJRJ_PJE_URL"
+
+
+def test_o_erro_mostra_o_que_o_programa_enxerga(monkeypatch):
+    """Ver os dois lados lado a lado e o que transforma um misterio num erro
+    de digitacao."""
+    from justica_mcp.core.acesso import PortalNaoConfigurado
+
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_URL", "https://exemplo")
+    texto = str(PortalNaoConfigurado("TJRJ", "pjee"))
+    assert "TJRJ / pje" in texto
+    assert "invisivel" in texto
+
+
+def test_o_erro_sem_portal_nenhum_aponta_para_o_arquivo(monkeypatch):
+    import os
+
+    from justica_mcp.core.acesso import PortalNaoConfigurado
+
+    for chave in [k for k in os.environ if k.startswith("JUSTICA_PORTAL_")]:
+        monkeypatch.delenv(chave, raising=False)
+    texto = str(PortalNaoConfigurado("TJRJ", "pje"))
+    assert "nao enxerga portal nenhum" in texto
