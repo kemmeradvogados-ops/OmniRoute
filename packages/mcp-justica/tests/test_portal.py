@@ -1841,3 +1841,87 @@ def test_leitura_que_falha_nao_inventa_formulario(monkeypatch):
 
     monkeypatch.setattr(portal_mod, "_coletar", explode)
     assert _tem_formulario_de_login(object()) is False
+
+
+# --------------------------------------------------------------------------
+# Mapa dos portais: conhecer a tela sem gastar tentativa
+#
+# Escrever adaptador exige conhecer a tela; conhecer a tela nao exige
+# autenticar, porque a pagina de entrada e publica. Separar as duas coisas e
+# o que evita gastar codigo do celular para descobrir o nome de um campo.
+# --------------------------------------------------------------------------
+
+def _config(tribunal, sistema, url="https://portal.exemplo/login"):
+    from justica_mcp.core.acesso import ConfigPortal
+
+    return ConfigPortal(tribunal=tribunal, sistema=sistema, url=url, perfil=None)
+
+
+def test_sem_alvos_mapeia_todos_os_portais_do_env():
+    from justica_mcp.portal import alvos_escolhidos
+
+    todos = [_config("TJSP", "esaj"), _config("TJRJ", "pje")]
+    assert alvos_escolhidos(todos, None) == todos
+
+
+def test_alvo_escolhe_um_portal():
+    from justica_mcp.portal import alvos_escolhidos
+
+    todos = [_config("TJSP", "esaj"), _config("TJRJ", "pje")]
+    escolhidos = alvos_escolhidos(todos, ["TJRJ/pje"])
+    assert [c.rotulo for c in escolhidos] == [todos[1].rotulo]
+
+
+def test_tribunal_sem_sistema_leva_todos_os_sistemas_dele():
+    from justica_mcp.portal import alvos_escolhidos
+
+    todos = [_config("TJRJ", "pje"), _config("TJRJ", "eproc"), _config("TJSP", "esaj")]
+    escolhidos = alvos_escolhidos(todos, ["TJRJ"])
+    assert len(escolhidos) == 2
+
+
+def test_alvo_que_nao_existe_nao_passa_em_silencio():
+    """Ignorar o erro de digitacao faria o operador acreditar que o portal foi
+    lido quando nao foi."""
+    import pytest
+
+    from justica_mcp.core.acesso import PortalNaoConfigurado
+    from justica_mcp.portal import alvos_escolhidos
+
+    with pytest.raises(PortalNaoConfigurado):
+        alvos_escolhidos([_config("TJSP", "esaj")], ["TJRJ/pje"])
+
+
+def test_alvo_repetido_nao_duplica_a_leitura():
+    from justica_mcp.portal import alvos_escolhidos
+
+    todos = [_config("TJSP", "esaj")]
+    assert len(alvos_escolhidos(todos, ["TJSP/esaj", "TJSP"])) == 1
+
+
+def test_resumo_mostra_o_que_decide_se_vale_escrever_adaptador():
+    """Verificacao humana que ja reprovou o navegador e o que inviabiliza o
+    adaptador, como aconteceu no eproc. Tem que aparecer na primeira linha."""
+    from justica_mcp.portal import linha_de_resumo
+
+    linha = linha_de_resumo({
+        "rotulo": "TRF2/eproc", "desafio": True, "desafio_reprovado": True,
+        "formulario": True, "campos": 3, "botoes": 2,
+    })
+    assert "JA REPROVOU" in linha
+
+
+def test_resumo_de_portal_que_nao_abriu_diz_isso_e_nao_finge_leitura():
+    from justica_mcp.portal import linha_de_resumo
+
+    linha = linha_de_resumo({"rotulo": "TJRJ/eproc", "erro": "TimeoutError: 30000ms"})
+    assert "NAO ABRIU" in linha
+    assert "TimeoutError" in linha
+
+
+def test_os_mapas_ficam_na_pasta_de_estado(tmp_path, monkeypatch):
+    from justica_mcp.portal import pasta_dos_mapas
+
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path))
+    assert pasta_dos_mapas() == tmp_path / "mapas"
+    assert pasta_dos_mapas().is_dir()

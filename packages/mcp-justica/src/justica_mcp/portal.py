@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-from .core.acesso import PortalNaoConfigurado, config_portal
+from .core.acesso import PortalNaoConfigurado, config_portal, portais_configurados
 from .core.cofre import Cofre, CredencialAusente, Identidade
 from .core.config import carregar_env
 from .core.estado import Estado
@@ -987,6 +987,113 @@ def _casar_perfil(
     return None
 
 
+def _mapear_um(pagina, config, segundos: int) -> dict:
+    """Le UMA tela de portal e devolve o resumo mais o relato inteiro."""
+    import contextlib
+    import io
+
+    guarda = GuardaNavegacao(modo=Modo.ENSAIO,
+                             permissoes=[permissao_efemera(config.url)])
+    resultado = {"rotulo": config.rotulo, "url": config.url, "erro": None}
+    try:
+        guarda.avaliar(Acao.NAVEGAR, config.url).exigir()
+        pagina.goto(config.url, timeout=segundos * 1000, wait_until="domcontentloaded")
+        _assentar(pagina, segundos)
+    except Exception as exc:
+        resultado["erro"] = f"{type(exc).__name__}: {exc}"
+        return resultado
+
+    try:
+        campos, botoes = _coletar(pagina)
+        resultado["campos"], resultado["botoes"] = len(campos), len(botoes)
+    except Exception:
+        resultado["campos"] = resultado["botoes"] = 0
+    resultado["formulario"] = _tem_formulario_de_login(pagina)
+    resultado["desafio"] = _ha_desafio_humano(pagina)
+    resultado["desafio_reprovado"] = _desafio_reprovado(pagina)
+
+    relato = io.StringIO()
+    with contextlib.redirect_stdout(relato):
+        print(f"MAPA DE {config.rotulo}")
+        print(f"Lido em modo ensaio: NAO preenche, NAO clica, NAO autentica.")
+        _relatar_tela(pagina, config.rotulo)
+        _relatar_estrutura_de_dados(pagina)
+    resultado["relato"] = relato.getvalue()
+    return resultado
+
+
+def mapear(alvos=None, *, oculto: bool = False, segundos: int = 30) -> int:
+    """Le a tela de entrada de cada portal do .env e grava um mapa por portal.
+
+    Existe para separar o que custa do que nao custa. Escrever adaptador exige
+    conhecer a tela, e conhecer a tela nao exige autenticar: a pagina de
+    entrada e publica. Este comando le todas de uma vez, sem preencher, sem
+    clicar e sem gastar tentativa nem codigo de portal nenhum, e deixa os
+    relatos em arquivo para serem lidos com calma.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(INSTRUCAO_INSTALACAO, file=sys.stderr)
+        return 2
+
+    from datetime import datetime, timezone
+
+    try:
+        escolhidos = alvos_escolhidos(portais_configurados(), alvos)
+    except PortalNaoConfigurado as exc:
+        print(f"Portal pedido que nao esta no .env: {exc}", file=sys.stderr)
+        return 1
+    if not escolhidos:
+        print("Nenhum portal configurado no .env "
+              "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_URL).", file=sys.stderr)
+        return 1
+
+    print("=" * LARGURA)
+    print("MAPA DOS PORTAIS".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"{len(escolhidos)} portal(is) do .env. Modo ensaio: nao preenche, nao")
+    print("clica, nao autentica. Nao gasta tentativa de login nem codigo.\n")
+
+    executavel = os.environ.get("JUSTICA_CHROMIUM") or None
+    momento = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    falhas = 0
+    with sync_playwright() as p:
+        try:
+            navegador, pagina = abrir_navegador(p, oculto, executavel)
+        except Exception as exc:
+            if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
+                print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
+                return 2
+            raise
+        try:
+            for config in escolhidos:
+                print(f"  Lendo {config.rotulo}...")
+                resultado = _mapear_um(pagina, config, segundos)
+                print(f"    {linha_de_resumo(resultado)}")
+                if resultado.get("erro"):
+                    falhas += 1
+                    continue
+                arquivo = (pasta_dos_mapas()
+                           / f"{config.tribunal}-{config.sistema}-{momento}.txt")
+                arquivo.write_text(resultado["relato"], encoding="utf-8")
+                print(f"    Mapa: {arquivo}")
+        finally:
+            try:
+                for aberta in getattr(navegador, "pages", []):
+                    try:
+                        aberta.close()
+                    except Exception:
+                        pass
+                navegador.close()
+            except Exception:
+                pass
+
+    print(f"\n  Pronto. Os mapas estao em {pasta_dos_mapas()}")
+    print("  Nenhuma tentativa de login foi gasta.")
+    return 1 if falhas == len(escolhidos) else 0
+
+
 def conferir_sessao(
     url: str, tribunal: str, sistema: str, *, oculto: bool = False, segundos: int = 30
 ) -> int:
@@ -1068,6 +1175,58 @@ def conferir_sessao(
                 navegador.close()
             except Exception:
                 pass
+
+
+def pasta_dos_mapas() -> "Path":
+    """Onde ficam os relatos de tela dos portais, um arquivo por leitura."""
+    from pathlib import Path as _P
+
+    from .core.estado import diretorio_estado
+
+    destino = _P(diretorio_estado()) / "mapas"
+    destino.mkdir(parents=True, exist_ok=True)
+    return destino
+
+
+def alvos_escolhidos(configs: list, alvos: Optional[list[str]]) -> list:
+    """Filtra os portais pedidos na linha de comando, no formato TRIBUNAL/sistema.
+
+    Sem `alvos`, devolve todos os configurados. Um alvo que nao existe no .env
+    NAO e ignorado em silencio: quem digitou errado precisa saber, senao acha
+    que o portal foi lido quando nao foi.
+    """
+    if not alvos:
+        return list(configs)
+    escolhidos, faltando = [], []
+    for alvo in alvos:
+        tribunal, _, sistema = alvo.partition("/")
+        achado = [c for c in configs
+                  if c.tribunal.upper() == tribunal.upper().strip()
+                  and (not sistema or c.sistema.lower() == sistema.lower().strip())]
+        if not achado:
+            faltando.append(alvo)
+            continue
+        escolhidos.extend(a for a in achado if a not in escolhidos)
+    if faltando:
+        raise PortalNaoConfigurado(", ".join(faltando), "nao esta no .env")
+    return escolhidos
+
+
+def linha_de_resumo(resultado: dict) -> str:
+    """Uma linha por portal, para o operador ver o essencial sem abrir arquivo."""
+    if resultado.get("erro"):
+        return f"{resultado['rotulo']}: NAO ABRIU ({resultado['erro']})"
+    partes = [f"{resultado['rotulo']}:"]
+    if resultado.get("desafio_reprovado"):
+        partes.append("verificacao humana JA REPROVOU o navegador")
+    elif resultado.get("desafio"):
+        partes.append("verificacao humana presente")
+    else:
+        partes.append("sem verificacao humana")
+    partes.append("com formulario de login" if resultado.get("formulario")
+                  else "sem formulario de login")
+    partes.append(f"{resultado.get('campos', 0)} campos, {resultado.get('botoes', 0)} botoes")
+    return " ".join(partes)
 
 
 SESSAO_ABERTA, SESSAO_FECHADA, SESSAO_INDEFINIDA = 0, 1, 3
@@ -2665,6 +2824,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="nao mostra a janela do navegador (o padrao e mostrar)")
     r.add_argument("--segundos", type=int, default=30, help="tempo limite de carregamento")
 
+    m = sub.add_parser(
+        "mapear",
+        help="le a tela de entrada de cada portal do .env e grava um mapa por portal",
+    )
+    m.add_argument("--portal", action="append", dest="alvos", default=None,
+                   help="TRIBUNAL/sistema, repetivel; sem isto, todos os do .env")
+    m.add_argument("--oculto", action="store_true")
+    m.add_argument("--segundos", type=int, default=30)
+
     s = sub.add_parser(
         "sessao",
         help="diz se a sessao guardada ainda vale, sem gastar tentativa nem codigo",
@@ -2771,10 +2939,12 @@ def main(argv: list[str] | None = None) -> int:
     carregar_env()
 
     try:
-        if args.comando != "reconhecer":
+        if args.comando not in ("reconhecer", "mapear"):
             _do_ambiente(args)
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "mapear":
+            return mapear(args.alvos, oculto=args.oculto, segundos=args.segundos)
         if args.comando == "sessao":
             return conferir_sessao(args.url, args.tribunal, args.sistema,
                                    oculto=args.oculto, segundos=args.segundos)
