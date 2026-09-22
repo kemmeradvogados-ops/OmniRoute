@@ -1628,3 +1628,104 @@ def test_reconhecimento_interno_aceita_varias_telas():
     fonte = inspect.getsource(portal.autenticar)
     assert "isinstance(reconhecer_apos, str)" in fonte
     assert "for i, destino in enumerate(destinos" in fonte
+
+
+# --------------------------------------------------------------------------
+# Estrutura de dados sem os dados
+#
+# Partes, movimentacoes e documentos vivem em tabelas, nao em campos de
+# formulario, entao o relato de campos nao os enxerga. Mas o relato e colado em
+# conversa: nome de parte e teor de movimentacao nao podem sair dali.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _relatar_estrutura_de_dados
+
+
+class _Celula:
+    pass
+
+
+class _Tabela:
+    def __init__(self, ident="", classe="", linhas=0, colunas=0):
+        self._ident, self._classe = ident, classe
+        self._linhas, self._colunas = linhas, colunas
+
+    def get_attribute(self, nome):
+        return {"id": self._ident, "class": self._classe}.get(nome)
+
+    def query_selector_all(self, seletor):
+        if seletor == "tr":
+            return [_Celula()] * self._linhas
+        return [_Celula()] * self._colunas
+
+
+class _Marcado:
+    def __init__(self, marcador, ident):
+        self._marcador, self._ident = marcador, ident
+
+    def get_attribute(self, nome):
+        return self._ident if nome == "id" else None
+
+    def evaluate(self, _):
+        return self._marcador
+
+
+class _PaginaComTabelas:
+    def __init__(self, tabelas=(), marcados=()):
+        self._tabelas = list(tabelas)
+        self._marcados = list(marcados)
+
+    def query_selector_all(self, seletor):
+        if seletor == "table":
+            return self._tabelas
+        if seletor == "[id]":
+            return self._marcados
+        return []
+
+
+def test_relata_identificador_e_tamanho_da_tabela(capsys):
+    p = _PaginaComTabelas([_Tabela(ident="tabelaTodasMovimentacoes", linhas=68, colunas=3)])
+    _relatar_estrutura_de_dados(p)
+    saida = capsys.readouterr().out
+    assert "#tabelaTodasMovimentacoes" in saida
+    assert "68 linha(s) x 3 coluna(s)" in saida
+
+
+def test_nao_reporta_texto_de_celula(capsys):
+    """A promessa do reconhecimento e que nenhum dado de processo apareca no
+    relato, porque ele e colado em conversa."""
+    class TabelaComTexto(_Tabela):
+        def inner_text(self):
+            return "FULANO DE TAL x BANCO"
+
+    p = _PaginaComTabelas([TabelaComTexto(ident="tablePartes", linhas=2, colunas=2)])
+    _relatar_estrutura_de_dados(p)
+    assert "FULANO" not in capsys.readouterr().out
+
+
+def test_tabela_sem_identificador_aparece_pela_classe(capsys):
+    p = _PaginaComTabelas([_Tabela(classe="secaoFormBody", linhas=4, colunas=2)])
+    _relatar_estrutura_de_dados(p)
+    assert ".secaoFormBody" in capsys.readouterr().out
+
+
+def test_lista_elementos_com_identificador_sem_script_nem_estilo(capsys):
+    p = _PaginaComTabelas(marcados=[
+        _Marcado("span", "numeroProcesso"),
+        _Marcado("script", "analytics"),
+        _Marcado("style", "tema"),
+    ])
+    _relatar_estrutura_de_dados(p)
+    saida = capsys.readouterr().out
+    assert "span#numeroProcesso" in saida
+    assert "analytics" not in saida
+    assert "tema" not in saida
+
+
+def test_pagina_ilegivel_nao_derruba_o_relato(capsys):
+    class Explode:
+        def query_selector_all(self, _):
+            raise RuntimeError("pagina fechada")
+
+    _relatar_estrutura_de_dados(Explode())
+    assert "ilegiveis" in capsys.readouterr().out

@@ -1577,7 +1577,60 @@ def _reconhecer_dentro_da_sessao(pagina, guarda, destino: str, segundos: int) ->
     # documento mesmo com o painel fechado. Lista-los revela o endereco da tela
     # de consulta sem clicar em nada e sem eu adivinhar, que e o ponto todo do
     # reconhecimento. Visto no e-SAJ de Sao Paulo, 21 de setembro de 2026.
+    _relatar_estrutura_de_dados(pagina)
     _listar_ligacoes(pagina)
+
+
+def _relatar_estrutura_de_dados(pagina, teto: int = 40) -> None:
+    """Descreve onde os dados moram, sem mostrar os dados.
+
+    Partes, movimentacoes e documentos vivem em tabelas e em elementos com
+    identificador, nao em campos de formulario, entao o relato de campos nao os
+    enxerga. Sem isto, escrever a extracao de cada portal exigiria adivinhar
+    seletor de tabela.
+
+    Reporta identificador, classe e tamanho, e NAO reporta texto de celula. A
+    promessa do reconhecimento e que nenhum dado de processo apareca no relato,
+    porque ele e colado em conversa. Nome de parte e teor de movimentacao sao
+    justamente o que nao pode sair dali.
+    """
+    try:
+        tabelas = pagina.query_selector_all("table")
+    except Exception as exc:
+        print(f"    Tabelas ilegiveis: {type(exc).__name__}: {exc}")
+        return
+
+    print(f"    TABELAS ({len(tabelas)}), so estrutura, sem conteudo:")
+    for i, tabela in enumerate(tabelas[:teto]):
+        try:
+            ident = tabela.get_attribute("id") or ""
+            classe = (tabela.get_attribute("class") or "")[:45]
+            linhas = len(tabela.query_selector_all("tr"))
+            colunas = len(tabela.query_selector_all("tr:first-child > *"))
+        except Exception:
+            continue
+        rotulo = f"#{ident}" if ident else (f".{classe}" if classe else "(sem id nem classe)")
+        print(f"      {rotulo:46s} {linhas} linha(s) x {colunas} coluna(s)")
+
+    try:
+        marcados = pagina.query_selector_all("[id]")
+    except Exception:
+        return
+    nomes: list[str] = []
+    for el in marcados:
+        try:
+            ident = el.get_attribute("id") or ""
+            marcador = el.evaluate("e => e.tagName.toLowerCase()")
+        except Exception:
+            continue
+        if not ident or marcador in ("script", "style", "link", "meta"):
+            continue
+        nomes.append(f"{marcador}#{ident}")
+    if nomes:
+        print(f"    ELEMENTOS COM IDENTIFICADOR ({len(nomes)}"
+              + (f", mostrando {teto}" if len(nomes) > teto else "") + "):")
+        for nome in nomes[:teto]:
+            print(f"      {nome}")
 
 
 def _listar_ligacoes(pagina, teto: int = 60) -> None:
@@ -1978,6 +2031,7 @@ def consultar_processo(
             # foi vista. Relatar a estrutura e o passo que gera o material para
             # escreve-la, e e o mesmo caminho que o eproc percorreu.
             _relatar_tela(pagina, "RESULTADO DA CONSULTA")
+            _relatar_estrutura_de_dados(pagina)
             try:
                 campos, _ = _coletar(pagina)
                 print(f"    CAMPOS ({len(campos)}):")
