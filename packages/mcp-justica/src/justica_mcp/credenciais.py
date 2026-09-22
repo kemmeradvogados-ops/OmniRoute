@@ -116,16 +116,47 @@ def cmd_listar(cofre: Cofre) -> int:
     return 0
 
 
+def motivo_para_recusar_login(login: str) -> str:
+    """Diz por que este texto nao pode ser um login, ou devolve vazio.
+
+    Login de portal e inscricao, cadastro de pessoa fisica ou matricula: nao
+    tem espaco, nem barra, nem tracos duplos. Um texto assim no prompt e quase
+    sempre um comando colado no lugar errado, e grava-lo corrompe o acesso em
+    silencio ate a proxima tentativa de login, que ja sai gasta.
+    """
+    if " " in login:
+        return "login de portal nao tem espaco."
+    if "--" in login:
+        return "isto parece uma linha de comando, nao um login."
+    if "\\" in login or "/" in login:
+        return "isto parece um caminho de arquivo, nao um login."
+    if len(login) > 60:
+        return "isto e longo demais para uma inscricao ou cadastro."
+    return ""
+
+
 def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool, so_semente: bool) -> int:
     identidade = _resolver(tribunal, sistema)
     print(f"\nGravando credencial de {identidade.rotulo}.")
     print("O que voce digitar NAO aparece na tela e NAO fica em arquivo.\n")
 
     if not so_semente:
-        login = input("  Login (inscricao, cadastro de pessoa fisica, matricula): ").strip()
-        if login:
-            cofre.guardar_login(identidade, login)
-            print("  Login gravado.")
+        # `--so-senha` promete gravar APENAS a senha, e por isso nao pergunta o
+        # login. Perguntar assim mesmo custou caro em 22/09/2026: o operador
+        # colou no prompt de login a linha de comando seguinte, ela foi gravada
+        # como se fosse a inscricao dele, e o login do portal ficou corrompido
+        # sem ninguem perceber. O proximo acesso teria gasto uma tentativa do
+        # teto da conta para enviar um texto que nao e login nenhum.
+        if not so_senha:
+            login = input("  Login (inscricao, cadastro de pessoa fisica, matricula): ").strip()
+            if login:
+                recusa = motivo_para_recusar_login(login)
+                if recusa:
+                    print(f"\n  Login NAO gravado: {recusa}")
+                    print("  Nada foi alterado. Repita o comando.")
+                    return 1
+                cofre.guardar_login(identidade, login)
+                print("  Login gravado.")
         senha = getpass.getpass("  Senha do portal: ")
         confere = getpass.getpass("  Repita a senha:  ")
         if senha != confere:
