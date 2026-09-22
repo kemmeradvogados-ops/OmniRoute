@@ -735,7 +735,28 @@ def test_acha_formulario_que_a_pagina_envia_sozinha():
 
 def test_nao_repete_o_mesmo_endereco():
     corpo = b'<a href="/x"></a><a href="/x"></a>'
-    assert sum(1 for p in _pistas_do_visualizador(corpo) if p == "href: /x") == 1
+    assert sum(1 for p in _pistas_do_visualizador(corpo) if p.endswith(": /x")) == 1
+
+
+def test_acha_endereco_dentro_de_window_open():
+    """A pagina real do e-SAJ usa `window.open`, que nao casa com `action`,
+    `src`, `href` nem `location`. Procurar pela FORMA do endereco, e nao pelo
+    nome do atributo que o carrega, foi o que a fez aparecer."""
+    corpo = b'<script>window.open("/pastadigital/pg/abrirPasta.do?x=1");window.close()</script>'
+    pistas = _pistas_do_visualizador(corpo)
+    assert any("abrirPasta.do" in p for p in pistas)
+
+
+def test_acha_endereco_em_document_location():
+    corpo = b'<script>document.location = "/pastadigital/outro.do"</script>'
+    assert any("outro.do" in p for p in _pistas_do_visualizador(corpo))
+
+
+def test_texto_comum_nao_vira_pista():
+    """So endereco: texto entre aspas que nao parece caminho ficaria como
+    ruido e poderia carregar dado de processo."""
+    corpo = b'<script>var nome = "FULANO DE TAL"</script>'
+    assert _pistas_do_visualizador(corpo) == []
 
 
 def test_corpo_ilegivel_nao_quebra():

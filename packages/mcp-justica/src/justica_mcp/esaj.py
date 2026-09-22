@@ -441,8 +441,15 @@ def expandir_movimentacoes(pagina: Any, guarda: Any, segundos: int) -> bool:
     return True
 
 
-def _pistas_do_visualizador(corpo: bytes, teto: int = 12) -> list[str]:
+def _pistas_do_visualizador(corpo: bytes, teto: int = 14) -> list[str]:
     """Enderecos e nomes de formulario achados numa pagina de passagem.
+
+    O padrao mais util e o ultimo: QUALQUER endereco entre aspas. A primeira
+    versao procurava `action`, `src`, `href` e `location`, e nao achou nada na
+    pagina real do e-SAJ, porque ela usa `window.open`, que nao casa com nenhum
+    deles. Procurar pela forma do endereco, e nao pelo nome do atributo que o
+    carrega, cobre `window.open`, `document.location`, `top.location` e o que
+    mais o portal inventar.
 
     So estrutura: endereco, nome de campo, nome de formulario. Nao devolve
     texto livre, porque o relato e colado em conversa e a promessa do projeto e
@@ -453,15 +460,18 @@ def _pistas_do_visualizador(corpo: bytes, teto: int = 12) -> list[str]:
     except Exception:
         return []
     achados: list[str] = []
-    for padrao, rotulo in (
+    padroes = (
         (r'action=["\']([^"\']+)', "action"),
-        (r'src=["\']([^"\']+)', "src"),
-        (r'href=["\']([^"\']+)', "href"),
-        (r'location(?:\.href)?\s*=\s*["\']([^"\']+)', "redireciona"),
         (r'name=["\']([^"\']+)', "campo"),
-    ):
-        for achado in re.findall(padrao, texto)[:teto]:
-            linha = f"{rotulo}: {achado[:110]}"
+        (r'["\']((?:https?://|/)[^"\'\s]{1,200})["\']', "endereco"),
+    )
+    for padrao, rotulo in padroes:
+        try:
+            encontrados = re.findall(padrao, texto)
+        except Exception:
+            continue
+        for achado in encontrados[:teto]:
+            linha = f"{rotulo}: {achado[:130]}"
             if linha not in achados:
                 achados.append(linha)
     return achados[:teto * 2]
