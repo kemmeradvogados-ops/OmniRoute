@@ -1482,7 +1482,9 @@ def autenticar(
         # Apenas o necessario. A caixa de liberar dispositivo e os botoes de
         # desativar ficam de fora de proposito.
         seletores_clicaveis=(botao_entrar, botao_validar),
-        seletores_preenchiveis=(campo_usuario, campo_senha, campo_codigo),
+        seletores_preenchiveis=tuple(
+            s for s in (campo_usuario, campo_senha, campo_codigo) if s
+        ),
     )
     guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[permissao])
 
@@ -1555,13 +1557,13 @@ def autenticar(
             # `acao=principal&acao_retorno=login` com o botao Enviar do desafio.
             # A espera so rodava na abertura, entao o comando desistia de um
             # login que apenas aguardava a pessoa, e gastava a tentativa a toa.
-            if pagina.query_selector(campo_codigo) is None and _ha_desafio_humano(pagina):
+            if achar_opcional(pagina, campo_codigo) is None and _ha_desafio_humano(pagina):
                 # Tres desfechos possiveis depois que a pessoa responde, e os
                 # tres precisam ser reconhecidos. Reconhecer so o segundo fator
                 # fazia o comando esperar os 180 segundos inteiros e desistir de
                 # um desafio que ja tinha sido resolvido.
                 def _passou(p):
-                    alvo = p.query_selector(campo_codigo)
+                    alvo = achar_opcional(p, campo_codigo)
                     if alvo is not None and alvo.is_visible():
                         return True          # foi direto ao segundo fator
                     if _ja_autenticado(p):
@@ -1580,7 +1582,7 @@ def autenticar(
                 # cegas e como se bloqueia uma conta. O relato abaixo diz o que
                 # apareceu, e a decisao de repetir fica com o operador.
                 voltou = pagina.query_selector(campo_usuario)
-                if (pagina.query_selector(campo_codigo) is None
+                if (achar_opcional(pagina, campo_codigo) is None
                         and not _ha_desafio_humano(pagina)
                         and voltou is not None and voltou.is_visible()):
                     print("\n  O portal voltou ao formulario de login apos o desafio.")
@@ -1614,7 +1616,7 @@ def autenticar(
                             )
 
             erros = _mensagens_de_erro(pagina)
-            campo = pagina.query_selector(campo_codigo)
+            campo = achar_opcional(pagina, campo_codigo)
             if campo is None:
                 # Duas situacoes muito diferentes chegavam aqui com a mesma
                 # mensagem de uma linha: credencial recusada e portal que
@@ -1704,7 +1706,7 @@ def autenticar(
                     print(f"    {e}")
                 print()
 
-            ainda_pede_codigo = pagina.query_selector(campo_codigo) is not None
+            ainda_pede_codigo = achar_opcional(pagina, campo_codigo) is not None
             if ainda_pede_codigo:
                 print("  A tela ainda pede o codigo: a validacao NAO passou.")
                 print("  NAO repita o comando. Confira a semente com:")
@@ -1930,6 +1932,24 @@ def _ha_desafio_humano(pagina) -> bool:
     return False
 
 
+def achar_opcional(pagina, seletor):
+    """`query_selector` que aceita seletor ausente, devolvendo None.
+
+    Seletor vazio quer dizer "esta tela nao tem este campo NESTE portal", e nao
+    "procure por nada". A diferenca importa porque passar vazio ao navegador
+    levanta erro, e o erro cairia DEPOIS de a credencial ja ter sido enviada:
+    a tentativa de login estaria gasta e o operador veria um erro de programa
+    no lugar da tela do portal. Foi o que quase aconteceu ao levar o PJe para
+    o comando de autenticacao, onde nenhuma tela mostrou segundo fator ainda.
+    """
+    if not seletor:
+        return None
+    try:
+        return pagina.query_selector(seletor)
+    except Exception:
+        return None
+
+
 def _aguardar_desafio_humano(
     pagina, seletor_esperado: str, segundos: int, oculto: bool, pronto=None
 ) -> bool:
@@ -1964,7 +1984,7 @@ def _aguardar_desafio_humano(
     # deu certo.
     if pronto is None:
         def pronto(p):
-            alvo = p.query_selector(seletor_esperado)
+            alvo = achar_opcional(p, seletor_esperado)
             return alvo is not None and alvo.is_visible()
 
     limite = time.monotonic() + segundos

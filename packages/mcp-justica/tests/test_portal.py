@@ -2007,3 +2007,64 @@ def test_a_tabela_nao_e_alterada_por_quem_a_consulta():
     copia = seletores_do_sistema("esaj")
     copia["campo_usuario"] = "#estragado"
     assert SELETORES_POR_SISTEMA["esaj"]["campo_usuario"] == "#usernameForm"
+
+
+# --------------------------------------------------------------------------
+# Portal sem segundo fator conhecido
+#
+# O PJe entrou no comando de autenticacao com os campos de segundo fator
+# vazios, porque nenhuma tela os mostrou ainda. Procurar por um seletor vazio
+# levanta erro no navegador, e o erro cairia DEPOIS de a credencial ter sido
+# enviada: a tentativa de login gasta e, na tela, um erro de programa no lugar
+# da tela do portal.
+# --------------------------------------------------------------------------
+
+class _PaginaQueExigeTexto:
+    """Como o Playwright: seletor que nao e texto levanta erro."""
+
+    def __init__(self, achados=None):
+        self.achados = achados or {}
+
+    def query_selector(self, seletor):
+        if not isinstance(seletor, str):
+            raise TypeError("Expected string, got NoneType")
+        return self.achados.get(seletor)
+
+
+def test_seletor_ausente_nao_vira_busca_no_navegador():
+    from justica_mcp.portal import achar_opcional
+
+    pagina = _PaginaQueExigeTexto()
+    assert achar_opcional(pagina, None) is None
+    assert achar_opcional(pagina, "") is None
+
+
+def test_seletor_presente_continua_sendo_procurado():
+    from justica_mcp.portal import achar_opcional
+
+    pagina = _PaginaQueExigeTexto({"#codigo": "achei"})
+    assert achar_opcional(pagina, "#codigo") == "achei"
+
+
+def test_erro_do_navegador_nao_derruba_a_autenticacao():
+    """Uma tela que morreu no meio nao pode virar traceback com a credencial
+    ja enviada: o operador precisa ler o relato, nao a pilha."""
+    from justica_mcp.portal import achar_opcional
+
+    class Morta:
+        def query_selector(self, seletor):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    assert achar_opcional(Morta(), "#codigo") is None
+
+
+def test_a_permissao_nao_leva_seletor_vazio_para_a_guarda():
+    """Seletor vazio na lista de permissao e lixo que atrapalha a leitura do
+    relato e pode casar com o alvo errado."""
+    from justica_mcp.portal import seletores_do_sistema
+
+    pje = seletores_do_sistema("pje")
+    preenchiveis = tuple(
+        s for s in (pje["campo_usuario"], pje["campo_senha"], pje["campo_codigo"]) if s
+    )
+    assert preenchiveis == ("#username", "#password")
