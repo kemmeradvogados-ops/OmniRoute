@@ -174,3 +174,41 @@ def test_o_erro_sem_portal_nenhum_aponta_para_o_arquivo(monkeypatch):
         monkeypatch.delenv(chave, raising=False)
     texto = str(PortalNaoConfigurado("TJRJ", "pje"))
     assert "nao enxerga portal nenhum" in texto
+
+
+# --------------------------------------------------------------------------
+# Saber ONDE o programa procura, e o que ha la
+# --------------------------------------------------------------------------
+
+def test_arquivo_em_utf16_e_dito_pelo_nome(tmp_path):
+    """O latin-1 decodifica qualquer byte sem reclamar, entao um arquivo em
+    UTF-16 passaria por lido e viraria chaves cheias de caractere nulo, sem
+    nada na tela explicando por que o programa nao acha configuracao."""
+    from justica_mcp.core.config import codificacao_do_env
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE_URL=https://exemplo\n", encoding="utf-16")
+    assert "UTF-16" in codificacao_do_env(arquivo)
+
+
+def test_arquivo_em_utf8_e_reconhecido(tmp_path):
+    from justica_mcp.core.config import codificacao_do_env
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("JUSTICA_PORTAL_TJRJ_PJE_URL=https://exemplo\n", encoding="utf-8")
+    assert codificacao_do_env(arquivo) == "utf-8-sig"
+
+
+def test_arquivo_do_bloco_de_notas_antigo_e_reconhecido(tmp_path):
+    """Acento em caminho do Drive gravado em ANSI."""
+    from justica_mcp.core.config import codificacao_do_env
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_bytes("JUSTICA_PASTA_COPIAS=G:\\Meu Drive\\Cópias\n".encode("cp1252"))
+    assert codificacao_do_env(arquivo) in ("cp1252", "latin-1")
+
+
+def test_arquivo_inexistente_nao_explode(tmp_path):
+    from justica_mcp.core.config import codificacao_do_env
+
+    assert "nao deu para abrir" in codificacao_do_env(tmp_path / "nao-existe")

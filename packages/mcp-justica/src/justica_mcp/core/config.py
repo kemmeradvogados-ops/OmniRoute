@@ -65,6 +65,36 @@ def limpar_invisiveis(chave: str) -> str:
     )
 
 
+def codificacao_do_env(arquivo: Path) -> str:
+    """Diz com que codificacao o arquivo pode ser lido, ou por que nao pode.
+
+    Serve ao diagnostico: um `.env` gravado em UTF-16 pelo `Out-File` do
+    PowerShell antigo parece normal no Bloco de Notas e nao e lido por
+    ninguem. Saber a codificacao poupa o operador de procurar defeito no
+    conteudo quando o defeito esta na forma.
+    """
+    try:
+        bruto = arquivo.read_bytes()
+    except OSError as exc:
+        return f"nao deu para abrir ({type(exc).__name__})"
+
+    # UTF-16 precisa ser dito pelo nome. O `latin-1` decodifica QUALQUER
+    # sequencia de bytes sem reclamar, entao um arquivo em UTF-16 passaria por
+    # "lido com sucesso" e viraria chaves cheias de caracteres nulos, sem que
+    # nada na tela explicasse por que o programa nao acha configuracao nenhuma.
+    if bruto.startswith(b"\xff\xfe") or bruto.startswith(b"\xfe\xff") or b"\x00" in bruto[:200]:
+        return ("UTF-16, que este programa NAO le. Regrave o arquivo em UTF-8 "
+                "(no Bloco de Notas: Salvar como, Codificacao UTF-8).")
+
+    for codificacao in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            bruto.decode(codificacao)
+            return codificacao
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return "nenhuma das conhecidas"
+
+
 def carregar_env(caminho: Optional[Path] = None) -> list[str]:
     """Carrega o `.env` e devolve os NOMES das chaves lidas, nunca os valores."""
     arquivo = caminho or (raiz_do_pacote() / ".env")

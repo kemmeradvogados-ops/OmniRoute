@@ -1242,6 +1242,65 @@ def completar_seletores(args) -> None:
             setattr(args, nome, valor)
 
 
+def mostrar_ambiente() -> int:
+    """Diz ONDE o programa procura a configuracao e O QUE encontrou la.
+
+    Nasceu de uma perda de tempo evitavel em 22/09/2026: o comando de mapear
+    listou cinco portais lidos do `.env` e, meia hora depois, o de autenticar
+    disse que nao havia portal nenhum. Sem saber em que arquivo o programa
+    estava olhando, nao havia como decidir entre arquivo errado, arquivo
+    movido, codificacao ilegivel e nome de chave com caractere invisivel.
+
+    Nao imprime valor nenhum: so nomes de chave, caminhos e contagens.
+    """
+    from .core.acesso import rotulos_no_ambiente
+    from .core.config import carregar_env, codificacao_do_env, raiz_do_pacote
+
+    arquivo = raiz_do_pacote() / ".env"
+    print("=" * LARGURA)
+    print("AMBIENTE DO PROGRAMA".center(LARGURA))
+    print("=" * LARGURA)
+    print("Nenhum valor e impresso aqui: so nomes de chave e caminhos.\n")
+    print(f"  O programa procura a configuracao em:\n    {arquivo}")
+
+    if not arquivo.is_file():
+        print("\n  ESTE ARQUIVO NAO EXISTE.")
+        vizinhos = sorted(
+            a.name for a in arquivo.parent.iterdir()
+            if a.is_file() and a.name.lower().startswith(".env")
+        ) if arquivo.parent.is_dir() else []
+        if vizinhos:
+            print("  Ha, na mesma pasta, arquivos de nome parecido:")
+            for vizinho in vizinhos:
+                print(f"    {vizinho}")
+            print("  Um deles pode ser o seu, com o nome trocado.")
+        else:
+            print("  E nao ha nenhum arquivo de nome parecido na pasta.")
+    else:
+        try:
+            tamanho = arquivo.stat().st_size
+        except OSError:
+            tamanho = -1
+        print(f"  Existe, com {tamanho} byte(s).")
+        print(f"  Codificacao que serve para le-lo: {codificacao_do_env(arquivo)}")
+
+    lidas = carregar_env()
+    nossas = [c for c in lidas if c.startswith("JUSTICA_")]
+    print(f"\n  CHAVES LIDAS DO ARQUIVO ({len(nossas)}):")
+    for chave in sorted(nossas):
+        print(f"    {chave}")
+    if not nossas:
+        print("    (nenhuma)")
+
+    rotulos = rotulos_no_ambiente()
+    print(f"\n  PORTAIS QUE O PROGRAMA ENXERGA ({len(rotulos)}):")
+    for rotulo in rotulos:
+        print(f"    {rotulo}")
+    if not rotulos:
+        print("    (nenhum)")
+    return 0 if rotulos else 1
+
+
 def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
     """Refaz o indice de folhas de um processo a partir dos arquivos na pasta.
 
@@ -2999,6 +3058,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="nao mostra a janela do navegador (o padrao e mostrar)")
     r.add_argument("--segundos", type=int, default=30, help="tempo limite de carregamento")
 
+    sub.add_parser(
+        "ambiente",
+        help="diz onde o programa procura a configuracao e o que encontrou la",
+    )
+
     ri = sub.add_parser(
         "reindexar",
         help="refaz o indice de folhas de um processo a partir dos arquivos na pasta",
@@ -3122,11 +3186,13 @@ def main(argv: list[str] | None = None) -> int:
     carregar_env()
 
     try:
-        if args.comando not in ("reconhecer", "mapear", "reindexar"):
+        if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente"):
             _do_ambiente(args)
             completar_seletores(args)
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "ambiente":
+            return mostrar_ambiente()
         if args.comando == "reindexar":
             return reindexar(args.processo, confirmar=args.confirmar)
         if args.comando == "mapear":
