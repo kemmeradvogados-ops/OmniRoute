@@ -180,9 +180,60 @@ LINK_EXPANDIR_MOVIMENTACOES = "#btnExibirMovimentacoes"
 # qual deles o portal usa em cada tela.
 CANDIDATOS_EXPANDIR = (
     LINK_EXPANDIR_MOVIMENTACOES,
-    'text="mais"',
-    'text="Mais"',
 )
+
+# Fotografado pelo operador em 22 de setembro de 2026, e e o que explica a
+# instabilidade: a pagina tem VARIOS "Mais". Um no cabecalho, um em PARTES DO
+# PROCESSO, e o de MOVIMENTACOES, que so aparece abaixo da lista. Pegar o
+# primeiro que casasse podia clicar em qualquer um dos outros, e por isso a
+# mesma consulta trouxe 50, 48, 20 e 5.
+#
+# O de movimentacoes e reconhecido pela POSICAO: e o que esta abaixo da secao de
+# movimentacoes. Posicao e verificavel; "o primeiro" nao era.
+TEXTO_MAIS = 'text="Mais"'
+TEXTO_RECOLHER = 'text="Recolher"'
+
+
+def _abaixo_da_secao(pagina: Any, seletor_texto: str, ancora: str) -> Optional[Any]:
+    """O elemento com esse texto que esta ABAIXO da ancora na tela."""
+    try:
+        referencia = pagina.query_selector(ancora)
+        caixa_ref = referencia.bounding_box() if referencia is not None else None
+    except Exception:
+        caixa_ref = None
+    if caixa_ref is None:
+        return None
+    limite = caixa_ref["y"]
+    melhor = None
+    melhor_y = None
+    try:
+        candidatos = pagina.query_selector_all(seletor_texto)
+    except Exception:
+        return None
+    for el in candidatos:
+        try:
+            if not el.is_visible():
+                continue
+            caixa = el.bounding_box()
+        except Exception:
+            continue
+        if caixa is None or caixa["y"] <= limite:
+            continue
+        # O mais PROXIMO abaixo: secoes seguintes, como PETICOES DIVERSAS, tem
+        # os seus proprios "Mais", e eles ficam ainda mais abaixo.
+        if melhor_y is None or caixa["y"] < melhor_y:
+            melhor, melhor_y = el, caixa["y"]
+    return melhor
+
+
+def movimentacoes_totalmente_expandidas(pagina: Any) -> bool:
+    """Verdadeiro quando o "Mais" das movimentacoes virou "Recolher".
+
+    Condicao de parada informada pelo operador e visivel na terceira foto. Nao
+    e o botao sumir: e a palavra trocar. Esperar o sumico fazia o laco continuar
+    clicando noutros "Mais" da pagina.
+    """
+    return _abaixo_da_secao(pagina, TEXTO_RECOLHER, CONTAINER_MOVIMENTACOES) is not None
 LINK_PASTA_DIGITAL = "#linkPasta"
 
 
@@ -443,6 +494,9 @@ def expandir_movimentacoes(pagina: Any, guarda: Any, segundos: int) -> bool:
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import _assentar, elemento_visivel, permissao_efemera
 
+    if movimentacoes_totalmente_expandidas(pagina):
+        return False
+
     seletor = None
     botao = None
     for candidato in CANDIDATOS_EXPANDIR:
@@ -450,6 +504,12 @@ def expandir_movimentacoes(pagina: Any, guarda: Any, segundos: int) -> bool:
         if botao is not None:
             seletor = candidato
             break
+    if botao is None:
+        # O "Mais" das movimentacoes, reconhecido pela posicao. Nao ha
+        # identificador conhecido para ele, e o texto sozinho pega o do
+        # cabecalho ou o das partes.
+        botao = _abaixo_da_secao(pagina, TEXTO_MAIS, CONTAINER_MOVIMENTACOES)
+        seletor = f'{TEXTO_MAIS} (abaixo de {CONTAINER_MOVIMENTACOES})'
     if botao is None:
         return False
     guarda.permissoes.append(Permissao(

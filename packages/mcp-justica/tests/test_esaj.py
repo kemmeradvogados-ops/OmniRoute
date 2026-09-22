@@ -961,6 +961,243 @@ def test_sem_link_nao_abre_aba_alguma():
 
 
 # --------------------------------------------------------------------------
+# Qual "Mais" clicar
+#
+# Fotografado pelo operador em 22/09/2026: a pagina tem VARIOS "Mais". Um no
+# cabecalho, um em PARTES DO PROCESSO, e o de MOVIMENTACOES, que so aparece
+# abaixo da lista. Pegar o primeiro que casasse clicava em qualquer um deles, e
+# por isso a mesma consulta trouxe 50, 48, 20 e 5.
+#
+# A condicao de parada tambem estava errada: nao e o botao sumir, e a palavra
+# virar "Recolher".
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import (
+    CONTAINER_MOVIMENTACOES, TEXTO_MAIS, TEXTO_RECOLHER, _abaixo_da_secao,
+    movimentacoes_totalmente_expandidas,
+)
+
+
+class _Posicionado:
+    def __init__(self, y, rotulo="", visivel=True):
+        self.y = y
+        self.rotulo = rotulo
+        self.visivel = visivel
+        self.cliques = 0
+
+    def is_visible(self):
+        return self.visivel
+
+    def bounding_box(self):
+        return {"x": 0, "y": self.y, "width": 50, "height": 15}
+
+    def click(self):
+        self.cliques += 1
+
+
+class _PaginaPosicional:
+    """Pagina com varios "Mais" em alturas diferentes, como a real."""
+
+    def __init__(self, container_y=500, mais=(), recolher=()):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do"
+        self._container = _Posicionado(container_y, "container")
+        self._mais = list(mais)
+        self._recolher = list(recolher)
+        self.viewport_size = {"width": 1280, "height": 720}
+
+    def query_selector_all(self, seletor):
+        if seletor == TEXTO_MAIS:
+            return self._mais
+        if seletor == TEXTO_RECOLHER:
+            return self._recolher
+        if seletor == CONTAINER_MOVIMENTACOES:
+            return [self._container]
+        return []
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def test_escolhe_o_mais_que_esta_abaixo_das_movimentacoes():
+    """O do cabecalho e o das partes ficam ACIMA. Clicar neles expandia outra
+    coisa e deixava o historico truncado."""
+    cabecalho = _Posicionado(100, "cabecalho")
+    partes = _Posicionado(300, "partes")
+    movimentacoes = _Posicionado(800, "movimentacoes")
+    p = _PaginaPosicional(container_y=500, mais=[cabecalho, partes, movimentacoes])
+    achado = _abaixo_da_secao(p, TEXTO_MAIS, CONTAINER_MOVIMENTACOES)
+    assert achado is movimentacoes
+
+
+def test_escolhe_o_mais_PROXIMO_abaixo():
+    """Secoes seguintes, como PETICOES DIVERSAS, tem os seus proprios "Mais", e
+    ficam ainda mais abaixo."""
+    das_movimentacoes = _Posicionado(800)
+    das_peticoes = _Posicionado(1500)
+    p = _PaginaPosicional(container_y=500, mais=[das_peticoes, das_movimentacoes])
+    assert _abaixo_da_secao(p, TEXTO_MAIS, CONTAINER_MOVIMENTACOES) is das_movimentacoes
+
+
+def test_mais_invisivel_nao_conta():
+    escondido = _Posicionado(800, visivel=False)
+    p = _PaginaPosicional(container_y=500, mais=[escondido])
+    assert _abaixo_da_secao(p, TEXTO_MAIS, CONTAINER_MOVIMENTACOES) is None
+
+
+def test_recolher_abaixo_das_movimentacoes_significa_expandido():
+    """Condicao de parada informada pelo operador e visivel na terceira foto:
+    a palavra troca, o botao nao some."""
+    p = _PaginaPosicional(container_y=500, recolher=[_Posicionado(900)])
+    assert movimentacoes_totalmente_expandidas(p) is True
+
+
+def test_recolher_de_outra_secao_nao_encerra_a_expansao():
+    """Um "Recolher" acima das movimentacoes e de outra secao, e tomá-lo como
+    fim deixaria o historico truncado sem aviso."""
+    p = _PaginaPosicional(container_y=500, recolher=[_Posicionado(200)])
+    assert movimentacoes_totalmente_expandidas(p) is False
+
+
+def test_sem_recolher_a_expansao_continua():
+    assert movimentacoes_totalmente_expandidas(_PaginaPosicional()) is False
+
+
+def test_expande_pelo_mais_posicional_ate_virar_recolher():
+    estado = {"cliques": 0}
+
+    class Pagina(_PaginaPosicional):
+        def query_selector_all(self, seletor):
+            if seletor == TEXTO_RECOLHER:
+                return [_Posicionado(900)] if estado["cliques"] >= 3 else []
+            if seletor == TEXTO_MAIS:
+                return [] if estado["cliques"] >= 3 else [_Marcador()]
+            return super().query_selector_all(seletor)
+
+    class _Marcador(_Posicionado):
+        def __init__(self):
+            super().__init__(800)
+
+        def click(self):
+            estado["cliques"] += 1
+
+    p = Pagina(container_y=500)
+    r = expandir_movimentacoes_ate_o_fim(p, _guarda(), 5, contar=lambda _: estado["cliques"] * 10)
+    assert estado["cliques"] == 3
+
+
+class _ContextoComAbas:
+    """Simula o comportamento visto em campo: a aba aberta morre e uma janela
+    filha aparece no contexto."""
+
+    def __init__(self, aba, filhas=(), mata_a_aba=False, resposta=None):
+        self._aba = aba
+        self.abriu = False
+        self.pages = []
+        self._filhas = list(filhas)
+        self._mata = mata_a_aba
+        self.request = _Requisicao(resposta) if resposta is not None else None
+
+    def new_page(self):
+        self.abriu = True
+        if not self._mata:
+            self.pages = self.pages + [self._aba]
+        self.pages = self.pages + self._filhas
+        return self._aba
+
+
+class _AbaNova:
+    def __init__(self, fechada=False):
+        self.url = ""
+        self.viewport_size = {"width": 1280, "height": 720}
+        self._fechada = fechada
+
+    def goto(self, destino, **kw):
+        self.url = destino
+
+    def is_closed(self):
+        return self._fechada
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+class _PaginaDoProcesso:
+    def __init__(self, href, aba=None, filhas=(), mata_a_aba=False, resposta=None):
+        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do?processo.codigo=X"
+        self._href = href
+        self.context = _ContextoComAbas(
+            aba or _AbaNova(), filhas=filhas, mata_a_aba=mata_a_aba,
+            resposta=resposta,
+        )
+
+    def query_selector(self, seletor):
+        return _El(atributos={"href": self._href}) if (
+            seletor == "#linkPasta" and self._href) else None
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def test_abre_os_autos_em_aba_nova_sem_clicar():
+    """Abrir pelo endereco nao pode cair em elemento vizinho, e a aba original
+    continua na pagina do processo, com os dados ja lidos."""
+    aba = _AbaNova()
+    p = _PaginaDoProcesso("/cpopg/abrirPastaDigital.do?processo.codigo=X", aba=aba)
+    abas = abrir_pasta_digital(p, _guarda(), 5)
+    assert p.context.abriu is True
+    assert aba.url.startswith("https://esaj.tjsp.jus.br/cpopg/abrirPastaDigital.do")
+    assert abas == [aba]
+
+
+def test_devolve_a_janela_FILHA_quando_a_aba_aberta_morre():
+    """Conferido em campo: a pagina de passagem abre outra janela e se encerra.
+    Ler a aba que abrimos dava TargetClosedError e o relato vinha vazio."""
+    filha = _AbaNova()
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X",
+        filhas=[filha], mata_a_aba=True,
+    )
+    assert abrir_pasta_digital(p, _guarda(), 5) == [filha]
+
+
+def test_aba_fechada_fica_de_fora_da_lista():
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X",
+        aba=_AbaNova(fechada=True),
+    )
+    assert abrir_pasta_digital(p, _guarda(), 5) == []
+
+
+def test_devolve_lista_e_nao_supoe_uma_janela_so():
+    """Supor exatamente uma janela seria adivinhar o comportamento do portal."""
+    duas = [_AbaNova(), _AbaNova()]
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X",
+        filhas=duas, mata_a_aba=True,
+    )
+    assert len(abrir_pasta_digital(p, _guarda(), 5)) == 2
+
+
+def test_sem_link_nao_abre_aba_alguma():
+    p = _PaginaDoProcesso(None)
+    assert abrir_pasta_digital(p, _guarda(), 5) == []
+    assert p.context.abriu is False
+
+
+# --------------------------------------------------------------------------
 # A palavra "mais"
 #
 # O operador informou em 22/09/2026: na secao de andamentos e preciso clicar na
@@ -970,81 +1207,6 @@ def test_sem_link_nao_abre_aba_alguma():
 
 from justica_mcp.esaj import CANDIDATOS_EXPANDIR
 
-
-class _PaginaComPalavraMais:
-    """So responde ao seletor de texto, nunca ao identificador."""
-
-    def __init__(self):
-        self.url = "https://esaj.tjsp.jus.br/cpopg/show.do"
-        self.cliques = 0
-        self.viewport_size = {"width": 1280, "height": 720}
-
-    def query_selector_all(self, seletor):
-        return [self] if seletor == 'text="mais"' else []
-
-    def query_selector(self, seletor):
-        achados = self.query_selector_all(seletor)
-        return achados[0] if achados else None
-
-    def is_visible(self):
-        return True
-
-    def bounding_box(self):
-        return {"x": 1, "y": 1, "width": 9, "height": 9}
-
-    def click(self):
-        self.cliques += 1
-
-    def wait_for_load_state(self, *a, **kw):
-        pass
-
-    def wait_for_selector(self, *a, **kw):
-        pass
-
-
-def test_clica_na_palavra_mais_quando_nao_ha_identificador():
-    p = _PaginaComPalavraMais()
-    assert expandir_movimentacoes(p, _guarda(), 5) is True
-    assert p.cliques == 1
-
-
-def test_o_identificador_tem_precedencia_sobre_a_palavra():
-    """O que a pagina declara vem antes do que o olho ve: assim o resultado nao
-    depende de haver outra palavra "mais" em algum canto da tela."""
-    assert CANDIDATOS_EXPANDIR[0] == LINK_EXPANDIR_MOVIMENTACOES
-
-
-def test_a_autorizacao_nomeia_o_seletor_que_foi_de_fato_usado():
-    """Auditoria com o seletor errado nao prova o que aconteceu."""
-    p = _PaginaComPalavraMais()
-    guarda = _guarda()
-    expandir_movimentacoes(p, guarda, 5)
-    descricoes = [perm.descricao for perm in guarda.permissoes]
-    assert any('text="mais"' in d for d in descricoes)
-
-
-def test_expande_pela_palavra_ate_o_fim():
-    """Cada expansao revela outra palavra "mais"; o laco para quando ela some."""
-    class Ate3(_PaginaComPalavraMais):
-        def query_selector_all(self, seletor):
-            if seletor == 'text="mais"' and self.cliques < 3:
-                return [self]
-            return []
-
-    p = Ate3()
-    r = expandir_movimentacoes_ate_o_fim(p, _guarda(), 5, contar=lambda _: p.cliques * 10)
-    assert p.cliques == 3
-    assert r["motivo"] == "botao sumiu"
-
-
-# --------------------------------------------------------------------------
-# O endereco da pasta varia por processo, e nao se constroi
-#
-# Pergunta do operador em 22/09/2026. A resposta e que ele traz um `ticket` de
-# sessao que so o portal emite, por sessao e por processo: montar e impossivel
-# por definicao. A pagina de passagem existe exatamente para carrega-lo, entao
-# o caminho e LER de onde o portal o pos.
-# --------------------------------------------------------------------------
 
 from justica_mcp.esaj import endereco_real_da_pasta
 
