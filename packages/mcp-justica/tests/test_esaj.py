@@ -1401,3 +1401,88 @@ def test_a_tabela_de_partes_continua_fora_mesmo_sendo_grande():
     achadas, _ = extrair_movimentacoes_com_origem(p)
     assert len(achadas) == 1
     assert achadas[0]["descricao"] == "Despacho"
+
+
+# --------------------------------------------------------------------------
+# A janela se fecha durante a gravacao
+#
+# Em campo em 22/09/2026: a copia comecou e `save_as` morreu com
+# TargetClosedError. A Pasta Digital se fecha sozinha depois de entregar o
+# arquivo, e fechar a janela mata o canal no meio da gravacao. Na execucao
+# anterior ela sobreviveu: e corrida de tempo, nao erro de logica.
+# --------------------------------------------------------------------------
+
+class _BaixadoQueMorre:
+    """`save_as` falha, mas o arquivo ja esta em disco, como de fato esta."""
+
+    suggested_filename = "autos.pdf"
+
+    def __init__(self, tmp_path, com_temporario=True):
+        self._tmp = tmp_path / "temporario.pdf"
+        if com_temporario:
+            self._tmp.write_bytes(b"%PDF-1.4 conteudo")
+        self._tem = com_temporario
+
+    def save_as(self, caminho):
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    def path(self):
+        if not self._tem:
+            return None
+        return str(self._tmp)
+
+
+class _JanelaQueMorre(_Janela):
+    def __init__(self, baixado):
+        super().__init__()
+        self._baixado = baixado
+
+    def expect_download(self, timeout=None):
+        return _Espera(self._baixado)
+
+
+def test_arquivo_e_salvo_do_temporario_quando_a_janela_morre(tmp_path):
+    """Perder um arquivo ja baixado por causa da janela que o entregou seria o
+    pior desperdicio: custou uma tentativa e um codigo lido no celular."""
+    destino = tmp_path / "copias"
+    janela = _JanelaQueMorre(_BaixadoQueMorre(tmp_path))
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), destino, "123", 10
+    )
+    assert r["situacao"] == "gravada"
+    assert (destino / "integra-autos.pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_sem_temporario_o_erro_e_relatado_e_nada_e_inventado(tmp_path):
+    destino = tmp_path / "copias"
+    janela = _JanelaQueMorre(_BaixadoQueMorre(tmp_path, com_temporario=False))
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), destino, "123", 10
+    )
+    assert r["situacao"] == "download_perdido"
+    assert not list(destino.iterdir())
+
+
+def test_o_caminho_normal_continua_sendo_o_primeiro(tmp_path):
+    """A copia do temporario e rede, nao o caminho principal: quando `save_as`
+    funciona, e ele que grava."""
+    janela = _Janela()
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 10
+    )
+    assert r["situacao"] == "gravada"
+
+
+def test_falha_ao_localizar_o_temporario_tambem_e_relatada(tmp_path):
+    """Nao pode explodir com erro meu: o operador precisa ler a causa do
+    portal, nao um UnboundLocalError."""
+    class SemCaminho(_BaixadoQueMorre):
+        def path(self):
+            raise RuntimeError("canal fechado")
+
+    janela = _JanelaQueMorre(SemCaminho(tmp_path))
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path / "c", "1", 10
+    )
+    assert r["situacao"] == "download_perdido"
+    assert "canal fechado" in r["detalhe"]

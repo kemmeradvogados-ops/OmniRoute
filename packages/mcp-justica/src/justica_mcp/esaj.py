@@ -757,6 +757,46 @@ def _clicar_na_pasta(janela: Any, guarda: Any, candidatos, rotulo: str) -> bool:
     return True
 
 
+def _gravar_baixado(baixado: Any, arquivo: Any) -> Optional[str]:
+    """Grava o arquivo baixado, por dois caminhos, e devolve o erro ou None.
+
+    A Pasta Digital se fecha sozinha depois de entregar o arquivo, e fechar a
+    janela mata o canal de `save_as` no meio da gravacao. Em campo isso
+    aconteceu numa execucao e nao na anterior: e corrida de tempo, nao erro de
+    logica, e por isso precisa de mais de um caminho.
+
+    O segundo caminho existe porque o arquivo JA ESTA em disco quando o
+    navegador anuncia o download: `path()` diz onde, e copiar dali nao depende
+    da janela continuar viva. Perder um arquivo ja baixado por causa da janela
+    que o entregou seria o pior desperdicio possivel, porque custou uma
+    tentativa e um codigo lido no celular.
+    """
+    import shutil
+
+    try:
+        baixado.save_as(str(arquivo))
+        return None
+    except Exception as primeiro:
+        # O nome vai para uma variavel comum: Python apaga a da excecao ao
+        # sair do `except`, e usa-la depois dava UnboundLocalError, que
+        # esconderia a causa real atras de um erro meu.
+        falha_do_save = type(primeiro).__name__
+
+    try:
+        origem = baixado.path()
+    except Exception as segundo:
+        return (f"save_as falhou ({falha_do_save}) e nao deu para localizar o "
+                f"arquivo temporario ({type(segundo).__name__}: {segundo}).")
+    if not origem:
+        return f"save_as falhou ({falha_do_save}) e nao ha arquivo temporario."
+    try:
+        shutil.copyfile(str(origem), str(arquivo))
+    except Exception as terceiro:
+        return (f"save_as falhou ({falha_do_save}) e a copia do arquivo "
+                f"temporario tambem ({type(terceiro).__name__}: {terceiro}).")
+    return None
+
+
 def copiar_autos_pelo_visualizador(
     pagina: Any, guarda: Any, destino: Any, chave: str, segundos: int
 ) -> dict[str, Any]:
@@ -846,5 +886,7 @@ def copiar_autos_pelo_visualizador(
     destino.mkdir(parents=True, exist_ok=True)
     sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
     arquivo = destino / f"integra-{sugerido}"
-    baixado.save_as(str(arquivo))
+    erro = _gravar_baixado(baixado, arquivo)
+    if erro is not None:
+        return {"situacao": "download_perdido", "detalhe": erro, "janela": janela}
     return {"situacao": "gravada", "arquivo": str(arquivo), "janela": janela}

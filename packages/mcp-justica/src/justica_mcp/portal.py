@@ -2177,7 +2177,11 @@ def consultar_processo(
                 if resultado["situacao"] != "gravada" and janela is not None:
                     # Parou no meio: relatar a tela e o que permite escrever o
                     # passo que faltou, sem adivinhar seletor.
-                    print(f"    Nao concluiu no passo {resultado.get('passo', '?')}.")
+                    if resultado["situacao"] == "download_perdido":
+                        print(f"    O arquivo foi baixado mas nao pode ser gravado: "
+                              f"{resultado.get('detalhe', '')}")
+                    else:
+                        print(f"    Nao concluiu no passo {resultado.get('passo', '?')}.")
                     _relatar_tela(janela, "PASTA DIGITAL")
                     _relatar_estrutura_de_dados(janela)
                 if janela is not None:
