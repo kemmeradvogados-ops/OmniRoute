@@ -1982,12 +1982,19 @@ def test_o_que_o_operador_passa_tem_precedencia_sobre_a_tabela():
     assert args.botao_entrar == "#pbEntrar"
 
 
-def test_segundo_fator_que_nenhuma_tela_mostrou_fica_vazio():
+def test_segundo_fator_que_nenhuma_tela_mostrou_fica_vazio(monkeypatch):
     """Preencher com um seletor plausivel seria adivinhar, e adivinhar aqui
-    gasta tentativa de login."""
+    gasta tentativa de login. Foi assim que o PJe entrou na tabela, com os
+    campos de codigo vazios, ate a tela real mostra-los em 22/09/2026."""
+    from justica_mcp import portal as portal_mod
     from justica_mcp.portal import completar_seletores
 
-    args = _Args("pje")
+    monkeypatch.setitem(portal_mod.SELETORES_POR_SISTEMA, "portal-novo", {
+        "campo_usuario": "#usuario", "campo_senha": "#senha",
+        "campo_senha_oculto": None, "botao_entrar": "#entrar",
+        "campo_codigo": None, "botao_validar": None,
+    })
+    args = _Args("portal-novo")
     completar_seletores(args)
     assert args.campo_codigo is None
     assert args.botao_validar is None
@@ -2061,13 +2068,13 @@ def test_erro_do_navegador_nao_derruba_a_autenticacao():
 def test_a_permissao_nao_leva_seletor_vazio_para_a_guarda():
     """Seletor vazio na lista de permissao e lixo que atrapalha a leitura do
     relato e pode casar com o alvo errado."""
-    from justica_mcp.portal import seletores_do_sistema
-
-    pje = seletores_do_sistema("pje")
+    sem_codigo = {"campo_usuario": "#usuario", "campo_senha": "#senha",
+                  "campo_codigo": None}
     preenchiveis = tuple(
-        s for s in (pje["campo_usuario"], pje["campo_senha"], pje["campo_codigo"]) if s
+        s for s in (sem_codigo["campo_usuario"], sem_codigo["campo_senha"],
+                    sem_codigo["campo_codigo"]) if s
     )
-    assert preenchiveis == ("#username", "#password")
+    assert preenchiveis == ("#usuario", "#senha")
 
 
 # --------------------------------------------------------------------------
