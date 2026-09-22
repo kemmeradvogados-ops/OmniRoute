@@ -1030,3 +1030,52 @@ def test_expande_pela_palavra_ate_o_fim():
     r = expandir_movimentacoes_ate_o_fim(p, _guarda(), 5, contar=lambda _: p.cliques * 10)
     assert p.cliques == 3
     assert r["motivo"] == "botao sumiu"
+
+
+# --------------------------------------------------------------------------
+# O endereco da pasta varia por processo, e nao se constroi
+#
+# Pergunta do operador em 22/09/2026. A resposta e que ele traz um `ticket` de
+# sessao que so o portal emite, por sessao e por processo: montar e impossivel
+# por definicao. A pagina de passagem existe exatamente para carrega-lo, entao
+# o caminho e LER de onde o portal o pos.
+# --------------------------------------------------------------------------
+
+from justica_mcp.esaj import endereco_real_da_pasta
+
+
+def test_le_o_endereco_real_de_dentro_de_window_open():
+    corpo = (b'<script>window.open("https://esaj.tjsp.jus.br/pastadigital/'
+             b'abrirPastaProcessoDigital.do?nuProcesso=X&ticket=ABC%2FDEF");</script>')
+    achado = endereco_real_da_pasta(corpo)
+    assert achado.startswith("https://esaj.tjsp.jus.br/pastadigital/")
+    assert "ticket=ABC%2FDEF" in achado
+
+
+def test_o_ticket_e_preservado_inteiro():
+    """O ticket vem com caracteres escapados. Mexer nele o invalida, e o portal
+    responderia como se o advogado nao tivesse acesso ao processo."""
+    ticket = "b4G7VsPqAr4M%2BUajgpmj58o7DbaRQP0c%2FYfy%2F"
+    corpo = f'<script>window.open("/pastadigital/abrirPasta.do?ticket={ticket}")</script>'
+    assert ticket in endereco_real_da_pasta(corpo.encode())
+
+
+def test_endereco_relativo_tambem_e_aceito():
+    corpo = b'<script>window.open("/pastadigital/abrirPastaProcessoDigital.do?x=1")</script>'
+    assert endereco_real_da_pasta(corpo) == "/pastadigital/abrirPastaProcessoDigital.do?x=1"
+
+
+def test_outro_endereco_da_pagina_nao_e_confundido_com_a_pasta():
+    """A pagina pode carregar folha de estilo, script e icone. So o caminho da
+    pasta digital interessa."""
+    corpo = (b'<link href="/estilo/tema.css"><script src="/js/app.js"></script>'
+             b'<script>window.open("/pastadigital/abrirPasta.do?x=1")</script>')
+    assert endereco_real_da_pasta(corpo) == "/pastadigital/abrirPasta.do?x=1"
+
+
+def test_pagina_sem_endereco_de_pasta_devolve_nada():
+    assert endereco_real_da_pasta(b"<html>sem nada</html>") is None
+
+
+def test_corpo_vazio_nao_quebra():
+    assert endereco_real_da_pasta(b"") is None

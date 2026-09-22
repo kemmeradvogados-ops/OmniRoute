@@ -548,6 +548,27 @@ def copiar_pasta_digital(pagina: Any, guarda: Any, destino: Any, chave: str,
     return {"situacao": "gravada", "arquivo": str(arquivo), "bytes": len(corpo)}
 
 
+# A pagina de passagem carrega o endereco real da pasta, com um `ticket` que so
+# o portal emite, por sessao e por processo. Montar esse endereco e impossivel
+# por definicao, e por isso ele e LIDO de onde o portal o pos.
+CAMINHO_DA_PASTA = "/pastadigital/"
+
+
+def endereco_real_da_pasta(corpo: bytes) -> Optional[str]:
+    """Extrai, da pagina de passagem, o endereco que ela abriria.
+
+    O operador perguntou em 22 de setembro de 2026 como resolver o endereco
+    variar por processo. Nao se resolve construindo: ele traz um `ticket` de
+    sessao que so o portal emite. Resolve-se LENDO, porque a pagina de passagem
+    existe exatamente para carrega-lo.
+    """
+    for pista in _pistas_do_visualizador(corpo, teto=40):
+        rotulo, _, valor = pista.partition(": ")
+        if rotulo == "endereco" and CAMINHO_DA_PASTA in valor:
+            return valor
+    return None
+
+
 def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> list[Any]:
     """Abre a janela dos autos e devolve TODAS as abas que sobraram abertas.
 
@@ -582,9 +603,25 @@ def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> list[Any]:
     except Exception:
         antes = {pagina}
 
+    # Le a pagina de passagem e pega dela o endereco real, com o ticket. Abrir
+    # a de passagem e torcer para o script rodar deixava a aba vazia: conferido
+    # em campo, titulo vazio e zero elementos.
+    destino = absoluto
+    try:
+        resposta = contexto.request.get(absoluto, timeout=segundos * 1000)
+        achado = endereco_real_da_pasta(resposta.body())
+        if achado:
+            destino = achado if achado.startswith("http") else (
+                f"{pagina.url.split('/cpopg')[0]}{achado}"
+            )
+            guarda.avaliar(Acao.NAVEGAR, destino, url=destino).exigir()
+    except Exception:
+        # Sem o endereco real, segue com o de passagem: e pior, mas nao e nada.
+        pass
+
     aba = contexto.new_page()
     try:
-        aba.goto(absoluto, timeout=segundos * 1000, wait_until="domcontentloaded")
+        aba.goto(destino, timeout=segundos * 1000, wait_until="domcontentloaded")
     except Exception:
         # A propria navegacao pode morrer se a pagina se encerrar durante ela.
         pass
