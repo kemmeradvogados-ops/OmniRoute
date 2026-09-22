@@ -68,6 +68,23 @@ ESPERA_HUMANA_PADRAO = 180
 VARIAVEL_PERFIL_EFEMERO = "JUSTICA_NAVEGADOR_EFEMERO"
 
 
+def pasta_de_descargas() -> "Path":
+    """Pasta fixa onde o navegador escreve os arquivos baixados.
+
+    Sem ela, o Playwright usa um diretorio temporario que so ele conhece e que
+    some quando o navegador fecha: se o canal morre, o arquivo ja baixado fica
+    irrecuperavel. Com pasta conhecida, o arquivo continua no disco e pode ser
+    copiado por caminho de sistema de arquivos, sem depender de janela viva.
+    """
+    from pathlib import Path as _P
+
+    from .core.estado import diretorio_estado
+
+    destino = _P(diretorio_estado()) / "descargas"
+    destino.mkdir(parents=True, exist_ok=True)
+    return destino
+
+
 def pasta_do_navegador() -> "Path":
     """Perfil persistente do navegador, na pasta de estado.
 
@@ -107,12 +124,19 @@ def abrir_navegador(p, oculto: bool, executavel):
     `JUSTICA_NAVEGADOR_EFEMERO=1` volta ao descarte a cada execucao, para quem
     preferir pagar o desafio toda vez.
     """
+    descargas = str(pasta_de_descargas())
     if _perfil_efemero():
-        navegador = p.chromium.launch(headless=oculto, executable_path=executavel)
+        navegador = p.chromium.launch(
+            headless=oculto, executable_path=executavel, downloads_path=descargas
+        )
         return navegador, navegador.new_page()
 
     contexto = p.chromium.launch_persistent_context(
-        str(pasta_do_navegador()), headless=oculto, executable_path=executavel
+        str(pasta_do_navegador()),
+        headless=oculto,
+        executable_path=executavel,
+        accept_downloads=True,
+        downloads_path=descargas,
     )
     pagina = contexto.pages[0] if contexto.pages else contexto.new_page()
     return contexto, pagina

@@ -904,9 +904,11 @@ class _Chromium:
     def __init__(self):
         self.persistente = None
         self.efemero = False
+        self.opcoes = {}
 
     def launch_persistent_context(self, pasta, **kw):
         self.persistente = pasta
+        self.opcoes = kw
         return _Contexto()
 
     def launch(self, **kw):
@@ -1740,3 +1742,19 @@ def test_identificadores_nao_sao_cortados_em_quarenta(capsys):
     saida = capsys.readouterr().out
     assert "tbody#t100" in saida
     assert "ELEMENTOS COM IDENTIFICADOR (120)" in saida
+
+
+def test_o_navegador_escreve_os_downloads_em_pasta_conhecida(tmp_path, monkeypatch):
+    """Sem pasta conhecida, o Playwright usa um temporario que so ele enxerga:
+    quando o canal morre no meio da gravacao, o arquivo ja baixado fica
+    irrecuperavel. Aconteceu em campo em 22/09/2026."""
+    from justica_mcp.portal import pasta_de_descargas
+
+    monkeypatch.setenv("JUSTICA_MCP_HOME", str(tmp_path))
+    monkeypatch.delenv(VARIAVEL_PERFIL_EFEMERO, raising=False)
+    p = _Playwright()
+    abrir_navegador(p, True, None)
+    assert p.chromium.opcoes["downloads_path"] == str(tmp_path / "descargas")
+    assert p.chromium.opcoes["accept_downloads"] is True
+    assert pasta_de_descargas() == tmp_path / "descargas"
+    assert pasta_de_descargas().is_dir()

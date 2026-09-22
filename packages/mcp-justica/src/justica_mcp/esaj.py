@@ -817,8 +817,68 @@ def _clicar_na_pasta(janela: Any, guarda: Any, candidatos, rotulo: str) -> bool:
     return True
 
 
-def _gravar_baixado(baixado: Any, arquivo: Any) -> Optional[str]:
-    """Grava o arquivo baixado, por dois caminhos, e devolve o erro ou None.
+def _esperar_arquivo_parar_de_crescer(caminho: Any, segundos: int = 20) -> int:
+    """Espera o tamanho repetir duas leituras seguidas e devolve o tamanho.
+
+    O navegador anuncia o download quando ele COMECA, nao quando termina. Copiar
+    no meio da escrita produziria um PDF truncado, que e pior que nenhum: ele
+    abre, parece a integra e esconde as ultimas folhas.
+    """
+    import time
+
+    anterior = -1
+    for _ in range(max(segundos, 1) * 2):
+        try:
+            atual = caminho.stat().st_size
+        except OSError:
+            atual = -1
+        if atual > 0 and atual == anterior:
+            return atual
+        anterior = atual
+        time.sleep(0.5)
+    try:
+        return caminho.stat().st_size
+    except OSError:
+        return 0
+
+
+def _arquivo_baixado_no_disco(pasta: Any, desde: float) -> Any:
+    """Acha, na pasta de descargas, o arquivo mais novo escrito nesta copia.
+
+    `desde` e o instante anterior ao clique: sem ele, um arquivo de execucao
+    passada poderia ser entregue como se fosse a integra deste processo, que e
+    exatamente o tipo de invencao que este projeto nao pode cometer.
+    """
+    from pathlib import Path as _P
+
+    if pasta is None:
+        return None
+    pasta = _P(pasta)
+    if not pasta.is_dir():
+        return None
+    candidatos = []
+    for item in pasta.rglob("*"):
+        if not item.is_file() or item.name.endswith(".crdownload"):
+            continue
+        try:
+            marca = item.stat().st_mtime
+        except OSError:
+            continue
+        # A margem cobre relogio de sistema de arquivos com resolucao de
+        # segundo, que pode datar o arquivo um instante antes do clique.
+        if marca + 2 < desde:
+            continue
+        candidatos.append((marca, item))
+    if not candidatos:
+        return None
+    candidatos.sort()
+    return candidatos[-1][1]
+
+
+def _gravar_baixado(
+    baixado: Any, arquivo: Any, pasta_descargas: Any = None, desde: float = 0.0
+) -> Optional[str]:
+    """Grava o arquivo baixado, por tres caminhos, e devolve o erro ou None.
 
     A Pasta Digital se fecha sozinha depois de entregar o arquivo, e fechar a
     janela mata o canal de `save_as` no meio da gravacao. Em campo isso
@@ -830,6 +890,11 @@ def _gravar_baixado(baixado: Any, arquivo: Any) -> Optional[str]:
     da janela continuar viva. Perder um arquivo ja baixado por causa da janela
     que o entregou seria o pior desperdicio possivel, porque custou uma
     tentativa e um codigo lido no celular.
+
+    O terceiro caminho existe porque o segundo se mostrou insuficiente: `path()`
+    tambem pergunta ao navegador, entao morre pelo mesmo motivo que `save_as`.
+    Por isso o navegador passou a escrever numa pasta conhecida
+    (`pasta_de_descargas`), que pode ser lida como disco comum, sem canal.
     """
     import shutil
 
@@ -842,18 +907,37 @@ def _gravar_baixado(baixado: Any, arquivo: Any) -> Optional[str]:
         # esconderia a causa real atras de um erro meu.
         falha_do_save = type(primeiro).__name__
 
+    origem = None
+    falha_do_path = None
     try:
         origem = baixado.path()
     except Exception as segundo:
-        return (f"save_as falhou ({falha_do_save}) e nao deu para localizar o "
-                f"arquivo temporario ({type(segundo).__name__}: {segundo}).")
+        falha_do_path = f"{type(segundo).__name__}: {segundo}"
+
     if not origem:
-        return f"save_as falhou ({falha_do_save}) e nao ha arquivo temporario."
+        # Terceiro caminho: o disco. `path()` tambem viaja pelo canal do
+        # navegador, entao morre junto com a janela; a pasta de descargas nao
+        # depende de canal nenhum. Em campo, em 22/09/2026, os dois primeiros
+        # caminhos falharam com TargetClosedError com o arquivo JA gravado.
+        achado = _arquivo_baixado_no_disco(pasta_descargas, desde)
+        if achado is None:
+            motivo = falha_do_path or "o navegador nao informou o caminho"
+            return (f"save_as falhou ({falha_do_save}) e nao deu para localizar "
+                    f"o arquivo baixado ({motivo}).")
+        origem = achado
+
+    from pathlib import Path as _P
+
+    origem = _P(str(origem))
+    tamanho = _esperar_arquivo_parar_de_crescer(origem)
+    if tamanho <= 0:
+        return (f"save_as falhou ({falha_do_save}) e o arquivo encontrado em "
+                f"disco esta vazio.")
     try:
         shutil.copyfile(str(origem), str(arquivo))
     except Exception as terceiro:
         return (f"save_as falhou ({falha_do_save}) e a copia do arquivo "
-                f"temporario tambem ({type(terceiro).__name__}: {terceiro}).")
+                f"baixado tambem ({type(terceiro).__name__}: {terceiro}).")
     return None
 
 
@@ -934,6 +1018,17 @@ def copiar_autos_pelo_visualizador(
     ))
     guarda.pode_executar(Acao.CLICAR, seletor, url=janela.url)
     print("    Continuar: clicado, aguardando o arquivo...")
+    # Marcado ANTES do clique: e a fronteira que separa o arquivo desta copia
+    # de qualquer arquivo de execucao anterior que ainda esteja na pasta.
+    import time
+
+    from .portal import pasta_de_descargas
+
+    desde = time.time()
+    try:
+        descargas = pasta_de_descargas()
+    except Exception:
+        descargas = None
     try:
         with janela.expect_download(timeout=max(segundos, 120) * 1000) as baixa:
             alvo.click()
@@ -946,7 +1041,7 @@ def copiar_autos_pelo_visualizador(
     destino.mkdir(parents=True, exist_ok=True)
     sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
     arquivo = destino / f"integra-{sugerido}"
-    erro = _gravar_baixado(baixado, arquivo)
+    erro = _gravar_baixado(baixado, arquivo, descargas, desde)
     if erro is not None:
         return {"situacao": "download_perdido", "detalhe": erro, "janela": janela}
     return {"situacao": "gravada", "arquivo": str(arquivo), "janela": janela}

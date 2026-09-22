@@ -1648,3 +1648,132 @@ def test_falha_ao_localizar_o_temporario_tambem_e_relatada(tmp_path):
     )
     assert r["situacao"] == "download_perdido"
     assert "canal fechado" in r["detalhe"]
+
+
+# --------------------------------------------------------------------------
+# O terceiro caminho: o disco
+#
+# `path()` tambem viaja pelo canal do navegador, entao morre junto com a
+# janela, como `save_as`. Em campo em 22/09/2026 os dois falharam com
+# TargetClosedError com o arquivo ja gravado em disco. A pasta de descargas
+# nao depende de canal: e sistema de arquivos.
+# --------------------------------------------------------------------------
+
+class _BaixadoSemCanal:
+    """Nem `save_as` nem `path()` respondem: o canal do navegador morreu."""
+
+    suggested_filename = "autos.pdf"
+
+    def save_as(self, caminho):
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    def path(self):
+        raise RuntimeError("Download.path: Target page, context or browser has been closed")
+
+
+def test_arquivo_e_recuperado_da_pasta_de_descargas(tmp_path, monkeypatch):
+    """O arquivo ja esta no disco; perde-lo custaria uma tentativa do teto e um
+    codigo lido no celular."""
+    from justica_mcp import portal as portal_mod
+
+    descargas = tmp_path / "descargas"
+    descargas.mkdir()
+    (descargas / "a1b2c3").write_bytes(b"%PDF-1.4 integra")
+    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+
+    destino = tmp_path / "copias"
+    janela = _JanelaQueMorre(_BaixadoSemCanal())
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), destino, "123", 10
+    )
+    assert r["situacao"] == "gravada"
+    assert (destino / "integra-autos.pdf").read_bytes() == b"%PDF-1.4 integra"
+
+
+def test_arquivo_de_execucao_anterior_nao_e_entregue_como_a_integra(
+    tmp_path, monkeypatch
+):
+    """Entregar a copia de outro processo seria inventar prova: o pior erro
+    possivel neste projeto."""
+    import os
+    import time
+
+    from justica_mcp import portal as portal_mod
+
+    descargas = tmp_path / "descargas"
+    descargas.mkdir()
+    velho = descargas / "de-ontem"
+    velho.write_bytes(b"%PDF-1.4 outro processo")
+    antigo = time.time() - 86400
+    os.utime(velho, (antigo, antigo))
+    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+
+    destino = tmp_path / "copias"
+    janela = _JanelaQueMorre(_BaixadoSemCanal())
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), destino, "123", 10
+    )
+    assert r["situacao"] == "download_perdido"
+    assert not destino.exists() or not list(destino.iterdir())
+
+
+def test_arquivo_vazio_nao_e_gravado_como_copia(tmp_path, monkeypatch):
+    """Um PDF de zero byte abre como arquivo corrompido e faria o advogado
+    acreditar que a copia existe."""
+    from justica_mcp import portal as portal_mod
+
+    descargas = tmp_path / "descargas"
+    descargas.mkdir()
+    (descargas / "vazio").write_bytes(b"")
+    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+
+    destino = tmp_path / "copias"
+    janela = _JanelaQueMorre(_BaixadoSemCanal())
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), destino, "123", 10
+    )
+    assert r["situacao"] == "download_perdido"
+    assert "vazio" in r["detalhe"]
+
+
+def test_parcial_do_chromium_e_ignorado(tmp_path, monkeypatch):
+    """`.crdownload` e escrita em andamento: copiar dali daria um PDF truncado,
+    que abre, parece a integra e esconde as ultimas folhas."""
+    from justica_mcp import portal as portal_mod
+
+    descargas = tmp_path / "descargas"
+    descargas.mkdir()
+    (descargas / "parcial.crdownload").write_bytes(b"%PDF pela metade")
+    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+
+    destino = tmp_path / "copias"
+    janela = _JanelaQueMorre(_BaixadoSemCanal())
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), destino, "123", 10
+    )
+    assert r["situacao"] == "download_perdido"
+
+
+def test_esperar_parar_de_crescer_devolve_o_tamanho_estavel(tmp_path):
+    from justica_mcp.esaj import _esperar_arquivo_parar_de_crescer
+
+    arquivo = tmp_path / "x.pdf"
+    arquivo.write_bytes(b"1234567890")
+    assert _esperar_arquivo_parar_de_crescer(arquivo, segundos=2) == 10
+
+
+def test_o_caminho_do_navegador_continua_vindo_antes_do_disco(tmp_path, monkeypatch):
+    """O disco e rede de seguranca, nao o caminho principal: quando `save_as`
+    responde, e ele que grava."""
+    from justica_mcp import portal as portal_mod
+
+    descargas = tmp_path / "descargas"
+    descargas.mkdir()
+    (descargas / "nao-usar").write_bytes(b"%PDF nao deveria ser lido")
+    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+
+    destino = tmp_path / "copias"
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(_Janela()), _guarda(), destino, "123", 10
+    )
+    assert r["situacao"] == "gravada"
