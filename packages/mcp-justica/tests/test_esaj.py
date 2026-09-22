@@ -1830,7 +1830,7 @@ class _JanelaQueGera(_Janela):
         elif seletor == "#btnAguardarProcessamento":
             self.visiveis -= {"#radioAguardar", "#btnAguardarProcessamento"}
             self.visiveis.add("#btnDownloadDocumento")
-        elif seletor == "#btnDownloadDocumento":
+        elif seletor == "#btnDownloadDocumento" and self.baixado is not None:
             for funcao in self.ouvintes.get("download", []):
                 funcao(self.baixado)
 
@@ -1911,3 +1911,95 @@ def test_lista_de_alvos_proibidos_nao_pode_ser_clicada_nem_por_engano(tmp_path):
     for proibido in NUNCA_CLICAR:
         with pytest.raises(AssertionError):
             _clicar_na_pasta(_Janela(), _guarda(), (proibido,), "proibido")
+
+
+# --------------------------------------------------------------------------
+# O botao que pisca
+#
+# Em campo em 22/09/2026, segunda execucao: o programa viu "Salvar o
+# documento" na tela, foi clicar e nao achou mais. Tela montada por script
+# desenha o popup inteiro e so depois esconde os estados que nao valem ainda.
+# --------------------------------------------------------------------------
+
+class _JanelaQuePisca(_JanelaQueGera):
+    """O botao de salvar aparece nas leituras que a lista manda, e so nelas."""
+
+    def __init__(self, leituras_visiveis, some_no_clique=None):
+        super().__init__(com_espera=False)
+        self.leituras_visiveis = leituras_visiveis
+        self.some_no_clique = some_no_clique
+        self.leituras_do_salvar = 0
+        self.leitura_no_clique = None
+
+    def query_selector_all(self, seletor):
+        if seletor == "#btnDownloadDocumento":
+            self.leituras_do_salvar += 1
+            if self.leituras_do_salvar in self.leituras_visiveis:
+                return [_AlvoClicavel(self, seletor)]
+            return []
+        return super().query_selector_all(seletor)
+
+    def _apos_clique(self, seletor):
+        if seletor == "#btnDownloadDocumento":
+            self.leitura_no_clique = self.leituras_do_salvar
+        super()._apos_clique(seletor)
+
+
+def test_o_piscar_do_botao_nao_vira_clique(tmp_path, monkeypatch):
+    """Aparecer uma vez nao basta. Clicar no piscar e o que derrubou a copia."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 3)
+    janela = _JanelaQuePisca(leituras_visiveis={1})
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert "#btnDownloadDocumento" not in janela.clicados
+    assert r["situacao"] == "sem_arquivo"
+
+
+def test_botao_que_volta_e_fica_e_clicado(tmp_path, monkeypatch):
+    """Depois do piscar o botao volta de verdade: a copia tem que seguir."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    janela = _JanelaQuePisca(leituras_visiveis={1, 4, 5, 6, 7})
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert r["situacao"] == "gravada"
+    assert janela.leitura_no_clique >= 5
+
+
+def test_clique_que_cai_no_vazio_nao_derruba_a_copia(tmp_path, monkeypatch):
+    """O botao sumiu entre a leitura e o clique. Desistir ai custava a
+    tentativa inteira, com o codigo ja lido no celular."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 10)
+    # A leitura 3 e a do proprio clique: nela o botao nao esta la.
+    janela = _JanelaQuePisca(leituras_visiveis={1, 2, 4, 5, 6, 7})
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert r["situacao"] == "gravada"
+
+
+def test_clicar_muitas_vezes_sem_download_vira_relato_e_nao_laco_eterno(
+    tmp_path, monkeypatch
+):
+    """Se o botao esta na tela e nenhum download comeca, o problema e outro: o
+    operador precisa saber, nao esperar dez minutos."""
+    from justica_mcp import esaj as esaj_mod
+
+    monkeypatch.setattr(esaj_mod, "TETO_DE_GERACAO", 30)
+    monkeypatch.setattr(esaj_mod, "ESPERA_ENTRE_CLIQUES_EM_SALVAR", 0)
+    monkeypatch.setattr(esaj_mod, "MAXIMO_DE_CLIQUES_EM_SALVAR", 2)
+    janela = _JanelaQueGera(com_espera=False)
+    janela.baixado = None
+    r = copiar_autos_pelo_visualizador(
+        _PaginaComAutos(janela), _guarda(), tmp_path, "123", 0
+    )
+    assert r["situacao"] == "sem_arquivo"
+    assert "Cliquei 2x" in r["detalhe"]
+    assert janela.clicados.count("#btnDownloadDocumento") == 2

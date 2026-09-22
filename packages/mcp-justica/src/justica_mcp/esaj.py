@@ -804,6 +804,18 @@ AVISOS_DE_INTIMACAO = ("#divMensagemIntimacaoPendente",
 # tentativa inteira, com o codigo ja lido no celular e o advogado parado.
 TETO_DE_GERACAO = 600
 
+# Nada e clicado na primeira leitura em que aparece. Tela montada por script
+# desenha o popup inteiro e so depois esconde o que nao vale ainda, e foi nesse
+# piscar que o clique em "Salvar o documento" caiu no vazio, em 22/09/2026.
+LEITURAS_PARA_CONFIRMAR = 2
+INTERVALO_DE_LEITURA = 0.5
+
+# Um clique pode cair no meio do redesenho do popup e nao disparar nada. Vale
+# insistir, com folga entre as tentativas, mas nao para sempre: se o botao esta
+# la e nenhum download comeca, o problema e outro e o operador precisa saber.
+ESPERA_ENTRE_CLIQUES_EM_SALVAR = 30
+MAXIMO_DE_CLIQUES_EM_SALVAR = 4
+
 
 def _primeiro_visivel(janela: Any, candidatos) -> Optional[tuple[Any, str]]:
     from .portal import elemento_visivel
@@ -815,7 +827,9 @@ def _primeiro_visivel(janela: Any, candidatos) -> Optional[tuple[Any, str]]:
     return None
 
 
-def _clicar_na_pasta(janela: Any, guarda: Any, candidatos, rotulo: str) -> bool:
+def _clicar_na_pasta(
+    janela: Any, guarda: Any, candidatos, rotulo: str, silencioso: bool = False
+) -> bool:
     """Clica um alvo da Pasta Digital, sob autorizacao nominal.
 
     Cada alvo entra na lista de permissao por si, no momento de usa-lo. Uma
@@ -835,8 +849,9 @@ def _clicar_na_pasta(janela: Any, guarda: Any, candidatos, rotulo: str) -> bool:
 
     achado = _primeiro_visivel(janela, candidatos)
     if achado is None:
-        print(f"    [PAROU] Nao encontrei {rotulo} na Pasta Digital.")
-        print(f"            Tentados: {', '.join(candidatos)}")
+        if not silencioso:
+            print(f"    [PAROU] Nao encontrei {rotulo} na Pasta Digital.")
+            print(f"            Tentados: {', '.join(candidatos)}")
         return False
     alvo, seletor = achado
     guarda.permissoes.append(Permissao(
@@ -995,17 +1010,29 @@ def _esperar_o_documento_ficar_pronto(
 ) -> Optional[dict[str, Any]]:
     """Acompanha a geracao do PDF ate o arquivo chegar. None quando chegou.
 
-    Em campo em 22/09/2026 a espera de 120s terminou em TimeoutError sem
-    arquivo nenhum, e o relato da tela explicou por que: o portal tinha aberto
-    `#popupGerarDocumento` e estava montando o PDF dos 115 documentos. O
-    arquivo nao vem do "Continuar": vem de "Salvar o documento", que so nasce
-    quando a montagem termina.
+    Duas licoes de campo, das duas execucoes de 22/09/2026, estao aqui dentro.
+
+    A primeira: o portal NAO entrega o arquivo no "Continuar". Ele abre
+    `#popupGerarDocumento`, monta o PDF em segundo plano e so entao mostra
+    "Salvar o documento". A espera de 120s morreu em TimeoutError com o portal
+    trabalhando normalmente.
+
+    A segunda: o botao apareceu e sumiu entre o teste e o clique. O programa viu
+    "Salvar o documento" na tela, foi clicar e nao achou mais. E o piscar
+    conhecido de tela montada por script: o portal desenha o popup inteiro e so
+    depois esconde os estados que nao valem ainda. Por isso nada e clicado na
+    primeira vez que aparece, e sim quando continua la na leitura seguinte, e
+    por isso um clique que falha NAO derruba a copia: a volta seguinte tenta de
+    novo. Desistir no primeiro tropeco custava a tentativa inteira, com o codigo
+    ja lido no celular.
     """
     import time
 
     limite = time.time() + max(segundos * 3, TETO_DE_GERACAO)
+    vistas = {"salvar": 0, "aguardar": 0, "aviso": 0}
     pedi_para_aguardar = False
-    mandei_salvar = False
+    cliques_em_salvar = 0
+    ultimo_salvar = 0.0
     proximo_aviso = time.time() + 20
 
     while time.time() < limite:
@@ -1013,32 +1040,48 @@ def _esperar_o_documento_ficar_pronto(
             return None
 
         aviso = _primeiro_visivel(janela, AVISOS_DE_INTIMACAO)
-        if aviso is not None:
+        for chave, presente in (
+            ("aviso", aviso is not None),
+            ("salvar", _primeiro_visivel(janela, SALVAR_DOCUMENTO) is not None),
+            ("aguardar", _primeiro_visivel(janela, ESCOLHER_AGUARDAR) is not None),
+        ):
+            vistas[chave] = vistas[chave] + 1 if presente else 0
+
+        if vistas["aviso"] >= LEITURAS_PARA_CONFIRMAR:
             return {"situacao": "aviso_de_intimacao", "detalhe": (
                 "O portal mostrou aviso de intimacao pendente. O programa parou "
                 "aqui de proposito: confirmar esse aviso fica a um passo de dar "
                 "ciencia, e ciencia abre prazo. Veja a janela e decida.")}
 
-        if not mandei_salvar and _primeiro_visivel(janela, SALVAR_DOCUMENTO):
-            if not _clicar_na_pasta(janela, guarda, SALVAR_DOCUMENTO,
-                                    "Salvar o documento"):
-                return {"situacao": "parou_no_passo", "passo": "Salvar o documento"}
-            mandei_salvar = True
-            proximo_aviso = time.time() + 20
-        elif not pedi_para_aguardar and _primeiro_visivel(janela, ESCOLHER_AGUARDAR):
+        agora = time.time()
+        pode_reclicar = agora - ultimo_salvar >= ESPERA_ENTRE_CLIQUES_EM_SALVAR
+        if vistas["salvar"] >= LEITURAS_PARA_CONFIRMAR and pode_reclicar:
+            if cliques_em_salvar >= MAXIMO_DE_CLIQUES_EM_SALVAR:
+                return {"situacao": "sem_arquivo", "detalhe": (
+                    f"Cliquei {cliques_em_salvar}x em 'Salvar o documento' e o "
+                    "navegador nao anunciou download nenhum. O botao esta na "
+                    "tela, entao o PDF ficou pronto: o que falhou foi a entrega.")}
+            if _clicar_na_pasta(janela, guarda, SALVAR_DOCUMENTO,
+                                "Salvar o documento", silencioso=True):
+                cliques_em_salvar += 1
+                ultimo_salvar = agora
+                proximo_aviso = agora + 20
+        elif vistas["aguardar"] >= LEITURAS_PARA_CONFIRMAR and not pedi_para_aguardar:
             # "Aguardar" e escolhido explicitamente para NAO cair no envio por
             # e-mail, que mandaria os autos do cliente para fora.
-            _clicar_na_pasta(janela, guarda, ESCOLHER_AGUARDAR, "Aguardar nesta tela")
-            _clicar_na_pasta(janela, guarda, CONFIRMAR_AGUARDAR, "Confirmar a espera")
-            pedi_para_aguardar = True
-            proximo_aviso = time.time() + 20
+            _clicar_na_pasta(janela, guarda, ESCOLHER_AGUARDAR,
+                             "Aguardar nesta tela", silencioso=True)
+            if _clicar_na_pasta(janela, guarda, CONFIRMAR_AGUARDAR,
+                                "Confirmar a espera", silencioso=True):
+                pedi_para_aguardar = True
+                proximo_aviso = agora + 20
 
-        if time.time() >= proximo_aviso:
-            falta = int(limite - time.time())
+        if agora >= proximo_aviso:
+            falta = int(limite - agora)
             print(f"    O portal ainda esta montando o PDF... ({falta}s de margem)")
-            proximo_aviso = time.time() + 20
+            proximo_aviso = agora + 20
 
-        time.sleep(1)
+        time.sleep(INTERVALO_DE_LEITURA)
 
     if capturados:
         return None
