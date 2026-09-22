@@ -841,7 +841,18 @@ def entrar(
             print()
             if candidatos:
                 print(f"  Encontrado(s) {len(candidatos)} campo(s) com cara de segundo fator.")
-                print("  Proximo passo: preencher o codigo gerado pelo cofre.")
+                # A mensagem antiga presumia semente, porque o eproc foi o
+                # primeiro portal implementado. O e-SAJ de Sao Paulo ENVIA o
+                # codigo, e mandar o operador procurar no cofre um codigo que o
+                # portal acabou de mandar por mensagem e desperdicar a validade
+                # curta dele.
+                if cofre.tem_semente(identidade):
+                    print("  Ha semente guardada para esta credencial:")
+                    print("  o proximo passo usa o codigo gerado pelo cofre.")
+                else:
+                    print("  NAO ha semente guardada para esta credencial, entao o codigo")
+                    print("  provavelmente e ENVIADO pelo portal, por mensagem ou e-mail.")
+                    print("  O proximo passo pede o codigo ao operador, na hora.")
             elif erros:
                 print("  Nenhum campo de segundo fator, e ha mensagem de erro na tela:")
                 print("  o envio provavelmente nao passou da autenticacao.")
@@ -1147,13 +1158,32 @@ def autenticar(
                                  sistema=identidade.sistema, resultado="nao_solicitado")
             else:
                 # ---------- etapa 2: segundo fator ----------
-                # Exige janela util: codigo gerado no fim da validade expira
-                # entre o preenchimento e o envio, e o portal registra falha
-                # por um motivo que nao e culpa da credencial.
-                restante = cofre.segundos_restantes_do_codigo()
-                if restante < 8:
-                    print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
-                codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
+                # Dois tipos de segundo fator, e a diferenca nao e detalhe: com
+                # semente o cofre GERA o codigo; sem semente quem o tem e a
+                # pessoa, porque o portal o enviou. Presumir semente para todos
+                # foi viavel enquanto so havia o eproc, e quebrou no e-SAJ.
+                if cofre.tem_semente(identidade):
+                    # Exige janela util: codigo gerado no fim da validade expira
+                    # entre o preenchimento e o envio, e o portal registra falha
+                    # por um motivo que nao e culpa da credencial.
+                    restante = cofre.segundos_restantes_do_codigo()
+                    if restante < 8:
+                        print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
+                    codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
+                    validade = f", valido por mais {cofre.segundos_restantes_do_codigo()}s"
+                else:
+                    tamanho = None
+                    bruto = campo.get_attribute("maxlength")
+                    if bruto and bruto.isdigit():
+                        tamanho = int(bruto)
+                    codigo = _codigo_do_operador(identidade.rotulo, tamanho, oculto)
+                    if codigo is None:
+                        estado.registrar(
+                            acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, resultado="codigo_nao_informado",
+                        )
+                        return 1
+                    validade = " (informado pelo operador)"
 
                 guarda.pode_executar(Acao.PREENCHER, campo_codigo, url=url)
                 campo.click()
@@ -1163,8 +1193,7 @@ def autenticar(
                     print(f"  [ABORTADO] O codigo nao entrou no campo ({conferido} de {len(codigo)}).")
                     print("             Nada foi enviado, para nao gastar tentativa.")
                     return 1
-                print(f"  Etapa 2: codigo preenchido, valido por mais "
-                      f"{cofre.segundos_restantes_do_codigo()}s.")
+                print(f"  Etapa 2: codigo preenchido{validade}.")
 
                 guarda.pode_executar(Acao.CLICAR, botao_validar, url=url)
                 estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
@@ -1456,6 +1485,51 @@ def _aguardar_desafio_humano(
     else:
         print("  A caixa continua por marcar, ou a resposta nao foi aceita.")
     return False
+
+
+def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool) -> Optional[str]:
+    """Pede ao operador o codigo que o PORTAL enviou.
+
+    Nem todo portal usa codigo gerado de semente. O e-SAJ de Sao Paulo envia um
+    por mensagem ou e-mail, verificado em campo em 21 de setembro de 2026 pelo
+    botao "Receber novo codigo" e pela ausencia de semente no cofre. Para esses,
+    o cofre nao tem o que gerar: quem tem o codigo e a pessoa.
+
+    Sem janela e sem terminal nao ha a quem perguntar, entao recusa em vez de
+    ficar esperando uma resposta que nunca vem. Vale para a ferramenta do
+    servidor, que roda sempre oculta.
+    """
+    if oculto:
+        print("  [PARADO] O portal pede um codigo que ELE envia, e nao ha como")
+        print("           perguntar a ninguem nesta execucao. Rode pela linha de")
+        print("           comando, sem --oculto, com o codigo em maos.")
+        return None
+    if not sys.stdin or not sys.stdin.isatty():
+        print("  [PARADO] O portal pede um codigo enviado por ele, e esta execucao")
+        print("           nao tem terminal para perguntar. Rode direto no PowerShell.")
+        return None
+
+    limite = f" ({tamanho} digitos)" if tamanho else ""
+    print(f"\n  O portal enviou um codigo{limite}. Confira sua mensagem ou e-mail.")
+    print("  Ele tem validade curta, entao digite assim que receber.")
+    for tentativa in range(3):
+        try:
+            digitado = input(f"  Codigo para {rotulo} (vazio cancela): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelado pelo operador. Nada foi enviado.")
+            return None
+        if not digitado:
+            print("  Cancelado. Nada foi enviado.")
+            return None
+        if not digitado.isdigit():
+            print("  So digitos. Tente de novo.")
+            continue
+        if tamanho and len(digitado) != tamanho:
+            print(f"  O campo aceita {tamanho} digitos e voce informou {len(digitado)}.")
+            continue
+        return digitado
+    print("  Tres tentativas de digitacao sem acerto. Nada foi enviado.")
+    return None
 
 
 def _reenviar_credencial(

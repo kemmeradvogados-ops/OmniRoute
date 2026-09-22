@@ -1274,3 +1274,80 @@ def test_ensaio_nunca_clica_no_botao_de_envio():
         if ".click()" in linha:
             assert "botao_entrar" not in linha, linha
     assert "Acao.CLICAR" not in fonte
+
+
+# --------------------------------------------------------------------------
+# Segundo fator enviado pelo portal
+#
+# No e-SAJ de Sao Paulo, 21/09/2026: apos o login, `#btnReceberToken` aparece
+# na tela JA DESABILITADO, o que indica codigo recem-enviado. Nao ha semente no
+# cofre para essa credencial. Presumir semente para todo portal era viavel
+# enquanto so existia o eproc.
+# --------------------------------------------------------------------------
+
+from justica_mcp.portal import _codigo_do_operador
+
+
+def test_navegador_oculto_recusa_em_vez_de_esperar_resposta(capsys):
+    """Sem janela nao ha a quem perguntar. Esperar em silencio por uma resposta
+    que nunca vem e pior que recusar: prende a execucao e nao ensina nada."""
+    assert _codigo_do_operador("TJSP / esaj", 6, oculto=True) is None
+    assert "sem --oculto" in capsys.readouterr().out
+
+
+def test_sem_terminal_recusa(monkeypatch, capsys):
+    class SemTerminal:
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr("sys.stdin", SemTerminal())
+    assert _codigo_do_operador("TJSP / esaj", 6, oculto=False) is None
+    assert "nao tem terminal" in capsys.readouterr().out
+
+
+def _com_terminal(monkeypatch, respostas):
+    class ComTerminal:
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("sys.stdin", ComTerminal())
+    fila = list(respostas)
+    monkeypatch.setattr("builtins.input", lambda _: fila.pop(0))
+
+
+def test_aceita_o_codigo_do_tamanho_do_campo(monkeypatch):
+    _com_terminal(monkeypatch, ["123456"])
+    assert _codigo_do_operador("TJSP / esaj", 6, oculto=False) == "123456"
+
+
+def test_recusa_tamanho_errado_e_pede_de_novo(monkeypatch, capsys):
+    """Enviar codigo de tamanho errado gasta a validade curta do codigo e pode
+    contar como tentativa no portal."""
+    _com_terminal(monkeypatch, ["123", "123456"])
+    assert _codigo_do_operador("TJSP / esaj", 6, oculto=False) == "123456"
+    assert "aceita 6 digitos" in capsys.readouterr().out
+
+
+def test_recusa_texto_que_nao_e_digito(monkeypatch, capsys):
+    _com_terminal(monkeypatch, ["abc123", "654321"])
+    assert _codigo_do_operador("TJSP / esaj", 6, oculto=False) == "654321"
+    assert "So digitos" in capsys.readouterr().out
+
+
+def test_vazio_cancela_sem_enviar_nada(monkeypatch, capsys):
+    _com_terminal(monkeypatch, [""])
+    assert _codigo_do_operador("TJSP / esaj", 6, oculto=False) is None
+    assert "Cancelado" in capsys.readouterr().out
+
+
+def test_desiste_apos_tres_erros_em_vez_de_insistir(monkeypatch, capsys):
+    """Laco infinito de digitacao seria pior: o codigo expira enquanto o
+    operador tenta, e ele nem saberia por que o login falhou depois."""
+    _com_terminal(monkeypatch, ["1", "22", "333"])
+    assert _codigo_do_operador("TJSP / esaj", 6, oculto=False) is None
+    assert "Tres tentativas" in capsys.readouterr().out
+
+
+def test_campo_sem_tamanho_declarado_aceita_qualquer_quantidade(monkeypatch):
+    _com_terminal(monkeypatch, ["12345678"])
+    assert _codigo_do_operador("TJSP / esaj", None, oculto=False) == "12345678"

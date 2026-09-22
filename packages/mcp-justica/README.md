@@ -701,6 +701,31 @@ pasta de estado, junto da auditoria, e não em lugar temporário.
 `JUSTICA_NAVEGADOR_EFEMERO=1` devolve o descarte a cada execução, para quem
 preferir pagar o desafio toda vez.
 
+#### Dois tipos de segundo fator
+
+Verificado em campo em 21 de setembro de 2026: nem todo portal usa código gerado
+de semente, e a diferença não é detalhe.
+
+| Portal | Segundo fator | De onde vem o código |
+| --- | --- | --- |
+| eproc do Tribunal Regional Federal da 2ª Região | semente | gerado pelo cofre |
+| e-SAJ de São Paulo | enviado pelo portal | mensagem ou e-mail do advogado |
+
+No e-SAJ, logo após o login, o botão `Receber novo código` aparece na tela **já
+desabilitado**, o que indica código recém-enviado, e não há semente guardada para
+essa credencial.
+
+O comando decide pela **presença de semente no cofre**, não por tribunal: com
+semente, o cofre gera; sem semente, ele pede o código ao operador no terminal,
+conferindo que são dígitos e que o comprimento bate com o `maxlength` do campo.
+Código de tamanho errado gasta a validade curta do código e pode contar como
+tentativa no portal.
+
+Sem janela ou sem terminal não há a quem perguntar, então o comando **recusa** em
+vez de esperar uma resposta que nunca vem. Isso vale para a ferramenta do
+servidor, que roda sempre oculta: portais de código enviado exigem a linha de
+comando com o advogado presente.
+
 #### Reconhecer primeiro, escrever adaptador depois
 
 Desde 21 de setembro de 2026, a primeira pergunta de todo reconhecimento é se o
