@@ -436,7 +436,22 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
             for linha in guarda.relato():
                 print(f"    {linha}")
         finally:
-            navegador.close()
+            # Fecha as abas antes do navegador. Uma aba aberta pela pagina de
+            # passagem deixava o fechamento pendurado, e o operador precisou
+            # interromper a execucao com o teclado. Erro ao fechar nao pode
+            # custar o resultado: a consulta ja terminou aqui.
+            try:
+                for _aba in list(getattr(navegador, "pages", []) or []):
+                    try:
+                        _aba.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                navegador.close()
+            except Exception:
+                pass
 
     print("\n" + "=" * LARGURA)
     print("  Nada foi preenchido, clicado ou autenticado.")
@@ -618,7 +633,22 @@ def ensaiar_login(
             for linha in guarda.relato():
                 print(f"    {linha}")
         finally:
-            navegador.close()
+            # Fecha as abas antes do navegador. Uma aba aberta pela pagina de
+            # passagem deixava o fechamento pendurado, e o operador precisou
+            # interromper a execucao com o teclado. Erro ao fechar nao pode
+            # custar o resultado: a consulta ja terminou aqui.
+            try:
+                for _aba in list(getattr(navegador, "pages", []) or []):
+                    try:
+                        _aba.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                navegador.close()
+            except Exception:
+                pass
 
     print("\n" + "=" * LARGURA)
     print("  NADA foi enviado. Nenhuma tentativa de login foi registrada no portal.")
@@ -864,7 +894,22 @@ def entrar(
             for linha in guarda.relato():
                 print(f"    {linha}")
         finally:
-            navegador.close()
+            # Fecha as abas antes do navegador. Uma aba aberta pela pagina de
+            # passagem deixava o fechamento pendurado, e o operador precisou
+            # interromper a execucao com o teclado. Erro ao fechar nao pode
+            # custar o resultado: a consulta ja terminou aqui.
+            try:
+                for _aba in list(getattr(navegador, "pages", []) or []):
+                    try:
+                        _aba.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                navegador.close()
+            except Exception:
+                pass
 
     print("\n" + "=" * LARGURA)
     print("  Uma tentativa, e so uma. O comando nao repete em nenhuma hipotese.")
@@ -1335,7 +1380,22 @@ def autenticar(
             for linha in guarda.relato():
                 print(f"    {linha}")
         finally:
-            navegador.close()
+            # Fecha as abas antes do navegador. Uma aba aberta pela pagina de
+            # passagem deixava o fechamento pendurado, e o operador precisou
+            # interromper a execucao com o teclado. Erro ao fechar nao pode
+            # custar o resultado: a consulta ja terminou aqui.
+            try:
+                for _aba in list(getattr(navegador, "pages", []) or []):
+                    try:
+                        _aba.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                navegador.close()
+            except Exception:
+                pass
 
     print("\n" + "=" * LARGURA)
     print("  Uma tentativa em cada etapa. Nada foi repetido.")

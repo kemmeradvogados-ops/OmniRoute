@@ -613,9 +613,12 @@ from justica_mcp.esaj import copiar_pasta_digital
 
 
 class _Resposta:
-    def __init__(self, tipo, corpo):
+    def __init__(self, tipo, corpo, url=""):
         self.headers = {"content-type": tipo}
         self._corpo = corpo
+        # Onde a requisicao PAROU, depois de seguir redirecionamentos. E aqui
+        # que o endereco real da pasta aparece.
+        self.url = url
 
     def body(self):
         return self._corpo
@@ -859,12 +862,13 @@ class _ContextoComAbas:
     """Simula o comportamento visto em campo: a aba aberta morre e uma janela
     filha aparece no contexto."""
 
-    def __init__(self, aba, filhas=(), mata_a_aba=False):
+    def __init__(self, aba, filhas=(), mata_a_aba=False, resposta=None):
         self._aba = aba
         self.abriu = False
         self.pages = []
         self._filhas = list(filhas)
         self._mata = mata_a_aba
+        self.request = _Requisicao(resposta) if resposta is not None else None
 
     def new_page(self):
         self.abriu = True
@@ -894,11 +898,12 @@ class _AbaNova:
 
 
 class _PaginaDoProcesso:
-    def __init__(self, href, aba=None, filhas=(), mata_a_aba=False):
+    def __init__(self, href, aba=None, filhas=(), mata_a_aba=False, resposta=None):
         self.url = "https://esaj.tjsp.jus.br/cpopg/show.do?processo.codigo=X"
         self._href = href
         self.context = _ContextoComAbas(
-            aba or _AbaNova(), filhas=filhas, mata_a_aba=mata_a_aba
+            aba or _AbaNova(), filhas=filhas, mata_a_aba=mata_a_aba,
+            resposta=resposta,
         )
 
     def query_selector(self, seletor):
@@ -1079,3 +1084,64 @@ def test_pagina_sem_endereco_de_pasta_devolve_nada():
 
 def test_corpo_vazio_nao_quebra():
     assert endereco_real_da_pasta(b"") is None
+
+
+# --------------------------------------------------------------------------
+# A pagina de passagem REDIRECIONA
+#
+# Percebido em campo em 22/09/2026: procurar o endereco dentro do corpo nao
+# achava nada, porque a requisicao ja seguia o redirecionamento sozinha e o
+# corpo que chegava era o do destino. Quem sabe onde a requisicao parou e a
+# RESPOSTA, nao o corpo.
+# --------------------------------------------------------------------------
+
+def test_usa_o_endereco_onde_a_requisicao_parou():
+    real = ("https://esaj.tjsp.jus.br/pastadigital/abrirPastaProcessoDigital.do"
+            "?nuProcesso=X&ticket=ABC%2FDEF")
+    aba = _AbaNova()
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X", aba=aba,
+        resposta=_Resposta("text/html", b"<html>destino</html>", url=real),
+    )
+    abrir_pasta_digital(p, _guarda(), 5)
+    assert aba.url == real
+
+
+def test_o_ticket_do_redirecionamento_chega_inteiro():
+    ticket = "b4G7VsPqAr4M%2BUajgpmj58o7DbaRQP0c%2FYfy%2F"
+    real = f"https://esaj.tjsp.jus.br/pastadigital/abrirPasta.do?ticket={ticket}"
+    aba = _AbaNova()
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X", aba=aba,
+        resposta=_Resposta("text/html", b"", url=real),
+    )
+    abrir_pasta_digital(p, _guarda(), 5)
+    assert ticket in aba.url
+
+
+def test_resposta_que_nao_parou_na_pasta_cai_na_leitura_do_corpo():
+    """Nem todo portal redireciona. Se a resposta parou noutro lugar, o corpo
+    ainda pode carregar o endereco, e os dois caminhos continuam valendo."""
+    aba = _AbaNova()
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X", aba=aba,
+        resposta=_Resposta(
+            "text/html",
+            b'<script>window.open("/pastadigital/doCorpo.do?x=1")</script>',
+            url="https://esaj.tjsp.jus.br/cpopg/abrirPastaDigital.do",
+        ),
+    )
+    abrir_pasta_digital(p, _guarda(), 5)
+    assert aba.url.endswith("/pastadigital/doCorpo.do?x=1")
+
+
+def test_sem_endereco_real_segue_com_o_de_passagem():
+    """Pior que o certo, melhor que nada: o relato continua dizendo o que
+    encontrou, e o operador decide."""
+    aba = _AbaNova()
+    p = _PaginaDoProcesso(
+        "/cpopg/abrirPastaDigital.do?processo.codigo=X", aba=aba,
+        resposta=_Resposta("text/html", b"<html>nada</html>", url="https://x/y"),
+    )
+    abrir_pasta_digital(p, _guarda(), 5)
+    assert aba.url.endswith("/cpopg/abrirPastaDigital.do?processo.codigo=X")

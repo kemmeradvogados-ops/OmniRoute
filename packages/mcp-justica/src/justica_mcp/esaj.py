@@ -609,7 +609,20 @@ def abrir_pasta_digital(pagina: Any, guarda: Any, segundos: int) -> list[Any]:
     destino = absoluto
     try:
         resposta = contexto.request.get(absoluto, timeout=segundos * 1000)
-        achado = endereco_real_da_pasta(resposta.body())
+        # O endereco real aparece de dois jeitos, e o primeiro so foi percebido
+        # em campo em 22 de setembro de 2026: a pagina de passagem REDIRECIONA,
+        # e a requisicao segue o redirecionamento sozinha. O corpo que chega ja
+        # e o do destino, e por isso procurar o endereco dentro dele nao achava
+        # nada. Quem sabe onde parou e a RESPOSTA.
+        achado = None
+        try:
+            parou_em = getattr(resposta, "url", "") or ""
+            if CAMINHO_DA_PASTA in parou_em:
+                achado = parou_em
+        except Exception:
+            pass
+        if achado is None:
+            achado = endereco_real_da_pasta(resposta.body())
         if achado:
             destino = achado if achado.startswith("http") else (
                 f"{pagina.url.split('/cpopg')[0]}{achado}"
