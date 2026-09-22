@@ -1393,3 +1393,60 @@ def test_consultar_repassa_os_seletores_para_a_autenticacao():
                  "campo_senha_oculto=campo_senha_oculto", "botao_entrar=botao_entrar",
                  "campo_codigo=campo_codigo", "botao_validar=botao_validar"):
         assert nome in fonte, nome
+
+
+# --------------------------------------------------------------------------
+# Falta de semente nao impede autenticar
+#
+# A conferencia previa exigia semente e nasceu quando o eproc era o unico
+# portal. No e-SAJ de Sao Paulo o codigo e ENVIADO pelo portal: exigir semente
+# ali barrava o comando antes de abrir o navegador, por uma falta que nao
+# existe.
+# --------------------------------------------------------------------------
+
+class _CofreSemSemente:
+    def _login(self, identidade):
+        return "usuario"
+
+    def _senha(self, identidade):
+        return "senha-secreta"
+
+    def tem_semente(self, identidade):
+        return False
+
+
+class _EstadoMudo:
+    def registrar(self, **kw):
+        pass
+
+    def auditoria_recente(self, limite=200):
+        return []
+
+    def gravar_snapshot(self, *a, **kw):
+        pass
+
+
+def test_sem_semente_e_sem_janela_recusa_com_motivo(capsys):
+    """Sem semente o codigo e digitado por uma pessoa. Sem janela nao ha
+    pessoa: recusar antes de abrir o navegador poupa uma tentativa."""
+    from justica_mcp.portal import autenticar
+
+    codigo = autenticar(
+        "https://portal.exemplo/login", "TJSP", "esaj", confirmado=True,
+        oculto=True, cofre=_CofreSemSemente(), estado=_EstadoMudo(),
+    )
+    assert codigo == 1
+    saida = capsys.readouterr()
+    assert "nao ha a quem perguntar" in saida.err
+
+
+def test_sem_semente_avisa_para_ter_o_codigo_em_maos(capsys):
+    """O aviso vem ANTES de comecar: saber disso depois do login ja gastou a
+    tentativa, e o codigo expira enquanto o operador procura o celular."""
+    from justica_mcp.portal import autenticar
+
+    autenticar(
+        "endereco-invalido-para-parar-cedo", "TJSP", "esaj", confirmado=True,
+        oculto=True, cofre=_CofreSemSemente(), estado=_EstadoMudo(),
+    )
+    assert "sera pedido a voce" in capsys.readouterr().out

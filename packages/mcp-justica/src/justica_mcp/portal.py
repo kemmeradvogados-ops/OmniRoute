@@ -981,10 +981,24 @@ def autenticar(
     except CredencialAusente as exc:
         print(f"  {exc}", file=sys.stderr)
         return 1
+    # Falta de semente NAO impede autenticar. A conferencia nasceu quando o
+    # eproc era o unico portal e todo segundo fator vinha de semente; no e-SAJ
+    # de Sao Paulo o codigo e ENVIADO pelo portal, e exigir semente ali barrava
+    # o comando antes de abrir o navegador, por uma falta que nao existe.
+    #
+    # O que ela ainda serve e avisar, porque sem semente o operador precisa
+    # estar presente para digitar o codigo, e saber disso antes de comecar
+    # evita comecar sem poder terminar.
     if not cofre.tem_semente(identidade):
-        print(f"  Sem semente de segundo fator para {identidade.rotulo}.", file=sys.stderr)
-        print("  Grave com: justica-credenciais guardar --so-semente", file=sys.stderr)
-        return 1
+        print(f"  Sem semente para {identidade.rotulo}: o codigo do segundo fator")
+        print("  sera pedido a voce, se o portal exigir um. Tenha em maos o")
+        print("  celular ou o e-mail que o recebe.")
+        if oculto:
+            print("\n  [PARADO] Sem semente e sem janela, nao ha a quem perguntar.",
+                  file=sys.stderr)
+            print("  Rode pela linha de comando, sem --oculto.", file=sys.stderr)
+            return 1
+        print()
 
     base = permissao_efemera(url)
     permissao = Permissao(
