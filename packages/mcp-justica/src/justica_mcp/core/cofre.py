@@ -260,6 +260,33 @@ class Cofre:
                 time.sleep(restante + 1)
         return totp.now()
 
+    def codigos_vizinhos(
+        self, identidade: Identidade, janelas: int = 2
+    ) -> list[tuple[int, str]]:
+        """Codigos das janelas ao redor da atual, com o deslocamento em segundos.
+
+        Serve para separar duas causas que dao exatamente o mesmo sintoma, e
+        que em 22/09/2026 nos custaram tentativas de login no PJe: semente
+        errada e relogio da maquina fora de hora. Se o codigo do aplicativo
+        aparecer aqui, mas numa janela vizinha, a semente esta certa e o
+        relogio e que esta adiantado ou atrasado. Se nao aparecer em nenhuma,
+        a semente e que nao confere.
+        """
+        import time
+
+        import pyotp
+
+        semente = self._ler(SERVICO_SEMENTE, identidade.chave)
+        if semente is None:
+            raise CredencialAusente(identidade, "Semente de segundo fator")
+
+        totp = pyotp.TOTP(semente)
+        agora = time.time()
+        return [
+            (passo * 30, totp.at(agora, counter_offset=passo))
+            for passo in range(-janelas, janelas + 1)
+        ]
+
     def segundos_restantes_do_codigo(self) -> int:
         """Quanto tempo o codigo atual ainda vale."""
         import time

@@ -224,3 +224,39 @@ def test_sem_semente_o_portal_passa_a_depender_do_operador():
     cofre.guardar_semente(identidade, SEMENTE)
     cofre.remover(identidade, ["semente"])
     assert cofre.tem_semente(identidade) is False
+
+
+# --------------------------------------------------------------------------
+# Semente errada e relogio errado dao o mesmo sintoma
+#
+# Em 22/09/2026 o PJe recusou o codigo gerado, e nao havia como saber, sem
+# gastar outra tentativa de login, se a semente e que estava errada ou se o
+# relogio da maquina estava fora de hora.
+# --------------------------------------------------------------------------
+
+def test_janelas_vizinhas_trazem_o_codigo_de_antes_e_de_depois(cofre, tjrj):
+    cofre.guardar_semente(tjrj, SEMENTE)
+    vizinhos = cofre.codigos_vizinhos(tjrj, janelas=2)
+
+    assert [d for d, _ in vizinhos] == [-60, -30, 0, 30, 60]
+    assert all(len(c) == 6 and c.isdigit() for _, c in vizinhos)
+
+
+def test_a_janela_do_meio_e_o_codigo_de_agora(cofre, tjrj):
+    cofre.guardar_semente(tjrj, SEMENTE)
+    do_meio = dict(cofre.codigos_vizinhos(tjrj))[0]
+    assert do_meio == cofre._codigo_segundo_fator(tjrj)
+
+
+def test_janelas_vizinhas_sao_diferentes_entre_si(cofre, tjrj):
+    """Se fossem iguais, a comparacao nao separaria nada."""
+    cofre.guardar_semente(tjrj, SEMENTE)
+    codigos = [c for _, c in cofre.codigos_vizinhos(tjrj)]
+    assert len(set(codigos)) == len(codigos)
+
+
+def test_sem_semente_as_janelas_vizinhas_acusam_a_falta(cofre, tjrj):
+    from justica_mcp.core.cofre import CredencialAusente
+
+    with pytest.raises(CredencialAusente):
+        cofre.codigos_vizinhos(tjrj)

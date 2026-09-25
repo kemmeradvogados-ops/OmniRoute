@@ -294,9 +294,28 @@ def cmd_testar(cofre: Cofre, tribunal: str, sistema: str) -> int:
     except CredencialAusente as exc:
         print(f"\n  {exc}")
         return 1
-    print(f"\n  Codigo agora: {codigo}")
-    print("  Compare com o aplicativo autenticador. Se bater, a semente esta")
-    print("  correta e o servidor conseguira autenticar sozinho.")
+    from datetime import datetime, timezone
+
+    print(f"\n  Codigo agora: {codigo}  (vale por mais "
+          f"{cofre.segundos_restantes_do_codigo()}s)")
+    print(f"  Relogio desta maquina, em UTC: "
+          f"{datetime.now(timezone.utc).strftime('%H:%M:%S')}")
+
+    # Duas causas dao o mesmo sintoma, e distingui-las de graca evita gastar
+    # tentativa de login para descobrir: semente errada e relogio fora de hora.
+    print("\n  JANELAS VIZINHAS (para separar semente errada de relogio errado):")
+    for deslocamento, vizinho in cofre.codigos_vizinhos(identidade):
+        marca = "  <-- agora" if deslocamento == 0 else ""
+        sinal = f"{deslocamento:+d}s" if deslocamento else "  0s"
+        print(f"    {sinal:>6}  {vizinho}{marca}")
+
+    print("\n  Compare com o aplicativo autenticador AGORA:")
+    print("    o mesmo codigo da linha 'agora'  ->  semente certa, tudo em ordem;")
+    print("    um codigo de outra linha         ->  semente CERTA e relogio desta")
+    print("                                         maquina fora de hora (acerte o")
+    print("                                         horario do Windows e repita);")
+    print("    nenhum deles                     ->  a semente guardada NAO e a do")
+    print("                                         seu aplicativo.")
     return 0
 
 
