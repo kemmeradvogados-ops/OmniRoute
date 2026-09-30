@@ -2213,3 +2213,41 @@ def test_recado_antigo_continua_sendo_lido():
 
     assert _mensagens_de_erro(_PaginaComRecado(".alert", "Senha invalida")) == [
         "Senha invalida"]
+
+
+# --------------------------------------------------------------------------
+# Recusar ANTES de autenticar
+#
+# Pedir consulta num sistema sem adaptador autenticava primeiro, gastava uma
+# tentativa do teto da conta e so entao falhava, acusando a tela errada
+# ("campo de busca rapida nao encontrado"), como se o portal tivesse mudado.
+# --------------------------------------------------------------------------
+
+def test_sistema_sem_consulta_e_recusado_sem_tocar_no_portal(capsys, monkeypatch):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import consultar_processo
+
+    def nao_pode(*a, **kw):
+        raise AssertionError("autenticou antes de saber que nao sabia consultar")
+
+    monkeypatch.setattr(portal_mod, "autenticar", nao_pode)
+    saida = consultar_processo("https://exemplo", "TJRJ", "pje",
+                               "1037850-62.2023.8.26.0100")
+    assert saida == 1
+    erro = capsys.readouterr().err
+    assert "NAO IMPLEMENTADO" in erro
+    assert "nenhuma tentativa de login foi gasta" in erro
+
+
+def test_os_sistemas_com_consulta_sao_os_conferidos():
+    from justica_mcp.portal import SISTEMAS_COM_CONSULTA
+
+    assert SISTEMAS_COM_CONSULTA == {"esaj", "eproc"}
+
+
+def test_numero_invalido_e_recusado_antes_de_tudo(capsys, monkeypatch):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import consultar_processo
+
+    monkeypatch.setattr(portal_mod, "autenticar", lambda *a, **kw: 0)
+    assert consultar_processo("https://exemplo", "TJSP", "esaj", "123") == 1

@@ -2512,6 +2512,15 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
     return str(arquivo)
 
 
+# Sistemas que TEM caminho de consulta escrito e conferido em tela real. O que
+# nao esta aqui e recusado antes de autenticar, em vez de gastar uma tentativa
+# do teto da conta para descobrir no meio do caminho.
+#
+#   esaj   conferido em campo em 22/09/2026, ponta a ponta, ate a integra.
+#   eproc  busca rapida em toda tela; a autenticacao segue barrada pelo
+#          Cloudflare, mas a consulta em si esta escrita.
+SISTEMAS_COM_CONSULTA = frozenset({"esaj", "eproc"})
+
 BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
 BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
 
@@ -2641,6 +2650,22 @@ def consultar_processo(
         numero = parse_numero(numero_processo)
     except NumeroCNJInvalido as exc:
         print(f"  {exc}", file=sys.stderr)
+        return 1
+
+    # A recusa vem ANTES de autenticar, e essa ordem e o ponto. Ate aqui, pedir
+    # consulta num sistema sem adaptador autenticava primeiro, gastava uma
+    # tentativa do teto da conta e so entao falhava, com uma mensagem que ainda
+    # por cima acusava a tela errada ("campo de busca rapida nao encontrado"),
+    # como se o portal tivesse mudado. Gastar credencial para descobrir que o
+    # programa nao sabe fazer aquilo e o pior desperdicio possivel: ele ja sabia
+    # disso antes de abrir o navegador.
+    if (sistema or "").lower().strip() not in SISTEMAS_COM_CONSULTA:
+        print(f"  [NAO IMPLEMENTADO] A consulta de processo ainda nao existe "
+              f"para o sistema {sistema!r}.", file=sys.stderr)
+        print(f"  Hoje ha consulta para: {', '.join(sorted(SISTEMAS_COM_CONSULTA))}.",
+              file=sys.stderr)
+        print("  Nada foi enviado ao portal e nenhuma tentativa de login foi "
+              "gasta.", file=sys.stderr)
         return 1
 
     def depois(pagina, guarda, estado_local, identidade):
