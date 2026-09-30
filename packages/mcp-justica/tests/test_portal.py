@@ -2503,3 +2503,33 @@ def test_navegacao_que_da_certo_nao_levanta_nada():
     tela = _TelaBoa()
     _ir_para(tela, "https://exemplo.jus.br/login.seam", 30)
     assert tela.chamadas[0][1]["timeout"] == 30000
+
+
+# ==========================================================================
+# Segundo fator recusado encerra a execucao
+#
+# Visto em campo em 30/09/2026: o portal respondeu "Codigo invalido", o comando
+# disse "a validacao NAO passou" e SEGUIU para a consulta. A consulta partiu de
+# dentro da tela de login, o portal a devolveu para o servidor de autenticacao,
+# e a trava a barrou por dominio diferente. O relato terminava com uma falha de
+# navegacao, e o defeito de verdade ficava vinte linhas acima.
+# ==========================================================================
+
+def test_codigo_recusado_encerra_antes_de_seguir_para_a_consulta():
+    import ast
+    import inspect
+    import textwrap
+
+    from justica_mcp import portal
+
+    arvore = ast.parse(textwrap.dedent(inspect.getsource(portal.autenticar)))
+    ramos = [
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.If)
+        and isinstance(no.test, ast.Name)
+        and no.test.id == "ainda_pede_codigo"
+    ]
+    assert len(ramos) == 1, "o ramo do codigo recusado mudou de forma"
+    assert any(isinstance(no, ast.Return) for no in ramos[0].body), (
+        "o ramo do codigo recusado precisa ENCERRAR a execucao: sem "
+        "autenticacao, nada do que vem depois faz sentido")

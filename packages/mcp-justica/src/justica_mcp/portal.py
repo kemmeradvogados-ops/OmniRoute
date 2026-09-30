@@ -2033,6 +2033,16 @@ def autenticar(
                       f"{identidade.tribunal} --sistema {identidade.sistema}")
                 estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
                                  sistema=identidade.sistema, resultado="recusado")
+                # PARA AQUI. Ate 30/09/2026 nao parava: o comando imprimia
+                # "a validacao NAO passou" e seguia para a selecao de perfil e
+                # para o `apos_autenticar` como se nada tivesse acontecido. Na
+                # pratica a consulta era disparada de dentro da tela de login,
+                # o portal a devolvia para o servidor de autenticacao, e a trava
+                # a barrava por dominio diferente. Ou seja: o operador via uma
+                # falha de navegacao no fim do relato e precisava subir vinte
+                # linhas para descobrir que o defeito de verdade era o codigo
+                # recusado. Sem autenticacao, nada do que vem depois faz sentido.
+                return 1
             else:
                 print("  AUTENTICADO. A sessao esta aberta neste navegador.")
                 estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
