@@ -2440,3 +2440,66 @@ def test_recado_de_campo_obrigatorio_do_pje_e_lido():
 
     pagina = _PaginaComRecado(".msgError", "Informe ao menos um criterio de busca")
     assert "criterio" in _mensagens_de_erro(pagina)[0]
+
+
+# ==========================================================================
+# Falha de rede nao e defeito, e nao deve parecer um
+#
+# Em 30/09/2026 um ERR_NAME_NOT_RESOLVED subiu como traceback de Playwright no
+# meio de uma autenticacao: trinta linhas de pilha para dizer que a internet
+# oscilou, num endereco que tinha resolvido normalmente minutos antes. O
+# operador nao tem como saber, olhando aquilo, se pode repetir o comando ou se
+# acabou de queimar uma tentativa do teto da conta.
+# ==========================================================================
+
+class _TelaQueNaoAbre:
+    def __init__(self, erro):
+        self.erro = erro
+
+    def goto(self, *a, **kw):
+        raise RuntimeError(self.erro)
+
+
+def test_nome_que_nao_resolve_vira_recado_e_nao_pilha():
+    from justica_mcp.portal import PortalIndisponivel, _ir_para
+
+    tela = _TelaQueNaoAbre(
+        "Page.goto: net::ERR_NAME_NOT_RESOLVED at https://exemplo.jus.br/login.seam")
+    with pytest.raises(PortalIndisponivel) as erro:
+        _ir_para(tela, "https://exemplo.jus.br/login.seam", 30)
+    texto = str(erro.value)
+    assert "[REDE]" in texto
+    # A frase que decide se o operador pode repetir o comando.
+    assert "nenhuma tentativa foi gasta" in texto
+
+
+def test_portal_que_nao_carrega_sugere_mais_tempo():
+    from justica_mcp.portal import PortalIndisponivel, _ir_para
+
+    tela = _TelaQueNaoAbre("Timeout 30000ms exceeded.")
+    with pytest.raises(PortalIndisponivel, match="--segundos 60"):
+        _ir_para(tela, "https://exemplo.jus.br/login.seam", 30)
+
+
+def test_erro_que_nao_e_de_rede_continua_subindo_inteiro():
+    """Traduzir tudo esconderia defeito de verdade, que e pior que pilha feia."""
+    from justica_mcp.portal import _ir_para
+
+    tela = _TelaQueNaoAbre("Coisa nunca vista")
+    with pytest.raises(RuntimeError, match="Coisa nunca vista"):
+        _ir_para(tela, "https://exemplo.jus.br/login.seam", 30)
+
+
+def test_navegacao_que_da_certo_nao_levanta_nada():
+    from justica_mcp.portal import _ir_para
+
+    class _TelaBoa:
+        def __init__(self):
+            self.chamadas = []
+
+        def goto(self, url, **kw):
+            self.chamadas.append((url, kw))
+
+    tela = _TelaBoa()
+    _ir_para(tela, "https://exemplo.jus.br/login.seam", 30)
+    assert tela.chamadas[0][1]["timeout"] == 30000

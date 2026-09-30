@@ -61,6 +61,54 @@ class PortalIndisponivel(RuntimeError):
     pass
 
 
+# Falhas de REDE, que nao sao defeito do programa nem do portal. O Chromium as
+# devolve com estes nomes, e sem traducao elas sobem como traceback do
+# Playwright no meio de uma autenticacao: trinta linhas de pilha para dizer
+# "a internet caiu". Visto em campo em 30/09/2026, com ERR_NAME_NOT_RESOLVED
+# num endereco que tinha resolvido normalmente minutos antes.
+RECADOS_DE_REDE = {
+    "ERR_NAME_NOT_RESOLVED": (
+        "o seu computador nao conseguiu traduzir o endereco do portal. O "
+        "navegador nem chegou a falar com o tribunal: e a rede ou o servidor de "
+        "nomes, nao o portal."),
+    "ERR_INTERNET_DISCONNECTED": "o computador esta sem conexao.",
+    "ERR_CONNECTION_TIMED_OUT": (
+        "o portal aceitou a conexao e nao respondeu no tempo. Costuma ser "
+        "instabilidade do proprio tribunal."),
+    "ERR_CONNECTION_REFUSED": "o servidor do portal recusou a conexao.",
+    "ERR_CONNECTION_RESET": "a conexao com o portal caiu no meio.",
+    "ERR_CERT_": "o certificado do portal nao foi aceito pelo navegador.",
+    "ERR_PROXY_": "o proxy configurado no computador barrou a conexao.",
+}
+
+
+def _ir_para(pagina, url: str, segundos: int) -> None:
+    """Navega ate o endereco e traduz falha de rede em recado legivel.
+
+    Nada foi enviado ao portal quando isto falha, entao nenhuma tentativa do
+    teto da conta foi gasta. Dizer isso importa: sem essa frase o operador fica
+    sem saber se pode repetir o comando.
+    """
+    try:
+        pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+    except Exception as exc:
+        texto = str(exc)
+        for marca, explicacao in RECADOS_DE_REDE.items():
+            if marca in texto:
+                raise PortalIndisponivel(
+                    f"  [REDE] Nao foi possivel abrir {url}: {explicacao}\n"
+                    "  Nada foi enviado ao portal e nenhuma tentativa foi gasta.\n"
+                    "  Confira a conexao e repita o comando."
+                ) from None
+        if "Timeout" in texto and "exceeded" in texto:
+            raise PortalIndisponivel(
+                f"  [REDE] {url} nao terminou de carregar em {segundos}s.\n"
+                "  Nada foi enviado ao portal e nenhuma tentativa foi gasta.\n"
+                f"  Se o portal estiver lento, repita com --segundos {segundos * 2}."
+            ) from None
+        raise
+
+
 # Tempo que o operador tem para marcar a caixa do desafio. Generoso de
 # proposito: e uma pessoa indo ate a janela, nao uma espera de rede.
 ESPERA_HUMANA_PADRAO = 180
@@ -373,7 +421,7 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
                 return 2
             raise
         try:
-            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+            _ir_para(pagina, url, segundos)
             final = pagina.url
 
             if final != url:
@@ -562,7 +610,7 @@ def ensaiar_login(
             raise
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
-            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+            _ir_para(pagina, url, segundos)
 
             # O eproc passou a exibir o desafio "Confirme que e humano" do
             # Cloudflare antes do login. O programa nao o resolve: quem marca
@@ -852,7 +900,7 @@ def entrar(
             raise
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
-            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+            _ir_para(pagina, url, segundos)
 
             # O eproc passou a exibir o desafio "Confirme que e humano" do
             # Cloudflare antes do login. O programa nao o resolve: quem marca
@@ -1187,7 +1235,7 @@ def conferir_sessao(
                 return 2
             raise
         try:
-            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+            _ir_para(pagina, url, segundos)
             _assentar(pagina, segundos)
             final = pagina.url
             print(f"  Endereco final: {final}")
@@ -1727,7 +1775,7 @@ def autenticar(
             raise
         try:
             guarda.pode_executar(Acao.NAVEGAR, url)
-            pagina.goto(url, timeout=segundos * 1000, wait_until="domcontentloaded")
+            _ir_para(pagina, url, segundos)
 
             # O eproc passou a exibir o desafio "Confirme que e humano" do
             # Cloudflare antes do login. O programa nao o resolve: quem marca
