@@ -1286,6 +1286,87 @@ def completar_seletores(args) -> None:
             setattr(args, nome, valor)
 
 
+def consulta_publica(tribunal: str, sistema: str, numero_processo: str, url: str,
+                     *, oculto: bool = False, segundos: int = 30) -> int:
+    """Consulta o processo na tela publica do portal, SEM autenticar.
+
+    Existe por um motivo de custo, nao de conveniencia: a sessao do PJe nao
+    sobrevive ao fechamento do navegador, entao toda consulta autenticada
+    custa uma tentativa do teto da conta e um codigo lido no aplicativo. Para
+    processo que nao corre em segredo, a tela publica responde a mesma
+    pergunta por zero.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(INSTRUCAO_INSTALACAO, file=sys.stderr)
+        return 2
+
+    from .core.cnj import NumeroCNJInvalido, parse_numero
+    from .pje import ConsultaPJeIndisponivel, buscar_publico, linhas_do_resultado
+
+    if (sistema or "").lower().strip() != "pje":
+        print(f"  [NAO IMPLEMENTADO] Consulta publica escrita so para o PJe, "
+              f"nao para {sistema!r}.", file=sys.stderr)
+        return 1
+    try:
+        numero = parse_numero(numero_processo)
+    except NumeroCNJInvalido as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+    print("=" * LARGURA)
+    print("CONSULTA PUBLICA".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Portal: {tribunal.upper()} / {sistema}")
+    print(f"Processo: {numero.formatado}")
+    print("Sem login: nao gasta tentativa nem codigo. Somente leitura.\n")
+
+    executavel = os.environ.get("JUSTICA_CHROMIUM") or None
+    with sync_playwright() as p:
+        try:
+            navegador, pagina = abrir_navegador(p, oculto, executavel)
+        except Exception as exc:
+            if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
+                print("\n" + NAVEGADOR_AUSENTE, file=sys.stderr)
+                return 2
+            raise
+        try:
+            try:
+                final = buscar_publico(pagina, guarda, numero, url, segundos)
+            except ConsultaPJeIndisponivel as exc:
+                print(f"  [PAROU] {exc}", file=sys.stderr)
+                _relatar_tela(pagina, "TELA ONDE PAROU")
+                return 1
+
+            print(f"  Endereco: {final}")
+            achadas = linhas_do_resultado(pagina)
+            print(f"  Linhas na tabela de resultados: {achadas}")
+            if not achadas:
+                print("  Nenhum resultado. Pode ser processo em segredo de justica,")
+                print("  numero de outro tribunal, ou a tela ter mudado.")
+            # O teor NAO vai para a tela: o relato mostra a forma, e o conteudo
+            # sera gravado em arquivo quando a extracao for escrita a partir
+            # desta estrutura, como se fez no e-SAJ.
+            _relatar_tela(pagina, "TELA DE RESULTADO")
+            _relatar_estrutura_de_dados(pagina)
+            print("\n  RELATO DA TRAVA:")
+            for linha in guarda.relato():
+                print(f"    {linha}")
+            return 0
+        finally:
+            try:
+                for aberta in getattr(navegador, "pages", []):
+                    try:
+                        aberta.close()
+                    except Exception:
+                        pass
+                navegador.close()
+            except Exception:
+                pass
+
+
 def mostrar_ambiente() -> int:
     """Diz ONDE o programa procura a configuracao e O QUE encontrou la.
 
@@ -3270,6 +3351,18 @@ def main(argv: list[str] | None = None) -> int:
                    help="nao mostra a janela do navegador (o padrao e mostrar)")
     r.add_argument("--segundos", type=int, default=30, help="tempo limite de carregamento")
 
+    cpu = sub.add_parser(
+        "consulta-publica",
+        help="consulta o processo na tela publica do portal, sem login",
+    )
+    cpu.add_argument("--url", default=None, help=AJUDA_URL)
+    cpu.add_argument("--tribunal", required=True)
+    cpu.add_argument("--sistema", required=True)
+    cpu.add_argument("--processo", default=None)
+    cpu.add_argument("--grau", type=int, default=1)
+    cpu.add_argument("--oculto", action="store_true")
+    cpu.add_argument("--segundos", type=int, default=30)
+
     sub.add_parser(
         "ambiente",
         help="diz onde o programa procura a configuracao e o que encontrou la",
@@ -3403,6 +3496,14 @@ def main(argv: list[str] | None = None) -> int:
             completar_seletores(args)
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "consulta-publica":
+            if not args.processo:
+                print("Nenhum processo informado. Passe --processo, ou defina "
+                      "o de teste no .env.", file=sys.stderr)
+                return 1
+            return consulta_publica(args.tribunal, args.sistema, args.processo,
+                                    args.url, oculto=args.oculto,
+                                    segundos=args.segundos)
         if args.comando == "ambiente":
             return mostrar_ambiente()
         if args.comando == "reindexar":
