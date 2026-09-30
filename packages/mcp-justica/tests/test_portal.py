@@ -2251,3 +2251,53 @@ def test_numero_invalido_e_recusado_antes_de_tudo(capsys, monkeypatch):
 
     monkeypatch.setattr(portal_mod, "autenticar", lambda *a, **kw: 0)
     assert consultar_processo("https://exemplo", "TJSP", "esaj", "123") == 1
+
+
+# --------------------------------------------------------------------------
+# Para onde ir depois do login, sem levar dado de cliente junto
+# --------------------------------------------------------------------------
+
+class _LigacaoSoHref:
+    def __init__(self, href):
+        self._href = href
+
+    def get_attribute(self, nome):
+        return self._href if nome == "href" else None
+
+
+def test_os_parametros_do_endereco_nao_sao_impressos():
+    """Os parametros carregam identificador de cliente; o caminho, sozinho,
+    diz o que precisa ser dito."""
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    achados = caminhos_de_navegacao([
+        _LigacaoSoHref("https://tjrj.pje.jus.br/1g/ConsultaProcesso/listView.seam?idProcesso=99"),
+    ])
+    assert achados == ["https://tjrj.pje.jus.br/1g/ConsultaProcesso/listView.seam"]
+
+
+def test_caminhos_repetidos_aparecem_uma_vez_so():
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    achados = caminhos_de_navegacao([
+        _LigacaoSoHref("/1g/painel.seam?a=1"), _LigacaoSoHref("/1g/painel.seam?a=2")])
+    assert achados == ["/1g/painel.seam"]
+
+
+def test_ligacao_de_script_e_ancora_nao_entram():
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    achados = caminhos_de_navegacao([
+        _LigacaoSoHref("javascript:void(0)"), _LigacaoSoHref("#topo"),
+        _LigacaoSoHref("mailto:alguem@exemplo"), _LigacaoSoHref("/1g/util.seam")])
+    assert achados == ["/1g/util.seam"]
+
+
+def test_ligacao_sem_endereco_nao_derruba_a_leitura():
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    class Quebrada:
+        def get_attribute(self, nome):
+            raise RuntimeError("elemento sumiu")
+
+    assert caminhos_de_navegacao([Quebrada(), _LigacaoSoHref("/1g/ok.seam")]) == ["/1g/ok.seam"]

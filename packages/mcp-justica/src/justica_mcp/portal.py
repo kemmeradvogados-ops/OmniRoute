@@ -2377,6 +2377,37 @@ def _ja_autenticado(pagina) -> bool:
     return bool(_perfis_disponiveis(botoes))
 
 
+def caminhos_de_navegacao(ligacoes) -> list[str]:
+    """Caminhos distintos das ligacoes da tela, SEM texto e SEM parametros.
+
+    Depois do login, a pergunta que importa e para onde ir: onde fica a
+    consulta, onde ficam os autos. Isso esta nos enderecos do menu.
+
+    O texto da ligacao NAO e impresso, e a parte depois da interrogacao
+    tambem nao. Numa tela de painel, o texto de um item costuma ser o nome de
+    uma parte ou o numero de um processo, e os parametros carregam
+    identificador de cliente; o caminho, sozinho, diz o que precisa ser dito
+    sem levar dado de ninguem para um relatorio que vai ser colado num chat.
+    """
+    from urllib.parse import urlparse
+
+    vistos = []
+    for ligacao in ligacoes:
+        try:
+            href = (ligacao.get_attribute("href") or "").strip()
+        except Exception:
+            continue
+        if not href or href.startswith(("javascript:", "#", "mailto:")):
+            continue
+        pedaco = urlparse(href)
+        caminho = pedaco.path or "/"
+        if pedaco.netloc:
+            caminho = f"{pedaco.scheme}://{pedaco.netloc}{caminho}"
+        if caminho not in vistos:
+            vistos.append(caminho)
+    return vistos
+
+
 def _relatar_tela(pagina, titulo: str) -> None:
     """Descreve a tela atual, sem tocar em nada.
 
@@ -2451,6 +2482,12 @@ def _relatar_tela(pagina, titulo: str) -> None:
         print(f"    LIGACOES COM TERMO DE COPIA ({len(interessantes)}):")
         for texto, href in interessantes[:15]:
             print(f"      {texto!r}  ->  {href}")
+
+    caminhos = caminhos_de_navegacao(ligacoes)
+    if caminhos:
+        print(f"    CAMINHOS DE NAVEGACAO ({len(caminhos)}), sem texto e sem parametros:")
+        for caminho in caminhos[:25]:
+            print(f"      {caminho}")
 
 
 def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optional[str]:
