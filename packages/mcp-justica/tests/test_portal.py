@@ -2418,3 +2418,22 @@ def test_outro_erro_continua_subindo_inteiro(monkeypatch):
     monkeypatch.setattr(portal_mod, "reconhecer", explode)
     with pytest.raises(RuntimeError, match="erro de verdade"):
         portal_mod.main(["reconhecer", "--url", "https://exemplo"])
+
+
+def test_recado_do_pje_em_richfaces_e_lido():
+    """Sem as classes do RichFaces, a consulta publica voltava "0 resultados"
+    sem dizer se nada foi encontrado ou se o portal recusou o que foi digitado,
+    que sao problemas opostos."""
+    from justica_mcp.portal import _mensagens_de_erro
+
+    pagina = _PaginaComRecado(".rich-messages-label",
+                              "Não existem processos para os critérios informados")
+    assert _mensagens_de_erro(pagina) == [
+        "Não existem processos para os critérios informados"]
+
+
+def test_recado_de_campo_obrigatorio_do_pje_e_lido():
+    from justica_mcp.portal import _mensagens_de_erro
+
+    pagina = _PaginaComRecado(".msgError", "Informe ao menos um criterio de busca")
+    assert "criterio" in _mensagens_de_erro(pagina)[0]

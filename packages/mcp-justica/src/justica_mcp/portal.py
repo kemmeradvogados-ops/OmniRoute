@@ -742,9 +742,15 @@ def _mensagens_de_erro(pagina: Any) -> list[str]:
     # O Keycloak, que atende o PJe, escreve o recado em classe propria: sem
     # ela, a recusa do codigo chegava ao operador como "nao passou", sem dizer
     # se o codigo estava errado, vencido ou se a conta e que foi bloqueada.
+    # O PJe e feito em RichFaces, que escreve os recados em classes proprias.
+    # Sem elas, a consulta publica voltava "0 resultados" sem dizer se nada foi
+    # encontrado ou se o portal recusou o que foi digitado, que sao problemas
+    # opostos: o primeiro e resposta, o segundo e defeito nosso.
     for seletor in (".alert", ".erro", ".error", "[role=alert]", ".infraAviso",
                     ".msgErro", ".kc-feedback-text", ".pf-c-alert__title",
-                    "#input-error-otp-code", ".input-error"):
+                    "#input-error-otp-code", ".input-error",
+                    ".rich-messages-label", ".rich-message-label", ".rf-msg-lbl",
+                    ".rich-messages", ".msgError", ".msgInfo", ".msgWarn"):
         for elemento in pagina.query_selector_all(seletor):
             if not elemento.is_visible():
                 continue
@@ -1343,9 +1349,19 @@ def consulta_publica(tribunal: str, sistema: str, numero_processo: str, url: str
             print(f"  Endereco: {final}")
             achadas = linhas_do_resultado(pagina)
             print(f"  Linhas na tabela de resultados: {achadas}")
-            if not achadas:
-                print("  Nenhum resultado. Pode ser processo em segredo de justica,")
-                print("  numero de outro tribunal, ou a tela ter mudado.")
+
+            # O recado do portal separa duas coisas opostas: "nao encontrei" e
+            # "nao entendi o que voce digitou". Sem ele, a consulta vazia parecia
+            # sempre a primeira, e um defeito nosso passaria por resposta.
+            recados = _mensagens_de_erro(pagina)
+            if recados:
+                print("  O portal disse:")
+                for recado in recados:
+                    print(f"    {recado}")
+            if not achadas and not recados:
+                print("  Nenhum resultado e nenhum recado na tela. Pode ser processo")
+                print("  em segredo de justica, numero de outro tribunal, ou a busca")
+                print("  nao ter chegado a rodar.")
             # O teor NAO vai para a tela: o relato mostra a forma, e o conteudo
             # sera gravado em arquivo quando a extracao for escrita a partir
             # desta estrutura, como se fez no e-SAJ.
