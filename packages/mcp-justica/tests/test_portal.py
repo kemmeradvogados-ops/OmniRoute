@@ -2301,3 +2301,42 @@ def test_ligacao_sem_endereco_nao_derruba_a_leitura():
             raise RuntimeError("elemento sumiu")
 
     assert caminhos_de_navegacao([Quebrada(), _LigacaoSoHref("/1g/ok.seam")]) == ["/1g/ok.seam"]
+
+
+# --------------------------------------------------------------------------
+# Senha vencida nao e credencial recusada
+#
+# Lido do PJe do Rio em 30/09/2026: "Senha expirada. Solicite uma nova senha".
+# Sem distinguir, o conselho padrao ("confira o cofre") manda o operador
+# procurar defeito onde nao ha, e repetir o comando gasta tentativas de uma
+# conta cuja senha o portal ja nao aceita.
+# --------------------------------------------------------------------------
+
+def test_recado_do_pje_e_reconhecido_como_senha_vencida():
+    from justica_mcp.portal import senha_vencida
+
+    assert senha_vencida(["Senha expirada. Solicite uma nova senha"]) is True
+
+
+def test_outras_formas_do_mesmo_recado():
+    from justica_mcp.portal import senha_vencida
+
+    for recado in ("Sua senha está vencida", "Password has expired",
+                   "Por favor, redefina sua senha"):
+        assert senha_vencida([recado]) is True, recado
+
+
+def test_recusa_de_credencial_nao_vira_senha_vencida():
+    """Confundir os dois manda o advogado renovar uma senha que esta certa."""
+    from justica_mcp.portal import senha_vencida
+
+    for recado in ("Usuário ou senha inválidos", "Credenciais inválidas",
+                   "Código de autenticação inválido"):
+        assert senha_vencida([recado]) is False, recado
+
+
+def test_tela_sem_recado_nenhum_nao_inventa_diagnostico():
+    from justica_mcp.portal import senha_vencida
+
+    assert senha_vencida([]) is False
+    assert senha_vencida(None) is False

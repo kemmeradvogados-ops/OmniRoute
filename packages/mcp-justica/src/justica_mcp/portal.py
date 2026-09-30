@@ -703,6 +703,40 @@ def _parece_segundo_fator(campo: "Campo") -> bool:
     return tamanho in ("4", "6", "8")
 
 
+# Recados que NAO sao recusa de credencial: a senha esta certa e venceu. A
+# diferenca muda tudo o que se faz em seguida. Diante de "credencial recusada"
+# o certo e parar e conferir o cofre; diante de senha vencida, conferir o cofre
+# nao adianta nada, e insistir queima tentativas de uma conta cuja senha o
+# portal ja nao aceita mais. Lido do PJe do Rio em 30/09/2026.
+MARCAS_DE_SENHA_VENCIDA = (
+    "senha expirada", "senha vencida", "senha esta vencida",
+    "senha esta expirada", "senha e expirada",
+    "expire", "solicite uma nova senha", "redefina sua senha",
+    "alterar a senha", "trocar a senha", "password has expired",
+)
+
+
+def senha_vencida(recados) -> bool:
+    """Diz se algum recado da tela e de senha vencida.
+
+    Compara sem acento de proposito: o mesmo aviso aparece escrito de varias
+    formas ("senha expirada", "sua senha esta vencida"), e um acento a mais ou
+    a menos nao pode decidir se o operador vai renovar a senha ou procurar
+    defeito no cofre.
+    """
+    import unicodedata
+
+    def sem_acento(texto: str) -> str:
+        decomposto = unicodedata.normalize("NFD", (texto or "").lower())
+        return "".join(c for c in decomposto if unicodedata.category(c) != "Mn")
+
+    for recado in recados or []:
+        limpo = sem_acento(recado)
+        if any(sem_acento(marca) in limpo for marca in MARCAS_DE_SENHA_VENCIDA):
+            return True
+    return False
+
+
 def _mensagens_de_erro(pagina: Any) -> list[str]:
     saida = []
     # O Keycloak, que atende o PJe, escreve o recado em classe propria: sem
@@ -1712,6 +1746,25 @@ def autenticar(
                         print("  Mensagens na tela:")
                         for e in erros:
                             print(f"    {e}")
+                    if senha_vencida(erros):
+                        # Sem esta distincao, o conselho impresso logo abaixo
+                        # ("confira o cofre") manda o operador procurar defeito
+                        # onde nao ha: a senha guardada esta certa, e o portal
+                        # e que nao a aceita mais.
+                        print("\n  ISTO NAO E RECUSA DE CREDENCIAL: a senha venceu.")
+                        print("  Conferir o cofre nao resolve, e repetir o comando so")
+                        print("  gasta tentativas de uma conta cuja senha o portal ja")
+                        print("  nao aceita. O caminho e renovar a senha NO PORTAL, no")
+                        print("  seu navegador comum, e depois grava-la aqui com:")
+                        print(f"    justica-credenciais guardar --tribunal "
+                              f"{identidade.tribunal} --sistema {identidade.sistema} "
+                              "--so-senha --janela")
+                        estado.registrar(
+                            acao="login_resultado_credencial",
+                            tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, resultado="senha_vencida")
+                        _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
+                        return 1
                     _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
                     print("\n  NAO repita o comando antes de conferir o que ha acima:")
                     print("  se for recusa de credencial, repetir queima tentativa da conta.")
