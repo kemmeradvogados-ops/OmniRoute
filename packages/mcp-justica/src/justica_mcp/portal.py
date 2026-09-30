@@ -2745,7 +2745,11 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
 #   esaj   conferido em campo em 22/09/2026, ponta a ponta, ate a integra.
 #   eproc  busca rapida em toda tela; a autenticacao segue barrada pelo
 #          Cloudflare, mas a consulta em si esta escrita.
-SISTEMAS_COM_CONSULTA = frozenset({"esaj", "eproc"})
+#   pje    caminho fotografado pelo operador em 30/09/2026, do menu ate os autos
+#          em aba nova. Os identificadores dos campos nao apareceram nas fotos,
+#          entao o adaptador procura os campos pela forma e confere o que
+#          digitou antes de pesquisar; se a forma nao bater, ele para.
+SISTEMAS_COM_CONSULTA = frozenset({"esaj", "eproc", "pje"})
 
 BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
 BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
@@ -2852,6 +2856,7 @@ def consultar_processo(
     botao_validar: str = "#btnValidar",
     documentos: str = "auto",
     confirmado: bool = False,
+    aceitar_termo: bool = False,
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -3082,6 +3087,83 @@ def consultar_processo(
                 sistema=identidade.sistema, numero=numero.formatado,
                 resultado=f"{dados['totais']['movimentacoes']} movimentacao(oes)",
             )
+            return 0
+
+        if identidade.sistema == "pje":
+            from .pje import (ConsultaPJeIndisponivel, abrir_processo,
+                              buscar_autenticado, parece_aviso_de_responsabilidade)
+
+            print("  PJe, consulta autenticada (caminho fotografado em 30/09/2026).")
+            try:
+                final = buscar_autenticado(pagina, guarda, numero, url, segundos)
+            except ConsultaPJeIndisponivel as exc:
+                print(f"  [PAROU] {exc}")
+                _relatar_tela(pagina, "TELA ONDE PAROU")
+                _relatar_estrutura_de_dados(pagina)
+                return 1
+            print(f"  Endereco: {final}")
+
+            recados = _mensagens_de_erro(pagina)
+            for recado in recados:
+                print(f"    O portal disse: {recado}")
+
+            estado_local.registrar(
+                acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+                sistema=identidade.sistema, numero=numero.formatado,
+                resultado="busca enviada",
+            )
+
+            # Abrir os autos e um SEGUNDO passo, separado de proposito: o clique
+            # no numero levanta o aviso de responsabilidade da resolucao nº. 121
+            # do Conselho Nacional de Justica, e aceita-lo e ato do advogado, nao
+            # do programa. Sem o aceite explicito o comando mostra o texto do
+            # aviso e para.
+            try:
+                aba, avisos = abrir_processo(
+                    pagina, guarda, numero, aceitar_termo=aceitar_termo,
+                    segundos=segundos)
+            except ConsultaPJeIndisponivel as exc:
+                print(f"  [PAROU] {exc}")
+                _relatar_tela(pagina, "TELA DO RESULTADO")
+                return 1
+
+            for aviso in avisos:
+                print("\n  O PORTAL PEDIU UM ACEITE, E ELE NAO FOI DADO:")
+                for pedaco in aviso.splitlines():
+                    if pedaco.strip():
+                        print(f"    {pedaco.strip()}")
+                if parece_aviso_de_responsabilidade(aviso):
+                    print("    Este e o aviso de responsabilizacao civil, "
+                          "administrativa e criminal.")
+
+            if aba is None:
+                if avisos:
+                    print("\n  Nada foi aberto. Leia o aviso acima; se for o caso de")
+                    print("  aceita-lo, repita o comando com --aceito-o-termo.")
+                else:
+                    print("\n  O clique no numero nao abriu aba nova nem mostrou aviso.")
+                    print("  Nada foi aberto.")
+                _relatar_tela(pagina, "TELA DO RESULTADO")
+                return 1
+
+            print("\n  O aceite foi dado pelo operador e os autos abriram em aba nova.")
+            estado_local.registrar(
+                acao="aceite_do_termo_de_responsabilidade",
+                tribunal=identidade.tribunal, sistema=identidade.sistema,
+                numero=numero.formatado, resultado="autos abertos",
+            )
+            # A leitura da linha do tempo do PJe ainda NAO esta escrita: a
+            # estrutura dela nao foi lida de tela real. O que sai aqui e a forma
+            # da pagina, sem conteudo, que e o que permite escreve-la depois.
+            _relatar_tela(aba, "AUTOS DO PROCESSO (ABA NOVA)")
+            _relatar_estrutura_de_dados(aba)
+            print("\n  A extracao da linha do tempo do PJe ainda nao foi escrita.")
+            print("  O relato acima e a forma da pagina, sem conteudo, e e dele que")
+            print("  ela sera escrita. Nada foi inventado.")
+            try:
+                aba.close()
+            except Exception:
+                pass
             return 0
 
         campo = elemento_visivel(pagina, BUSCA_RAPIDA)
@@ -3491,6 +3573,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
                          "'integra', 'ultimos:N' ou 'nenhum'")
     cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
+    cp.add_argument("--aceito-o-termo", action="store_true", dest="aceitar_termo",
+                    help="aceita o aviso de responsabilidade que o PJe levanta ao abrir "
+                         "os autos (resolucao nº. 121 do Conselho Nacional de Justica). "
+                         "Sem esta opcao o comando mostra o texto do aviso e para: o "
+                         "aceite e ato do advogado, nao do programa")
     cp.add_argument("--oculto", action="store_true")
     cp.add_argument("--segundos", type=int, default=45)
     cp.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
@@ -3544,6 +3631,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_senha_oculto=args.campo_senha_oculto, botao_entrar=args.botao_entrar,
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 documentos=args.documentos, confirmado=args.confirmado,
+                aceitar_termo=args.aceitar_termo,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
             )

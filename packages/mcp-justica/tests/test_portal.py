@@ -2231,7 +2231,10 @@ def test_sistema_sem_consulta_e_recusado_sem_tocar_no_portal(capsys, monkeypatch
         raise AssertionError("autenticou antes de saber que nao sabia consultar")
 
     monkeypatch.setattr(portal_mod, "autenticar", nao_pode)
-    saida = consultar_processo("https://exemplo", "TJRJ", "pje",
+    # `projudi` nao tem adaptador escrito. O exemplo aqui era o PJe ate
+    # 30/09/2026, quando a consulta autenticada dele foi escrita a partir do
+    # caminho que o operador fotografou.
+    saida = consultar_processo("https://exemplo", "TJRJ", "projudi",
                                "1037850-62.2023.8.26.0100")
     assert saida == 1
     erro = capsys.readouterr().err
@@ -2242,7 +2245,7 @@ def test_sistema_sem_consulta_e_recusado_sem_tocar_no_portal(capsys, monkeypatch
 def test_os_sistemas_com_consulta_sao_os_conferidos():
     from justica_mcp.portal import SISTEMAS_COM_CONSULTA
 
-    assert SISTEMAS_COM_CONSULTA == {"esaj", "eproc"}
+    assert SISTEMAS_COM_CONSULTA == {"esaj", "eproc", "pje"}
 
 
 def test_numero_invalido_e_recusado_antes_de_tudo(capsys, monkeypatch):
