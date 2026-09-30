@@ -175,3 +175,57 @@ def test_leitura_que_falha_conta_zero():
             raise RuntimeError("tela morta")
 
     assert linhas_do_resultado(Quebrada()) == 0
+
+
+# --------------------------------------------------------------------------
+# O portal redireciona a consulta publica
+#
+# Conferido em campo em 30/09/2026: `/1g/ConsultaPublica/listView.seam` leva a
+# `/pje/ConsultaPublica/listView.seam`. A trava barrou o preenchimento, e
+# estava CERTA: a permissao valia para a tela de partida. A correcao nao e
+# afrouxar a trava, e sim conferir que a chegada e a mesma tela do mesmo
+# portal e autoriza-la nominalmente.
+# --------------------------------------------------------------------------
+
+class _PaginaQueRedireciona(_PaginaPJe):
+    def __init__(self, destino_real, **kw):
+        super().__init__(**kw)
+        self._destino_real = destino_real
+
+    def goto(self, url, **kw):
+        self.navegou.append(url)
+        self.url = self._destino_real
+
+
+def test_redirecionamento_do_proprio_portal_e_aceito():
+    pagina = _PaginaQueRedireciona(
+        "https://tjrj.pje.jus.br/pje/ConsultaPublica/listView.seam")
+    guarda = _guarda()
+    final = buscar_publico(pagina, guarda, parse_numero(PROCESSO), LOGIN_RJ, 10)
+
+    assert final.endswith("/pje/ConsultaPublica/listView.seam")
+    assert BOTAO_PESQUISAR in pagina.cliques
+
+
+def test_redirecionamento_para_outro_dominio_e_recusado():
+    """Outro dominio nao esta sob a autorizacao dada."""
+    pagina = _PaginaQueRedireciona(
+        "https://outro.exemplo/pje/ConsultaPublica/listView.seam")
+    with pytest.raises(ConsultaPJeIndisponivel, match="outro dominio"):
+        buscar_publico(pagina, _guarda(), parse_numero(PROCESSO), LOGIN_RJ, 10)
+    assert pagina.preenchidos == {}
+
+
+def test_redirecionamento_para_outra_tela_e_recusado():
+    """Preencher e clicar as cegas numa tela que nao e a pedida e onde mora o
+    estrago."""
+    pagina = _PaginaQueRedireciona("https://tjrj.pje.jus.br/pje/login.seam")
+    with pytest.raises(ConsultaPJeIndisponivel, match="outra tela"):
+        buscar_publico(pagina, _guarda(), parse_numero(PROCESSO), LOGIN_RJ, 10)
+    assert pagina.cliques == []
+
+
+def test_sem_redirecionamento_nao_ha_permissao_extra():
+    guarda = _guarda()
+    buscar_publico(_PaginaPJe(), guarda, parse_numero(PROCESSO), LOGIN_RJ, 10)
+    assert len(guarda.permissoes) == 1

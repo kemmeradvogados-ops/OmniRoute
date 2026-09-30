@@ -56,6 +56,27 @@ def endereco_da_consulta_publica(url_de_login: str) -> str:
     return f"{base}{SUFIXO_CONSULTA_PUBLICA}"
 
 
+def conferir_redirecionamento(partida: str, chegada: str) -> None:
+    """Aceita o redirecionamento do portal, e so ele.
+
+    Duas condicoes, as duas necessarias: mesma origem, porque um portal que
+    joga a consulta para outro dominio nao esta mais sob a autorizacao dada; e
+    mesmo nome de tela, porque chegar a uma tela diferente da pedida e
+    exatamente o caso em que preencher e clicar as cegas faria estrago.
+    """
+    from urllib.parse import urlparse
+
+    de, para = urlparse(partida), urlparse(chegada)
+    if de.netloc != para.netloc:
+        raise ConsultaPJeIndisponivel(
+            f"O portal levou a consulta para outro dominio ({para.netloc or chegada}). "
+            "Nada foi preenchido.")
+    if not para.path.endswith(SUFIXO_CONSULTA_PUBLICA):
+        raise ConsultaPJeIndisponivel(
+            f"O portal levou a outra tela ({para.path}), e nao a consulta publica. "
+            "Nada foi preenchido.")
+
+
 def buscar_publico(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
                    segundos: int = 30) -> str:
     """Abre a consulta publica, preenche o numero e pesquisa. Somente leitura.
@@ -78,6 +99,23 @@ def buscar_publico(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     guarda.pode_executar(Acao.NAVEGAR, destino, url=destino)
     pagina.goto(destino, timeout=segundos * 1000, wait_until="domcontentloaded")
     _assentar(pagina, segundos)
+
+    # O PJe redireciona `/1g/ConsultaPublica/...` para `/pje/ConsultaPublica/...`,
+    # conferido em campo em 30/09/2026. A trava barrou o preenchimento, e estava
+    # CERTA: a permissao valia para a tela de partida, e quem chega a outro
+    # endereco nao tem autorizacao nenhuma ali. A correcao nao e afrouxar a
+    # trava; e conferir que o destino ainda e a mesma tela do mesmo portal, e so
+    # entao autoriza-la nominalmente.
+    final = pagina.url
+    if final != destino:
+        conferir_redirecionamento(destino, final)
+        guarda.permissoes.append(Permissao(
+            padrao_url=permissao_efemera(final).padrao_url,
+            descricao="consulta publica do PJe apos redirecionamento do portal",
+            conferido_em="execucao atual",
+            seletores_clicaveis=(BOTAO_PESQUISAR,),
+            seletores_preenchiveis=(CAMPO_NUMERO,),
+        ))
 
     campo = elemento_visivel(pagina, CAMPO_NUMERO)
     if campo is None:
