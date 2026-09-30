@@ -1801,7 +1801,14 @@ def autenticar(
                     bruto = campo.get_attribute("maxlength")
                     if bruto and bruto.isdigit():
                         tamanho = int(bruto)
-                    codigo = _codigo_do_operador(identidade.rotulo, tamanho, oculto)
+                    try:
+                        rotulo_do_campo = (campo.get_attribute("aria-label")
+                                           or campo.get_attribute("placeholder") or "")
+                        rotulo_do_campo = " ".join(rotulo_do_campo.split())[:120] or None
+                    except Exception:
+                        rotulo_do_campo = None
+                    codigo = _codigo_do_operador(identidade.rotulo, tamanho, oculto,
+                                                 rotulo_do_campo)
                     if codigo is None:
                         estado.registrar(
                             acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
@@ -2320,8 +2327,9 @@ def _listar_ligacoes(pagina, teto: int = 60) -> None:
         print(f"      {texto or '(sem texto)':42s} -> {alvo[:100]}")
 
 
-def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool) -> Optional[str]:
-    """Pede ao operador o codigo que o PORTAL enviou.
+def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool,
+                        rotulo_do_campo: Optional[str] = None) -> Optional[str]:
+    """Pede ao operador o codigo do segundo fator.
 
     Nem todo portal usa codigo gerado de semente. O e-SAJ de Sao Paulo envia um
     por mensagem ou e-mail, verificado em campo em 21 de setembro de 2026 pelo
@@ -2348,8 +2356,17 @@ def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool) -> Op
     _esvaziar_teclado()
 
     limite = f" ({tamanho} digitos)" if tamanho else ""
-    print(f"\n  O portal enviou um codigo{limite}. Confira sua mensagem ou e-mail.")
-    print("  Ele tem validade curta, entao digite assim que receber.")
+    # Nem todo codigo e ENVIADO pelo portal: o PJe pede o do aplicativo
+    # autenticador, e dizer "confira sua mensagem ou e-mail" mandava o operador
+    # esperar uma mensagem que nunca chegaria. Quando a tela traz o proprio
+    # rotulo do campo, ele e repetido aqui: o portal explica melhor do que uma
+    # suposicao minha sobre como cada tribunal manda o codigo.
+    if rotulo_do_campo:
+        print(f"\n  O portal pede um codigo{limite}. Ele diz: {rotulo_do_campo!r}")
+    else:
+        print(f"\n  O portal pede um codigo{limite}. Pode vir por mensagem, por")
+        print("  e-mail ou do seu aplicativo autenticador, conforme o tribunal.")
+    print("  Ele tem validade curta, entao digite assim que o tiver.")
     for tentativa in range(3):
         try:
             digitado = input(f"  Codigo para {rotulo} (vazio cancela): ").strip()

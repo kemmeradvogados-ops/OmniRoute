@@ -2340,3 +2340,44 @@ def test_tela_sem_recado_nenhum_nao_inventa_diagnostico():
 
     assert senha_vencida([]) is False
     assert senha_vencida(None) is False
+
+
+# --------------------------------------------------------------------------
+# Nem todo codigo e ENVIADO pelo portal
+#
+# O PJe pede o codigo do aplicativo autenticador, e o programa dizia "o portal
+# enviou um codigo, confira sua mensagem ou e-mail", mandando o operador
+# esperar uma mensagem que nunca chegaria. A tela do PJe traz o proprio
+# rotulo: "Entre no seu aplicativo de autenticacao".
+# --------------------------------------------------------------------------
+
+def _pedir(monkeypatch, capsys, rotulo_do_campo=None, resposta="123456"):
+    from justica_mcp import portal as portal_mod
+    from justica_mcp.portal import _codigo_do_operador
+
+    monkeypatch.setattr(portal_mod, "_esvaziar_teclado", lambda: None)
+    monkeypatch.setattr("builtins.input", lambda _: resposta)
+
+    class ComTerminal:
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(portal_mod.sys, "stdin", ComTerminal())
+    valor = _codigo_do_operador("TJRJ / pje", 6, False, rotulo_do_campo)
+    return valor, capsys.readouterr().out
+
+
+def test_o_rotulo_do_portal_e_repetido_em_vez_de_suposicao(monkeypatch, capsys):
+    valor, saida = _pedir(monkeypatch, capsys,
+                          "Entre no seu aplicativo de autenticacao")
+    assert valor == "123456"
+    assert "aplicativo de autenticacao" in saida
+    assert "confira sua mensagem ou e-mail" not in saida.lower()
+
+
+def test_sem_rotulo_o_texto_nao_afirma_de_onde_vem_o_codigo(monkeypatch, capsys):
+    """Afirmar que o portal enviou algo que ele nao enviou faz o operador
+    esperar uma mensagem que nunca chega."""
+    _, saida = _pedir(monkeypatch, capsys)
+    assert "conforme o tribunal" in saida
+    assert "O portal enviou" not in saida
