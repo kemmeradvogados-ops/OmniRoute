@@ -1818,9 +1818,31 @@ def autenticar(
                     validade = " (informado pelo operador)"
 
                 guarda.pode_executar(Acao.PREENCHER, campo_codigo, url=url)
-                campo.click()
-                campo.fill(codigo)
-                conferido = campo.evaluate("e => (e.value || '').length")
+                try:
+                    campo.click()
+                    campo.fill(codigo)
+                    conferido = campo.evaluate("e => (e.value || '').length")
+                except Exception as exc:
+                    # A janela pode ter sido fechada, ou a propria pessoa pode
+                    # ter concluido o login nela enquanto o programa esperava o
+                    # codigo no terminal. Conferido em campo em 30/09/2026: o
+                    # erro subia como traceback de Playwright, o que parece
+                    # defeito grave e nao e. Estes dois desfechos precisam ser
+                    # ditos em portugues, porque a providencia e diferente em
+                    # cada um e nenhuma delas e "conferir a senha".
+                    print(f"\n  [PARADO] Nao consegui preencher o codigo: "
+                          f"{type(exc).__name__}.")
+                    if "closed" in str(exc).lower():
+                        print("  A janela do navegador nao esta mais aberta.")
+                        print("  Se foi voce que concluiu o login por la, esta tudo bem:")
+                        print("  a sessao ficou no perfil. Confira sem gastar tentativa:")
+                        print(f"    justica-portal sessao --tribunal {identidade.tribunal} "
+                              f"--sistema {identidade.sistema}")
+                        print("  Se a janela fechou sozinha, repita o comando.")
+                    estado.registrar(
+                        acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, resultado="janela_indisponivel")
+                    return 1
                 if conferido != len(codigo):
                     print(f"  [ABORTADO] O codigo nao entrou no campo ({conferido} de {len(codigo)}).")
                     print("             Nada foi enviado, para nao gastar tentativa.")
@@ -3438,6 +3460,22 @@ def main(argv: list[str] | None = None) -> int:
             )
     except (PortalIndisponivel, PortalNaoConfigurado) as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:
+        # Rede de seguranca so para UM caso, e nao para erro em geral: a janela
+        # do navegador fechada. Ela e fechada pelo operador, e em 30/09/2026
+        # isso subiu como traceback de Playwright no meio de uma autenticacao
+        # que tinha dado certo, o que parece defeito grave e nao e. Qualquer
+        # outro erro continua subindo inteiro: esconde-lo seria pior.
+        if "has been closed" not in str(exc):
+            raise
+        print("\n  [PARADO] A janela do navegador nao esta mais aberta.", file=sys.stderr)
+        print("  Se foi voce que a fechou, ou que concluiu o login por la, nada",
+              file=sys.stderr)
+        print("  se perdeu: a sessao fica guardada no perfil do navegador.",
+              file=sys.stderr)
+        print("  Confira sem gastar tentativa nenhuma com o comando 'sessao'.",
+              file=sys.stderr)
         return 1
     return 2
 

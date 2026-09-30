@@ -2381,3 +2381,40 @@ def test_sem_rotulo_o_texto_nao_afirma_de_onde_vem_o_codigo(monkeypatch, capsys)
     _, saida = _pedir(monkeypatch, capsys)
     assert "conforme o tribunal" in saida
     assert "O portal enviou" not in saida
+
+
+# --------------------------------------------------------------------------
+# Janela fechada nao e defeito grave
+#
+# Em 30/09/2026, com a autenticacao ja concluida, o operador fechou a janela
+# e o erro do Playwright subiu como traceback de trinta linhas. Parece defeito
+# grave e nao e: a sessao ficou guardada no perfil.
+# --------------------------------------------------------------------------
+
+def test_janela_fechada_vira_recado_em_portugues(monkeypatch, capsys):
+    from justica_mcp import portal as portal_mod
+
+    def explode(*a, **kw):
+        raise RuntimeError("ElementHandle.click: Target page, context or browser "
+                           "has been closed")
+
+    monkeypatch.setattr(portal_mod, "reconhecer", explode)
+    saida = portal_mod.main(["reconhecer", "--url", "https://exemplo"])
+    assert saida == 1
+    erro = capsys.readouterr().err
+    assert "janela do navegador nao esta mais aberta" in erro
+    assert "Traceback" not in erro
+
+
+def test_outro_erro_continua_subindo_inteiro(monkeypatch):
+    """Esconder erro de verdade seria pior que o traceback."""
+    import pytest
+
+    from justica_mcp import portal as portal_mod
+
+    def explode(*a, **kw):
+        raise RuntimeError("erro de verdade, que precisa aparecer")
+
+    monkeypatch.setattr(portal_mod, "reconhecer", explode)
+    with pytest.raises(RuntimeError, match="erro de verdade"):
+        portal_mod.main(["reconhecer", "--url", "https://exemplo"])
