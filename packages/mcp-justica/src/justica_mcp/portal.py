@@ -3333,12 +3333,37 @@ def consultar_processo(
 
         from .extracao import extrair_processo, resumo
 
+        # Assentar ANTES de ler, e nao so esperar a rede. O eproc chega nesta
+        # tela com `autocarregar=true` e monta o conteudo por script: a rede
+        # termina antes do desenho, e ler naquele instante devolve uma pagina
+        # sem tabela nenhuma, que e indistinguivel de processo inexistente.
+        _assentar(pagina, segundos)
         dados = extrair_processo(pagina, numero.formatado)
         if not dados["eventos"]:
             print("\n  [ATENCAO] Nenhum evento extraido. A tela pode ter outra")
             print("  estrutura, ou o processo pode estar em segredo de justica.")
             print(f"  Tabelas na pagina: "
                   f"{[t.get_attribute('id') or '-' for t in pagina.query_selector_all('table')]}")
+            # Conteudo dentro de quadro embutido e a explicacao mais comum para
+            # "zero tabelas" numa tela que visivelmente tem tabelas: a leitura
+            # de cima nao atravessa o quadro. Contar por quadro separa isso de
+            # processo que realmente nao existe ali.
+            try:
+                for quadro in pagina.frames[1:]:
+                    quantas = len(quadro.query_selector_all("table"))
+                    print(f"    quadro embutido {quadro.name or '(sem nome)'}: "
+                          f"{quantas} tabela(s)")
+            except Exception as exc:
+                print(f"    Quadros embutidos ilegiveis: {type(exc).__name__}")
+            # O relato inteiro, e nao so a contagem. Sem ele este ponto vira um
+            # beco: o comando diz que nao achou e nao entrega nada com que
+            # escrever a leitura certa. E o mesmo que o e-SAJ e o PJe ja fazem
+            # quando param no meio.
+            _relatar_tela(pagina, "TELA DA CONSULTA")
+            _relatar_estrutura_de_dados(pagina)
+            print("\n  RELATO DA TRAVA:")
+            for linha in guarda.relato():
+                print(f"    {linha}")
             return 1
 
         # O conteudo vai para arquivo; o terminal recebe so o resumo. Despejar

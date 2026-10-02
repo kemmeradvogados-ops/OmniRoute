@@ -2654,3 +2654,18 @@ def test_a_tela_de_cadastro_do_eproc_nao_e_tela_de_login():
         assert _tem_formulario_de_login(object()) is False
     finally:
         portal_mod._coletar = original
+
+
+def test_consulta_sem_evento_entrega_o_relato_da_tela():
+    """Sem isto o ponto vira beco: o comando diz que nao achou e nao entrega
+    nada com que escrever a leitura certa. Visto no TRF2 em 02/10/2026, com
+    'Tabelas na pagina: []' e mais nada."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split("Nenhum evento extraido")[1].split("return 1")[0]
+    for esperado in ("_relatar_tela", "_relatar_estrutura_de_dados",
+                     "pagina.frames", "guarda.relato()"):
+        assert esperado in trecho, esperado
