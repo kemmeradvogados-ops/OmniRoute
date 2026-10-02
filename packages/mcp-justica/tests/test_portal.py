@@ -2669,3 +2669,115 @@ def test_consulta_sem_evento_entrega_o_relato_da_tela():
     for esperado in ("_relatar_tela", "_relatar_estrutura_de_dados",
                      "pagina.frames", "guarda.relato()"):
         assert esperado in trecho, esperado
+
+
+# ==========================================================================
+# Segundo clique da copia integral no eproc
+#
+# Tela real da Justica Federal do Rio, 02/10/2026: o primeiro clique
+# (`#btnDownloadCompletoRS`) nao devolve arquivo. Leva a
+# `acao=selecionar_processos_agendar_arquivo_completo`, cujos unicos botoes
+# proprios sao `#btnGerar` ("Gerar Arquivo Completo") e `#btnVoltar`.
+# ==========================================================================
+
+URL_DE_AGENDAMENTO = ("https://eproc.exemplo/controlador.php"
+                   "?acao=selecionar_processos_agendar_arquivo_completo&hash=x")
+
+
+class _BotaoDeGeracao:
+    def __init__(self, pagina):
+        self.pagina = pagina
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def click(self):
+        self.pagina.cliques.append("#btnGerar")
+
+
+class _TelaDeAgendamento:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, url=URL_DE_AGENDAMENTO, tem_botao=True, baixa=True):
+        self.url = url
+        self.tem_botao = tem_botao
+        self.baixa = baixa
+        self.cliques = []
+
+    def query_selector_all(self, seletor):
+        if seletor == "#btnGerar" and self.tem_botao:
+            return [_BotaoDeGeracao(self)]
+        return []
+
+    def expect_download(self, timeout=None):
+        tela = self
+
+        class _Espera:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                if not tela.baixa:
+                    raise TimeoutError("nada veio")
+                return False
+
+            @property
+            def value(self):
+                return "arquivo-baixado"
+
+        return _Espera()
+
+
+def _guarda_de_copia():
+    from justica_mcp.core.guarda_navegacao import GuardaNavegacao, Modo
+
+    return GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+
+
+def test_o_segundo_clique_gera_e_devolve_o_arquivo():
+    from justica_mcp.portal import _gerar_integra_do_eproc
+
+    tela = _TelaDeAgendamento()
+    assert _gerar_integra_do_eproc(tela, _guarda_de_copia(), 10) == "arquivo-baixado"
+    assert tela.cliques == ["#btnGerar"]
+
+
+def test_nao_clica_gerar_em_tela_que_nao_e_a_conferida():
+    """Clicar num botao chamado 'Gerar' numa tela que nao e a conferida seria
+    exatamente o chute que este projeto evita."""
+    from justica_mcp.portal import _gerar_integra_do_eproc
+
+    tela = _TelaDeAgendamento(url="https://eproc.exemplo/controlador.php?acao=outra_coisa")
+    assert _gerar_integra_do_eproc(tela, _guarda_de_copia(), 10) is None
+    assert tela.cliques == []
+
+
+def test_tela_certa_sem_o_botao_nao_inventa_outro():
+    from justica_mcp.portal import _gerar_integra_do_eproc
+
+    tela = _TelaDeAgendamento(tem_botao=False)
+    assert _gerar_integra_do_eproc(tela, _guarda_de_copia(), 10) is None
+    assert tela.cliques == []
+
+
+def test_geracao_que_nao_devolve_arquivo_nao_e_tratada_como_erro():
+    """O nome da acao no portal fala em AGENDAR: o arquivo pode estar sendo
+    montado para depois. Quem chama relata a tela, que e o unico jeito honesto
+    de descobrir o que vem a seguir."""
+    from justica_mcp.portal import _gerar_integra_do_eproc
+
+    tela = _TelaDeAgendamento(baixa=False)
+    assert _gerar_integra_do_eproc(tela, _guarda_de_copia(), 1) is None
+    assert tela.cliques == ["#btnGerar"]
+
+
+def test_a_trava_registra_o_clique_de_gerar_nominalmente():
+    from justica_mcp.portal import _gerar_integra_do_eproc
+
+    guarda = _guarda_de_copia()
+    _gerar_integra_do_eproc(_TelaDeAgendamento(), guarda, 10)
+    assert [r["alvo"] for r in guarda.registro] == ["#btnGerar"]
+    assert guarda.registro[0]["permitido"] is True

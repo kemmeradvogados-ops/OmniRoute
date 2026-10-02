@@ -2228,6 +2228,19 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
 
 BOTAO_INTEGRA = "#btnDownloadCompletoRS"
 
+# Segundo passo da copia integral no eproc, lido da tela real da Justica Federal
+# do Rio em 02/10/2026. O primeiro clique nao devolve arquivo: leva a
+# `acao=selecionar_processos_agendar_arquivo_completo`, cujo titulo e "Agenda
+# geracao de arquivo completo do processo" e cujos unicos botoes proprios sao
+# `#btnGerar` ("Gerar Arquivo Completo") e `#btnVoltar`.
+#
+# "Agenda" no titulo e no nome da acao e um aviso que vale levar a serio: o
+# portal pode nao devolver o arquivo na hora, e sim enfileirar a geracao. Por
+# isso o codigo abaixo nao afirma que o arquivo vem; ele clica, espera, e
+# relata a tela quando nao vier.
+BOTAO_GERAR_INTEGRA = "#btnGerar"
+MARCA_DA_TELA_DE_GERACAO = "agendar_arquivo_completo"
+
 
 # Marcadores do desafio "Confirme que e humano" do Cloudflare, visto no eproc
 # do Tribunal Regional Federal da 2a Regiao em 21 de setembro de 2026.
@@ -2782,6 +2795,47 @@ def _relatar_tela(pagina, titulo: str) -> None:
             print(f"      {caminho}")
 
 
+def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
+    """Segundo clique da copia integral no eproc: a tela que pede para GERAR.
+
+    Devolve o download, ou None quando esta nao e a tela de geracao ou quando o
+    clique nao trouxe arquivo. None NAO quer dizer que deu errado para sempre:
+    o nome da acao no portal fala em agendar, entao e possivel que o arquivo
+    seja montado depois. Quem chama relata a tela nesse caso, que e o unico
+    jeito honesto de descobrir o que vem a seguir.
+
+    Nao tenta adivinhar nada alem disto. Em particular, nao procura o arquivo
+    gerado em lista nenhuma do portal: essa tela ainda nao foi vista.
+    """
+    if MARCA_DA_TELA_DE_GERACAO not in (pagina.url or ""):
+        # Outra tela. Clicar um botao chamado "Gerar" numa tela que nao e a
+        # conferida seria exatamente o chute que este projeto evita.
+        return None
+    botao = elemento_visivel(pagina, BOTAO_GERAR_INTEGRA)
+    if botao is None:
+        return None
+
+    print("    O portal abriu a tela de geracao do arquivo completo.")
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="gerar o arquivo completo do processo, tela do proprio portal",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(BOTAO_GERAR_INTEGRA,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, BOTAO_GERAR_INTEGRA, url=pagina.url)
+    try:
+        with pagina.expect_download(timeout=segundos * 1000) as info:
+            botao.click()
+    except Exception as exc:
+        print(f"    A geracao foi pedida e o arquivo nao veio em {segundos}s "
+              f"({type(exc).__name__}).")
+        print("    O nome da acao no portal fala em AGENDAR, entao o arquivo pode estar")
+        print("    sendo montado para depois. Nada foi perdido e nada foi clicado alem")
+        print("    do botao de gerar.")
+        return None
+    return info.value
+
+
 def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optional[str]:
     """Copia integral pelo botao do proprio portal.
 
@@ -2822,16 +2876,23 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
             botao.click()
     except Exception as exc:
         print(f"    O clique nao devolveu arquivo: {type(exc).__name__}.")
-        print("    O eproc abre uma tela pedindo para gerar a copia. Segue o que ha nela,")
-        print("    para o seletor ser conferido antes de virar codigo. Nada foi clicado.")
-        _relatar_tela(pagina, "TELA APOS O CLIQUE")
-        for i, p in enumerate(nova):
-            try:
-                p.wait_for_load_state("domcontentloaded", timeout=5000)
-            except Exception:
-                pass
-            _relatar_tela(p, f"ABA NOVA {i + 1}")
-        raise
+        baixado = _gerar_integra_do_eproc(pagina, guarda, segundos)
+        if baixado is None:
+            print("    Segue o que ha na tela, para o seletor ser conferido antes de")
+            print("    virar codigo. Nada mais foi clicado.")
+            _relatar_tela(pagina, "TELA APOS O CLIQUE")
+            for i, p in enumerate(nova):
+                try:
+                    p.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                _relatar_tela(p, f"ABA NOVA {i + 1}")
+            raise
+        destino.mkdir(parents=True, exist_ok=True)
+        sugerido = baixado.suggested_filename or f"{chave}-integra.zip"
+        arquivo = Path(destino) / f"integra-{sugerido}"
+        baixado.save_as(str(arquivo))
+        return str(arquivo)
 
     baixado = info.value
     destino.mkdir(parents=True, exist_ok=True)
