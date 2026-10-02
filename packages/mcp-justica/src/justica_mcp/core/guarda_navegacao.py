@@ -156,6 +156,22 @@ class GuardaNavegacao:
                 return termo
         return None
 
+    def _nomeado_na_tela(self, acao: "Acao", alvo: str, contexto: str) -> bool:
+        """Se alguma permissao desta tela nomeia o alvo para esta acao.
+
+        Conferencia estreita de proposito: so clicar e preencher, so por nome
+        exato, e so em permissao que case com o endereco atual. Navegar, ler e
+        baixar nao passam por aqui, porque nao sao atos dirigidos a um seletor
+        que a tela tenha liberado.
+        """
+        if acao is Acao.CLICAR:
+            escolher = lambda p: p.seletores_clicaveis  # noqa: E731
+        elif acao is Acao.PREENCHER:
+            escolher = lambda p: p.seletores_preenchiveis  # noqa: E731
+        else:
+            return False
+        return any(alvo in escolher(p) for p in self._permissoes_para(contexto))
+
     def _permissoes_para(self, url: str) -> list[Permissao]:
         """TODAS as permissoes que casam, nao apenas a primeira.
 
@@ -190,13 +206,49 @@ class GuardaNavegacao:
                 acao, alvo,
             ))
 
-        termo = self._termo_de_risco(alvo) or self._termo_de_risco(url)
-        if termo is not None:
+        # Duas situacoes diferentes, tratadas como uma so ate 02/10/2026.
+        #
+        #   (1) o termo de risco esta no ALVO. Quem clica em "salvar cadastro"
+        #       ou navega para "abrir expediente" pratica o ato. Bloqueio
+        #       absoluto, nao contornavel por configuracao nem por permissao.
+        #
+        #   (2) o termo de risco esta so no ENDERECO DA TELA. A tela e perigosa,
+        #       o alvo nao. Visto em campo no TRF2 em 02/10/2026: a autenticacao
+        #       desemboca em `acao=pessoa_alterar`, e nessa MESMA pagina convivem
+        #       dois formularios distintos, `frmPessoaAlteracao` (o cadastro do
+        #       advogado) e `formPesquisaRapida` (a barra de busca de processo).
+        #       Bloquear a pagina inteira impedia consultar processo no TRF2 por
+        #       causa de um formulario em que a consulta nunca encosta.
+        #
+        # No caso (2) o bloqueio continua sendo o padrao, e so cede para seletor
+        # que uma permissao daquela tela tenha NOMEADO expressamente.
+        #
+        # O que protege o botao Salvar do cadastro, entao, e UMA camada, e nao
+        # duas: nenhuma permissao o nomeia. Ele NAO e pego pela lista de termos,
+        # porque o seu seletor real e `button[name=btnSalvar]`, e "salvar" cru
+        # foi deliberadamente tirado da lista em 22/09/2026 por pegar botao
+        # inocente demais; o que ficou foi `salvarcadastro`, `salvar-cadastro` e
+        # afins, que nao casam com `btnsalvar`. Dizer "duas camadas" aqui seria
+        # confortavel e falso. A camada que resta e a principal e a que o projeto
+        # inteiro assume: a lista de permissao nasce vazia e so recebe o que o
+        # adaptador nomeia, um seletor por vez.
+        termo_no_alvo = self._termo_de_risco(alvo)
+        if termo_no_alvo is not None:
             return self._registrar(Decisao(
                 False,
-                f"Termo de risco {termo!r} no alvo. Abrir expediente dispara a "
+                f"Termo de risco {termo_no_alvo!r} no alvo. Abrir expediente dispara a "
                 f"ciencia e inicia o prazo (lei nº. 11.419/06, artigo 5º, §3º). "
                 f"Bloqueio nao contornavel por configuracao.",
+                acao, alvo,
+            ))
+
+        termo_na_tela = self._termo_de_risco(url)
+        if termo_na_tela is not None and not self._nomeado_na_tela(acao, alvo, contexto):
+            return self._registrar(Decisao(
+                False,
+                f"Termo de risco {termo_na_tela!r} no endereco da tela. Nesta tela so "
+                f"agem os seletores que uma permissao dela nomeia expressamente, e "
+                f"{alvo!r} nao e um deles.",
                 acao, alvo,
             ))
 

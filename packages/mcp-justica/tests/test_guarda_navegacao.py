@@ -6,6 +6,8 @@ ciencia e inicia a contagem (lei nº. 11.419/06, artigo 5º, §3º), e nao exist
 desfazer.
 """
 
+import re
+
 import pytest
 
 from justica_mcp.core.guarda_navegacao import (
@@ -335,3 +337,84 @@ def test_o_botao_de_ciencia_nao_foi_afetado_pelo_estreitamento():
     d = _guarda_livre().avaliar(Acao.CLICAR, "#botaoConfirmarRebebimentoIntimacao")
     assert d.permitido is False
     assert "ciencia" in d.motivo
+
+
+# ==========================================================================
+# Termo de risco no ALVO e termo de risco na TELA sao coisas diferentes
+#
+# Ate 02/10/2026 eram tratados como um so. A tela do TRF2 mostrou o custo: a
+# autenticacao desemboca em `acao=pessoa_alterar`, e nessa mesma pagina convivem
+# `frmPessoaAlteracao` (o cadastro do advogado) e `formPesquisaRapida` (a busca
+# de processo). Bloquear a pagina inteira impedia consultar processo por causa
+# de um formulario em que a consulta nunca encosta.
+# ==========================================================================
+
+TELA_DE_RISCO = "https://eproc.exemplo/controlador.php?acao=pessoa_alterar&hash=abc"
+BUSCA = "#txtNumProcessoPesquisaRapida"
+BOTAO = "button[name=btnPesquisaRapidaSubmit]"
+
+
+def _guarda_na_tela_de_risco():
+    return GuardaNavegacao(modo=Modo.LEITURA, permissoes=[Permissao(
+        padrao_url=re.escape(TELA_DE_RISCO),
+        descricao="busca rapida de processo, somente leitura",
+        conferido_em="teste",
+        seletores_clicaveis=(BOTAO,),
+        seletores_preenchiveis=(BUSCA,),
+    )])
+
+
+def test_termo_de_risco_no_alvo_bloqueia_mesmo_se_a_permissao_o_nomear():
+    """Quem clica em salvar cadastro pratica o ato. Nomear nao autoriza."""
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[Permissao(
+        padrao_url=re.escape(TELA_DE_RISCO),
+        descricao="tela de cadastro",
+        conferido_em="teste",
+        seletores_clicaveis=("#btnSalvarCadastro",),
+    )])
+    decisao = guarda.avaliar(Acao.CLICAR, "#btnSalvarCadastro", url=TELA_DE_RISCO)
+    assert decisao.permitido is False
+    assert "no alvo" in decisao.motivo
+
+
+def test_busca_rapida_passa_na_tela_de_cadastro_porque_foi_nomeada():
+    guarda = _guarda_na_tela_de_risco()
+    assert guarda.avaliar(Acao.PREENCHER, BUSCA, url=TELA_DE_RISCO).permitido is True
+    assert guarda.avaliar(Acao.CLICAR, BOTAO, url=TELA_DE_RISCO).permitido is True
+
+
+def test_seletor_nao_nomeado_continua_bloqueado_na_tela_de_risco():
+    """E esta a unica camada que protege o botao Salvar do cadastro: o seletor
+    real dele e `button[name=btnSalvar]`, que NAO casa com termo de risco
+    nenhum, porque "salvar" cru foi tirado da lista em 22/09/2026. O que o barra
+    e nao estar nomeado."""
+    guarda = _guarda_na_tela_de_risco()
+    decisao = guarda.avaliar(Acao.CLICAR, "button[name=btnSalvar]", url=TELA_DE_RISCO)
+    assert decisao.permitido is False
+    assert "endereco da tela" in decisao.motivo
+
+
+def test_nomear_para_clicar_nao_autoriza_preencher_na_tela_de_risco():
+    """A conferencia e por acao, e nao por seletor solto."""
+    guarda = _guarda_na_tela_de_risco()
+    assert guarda.avaliar(Acao.PREENCHER, BOTAO, url=TELA_DE_RISCO).permitido is False
+
+
+def test_ler_e_navegar_nao_se_beneficiam_da_abertura():
+    """A brecha e so para clicar e preencher seletor nomeado. Ler e navegar nao
+    sao atos dirigidos a um seletor que a tela tenha liberado."""
+    guarda = _guarda_na_tela_de_risco()
+    assert guarda.avaliar(Acao.LER, BUSCA, url=TELA_DE_RISCO).permitido is False
+    assert guarda.avaliar(Acao.NAVEGAR, TELA_DE_RISCO, url=TELA_DE_RISCO).permitido is False
+
+
+def test_tela_sem_risco_segue_como_sempre():
+    guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[Permissao(
+        padrao_url=r"https://eproc\.exemplo/.*",
+        descricao="tela comum",
+        conferido_em="teste",
+        seletores_preenchiveis=(BUSCA,),
+    )])
+    limpa = "https://eproc.exemplo/controlador.php?acao=processo_consultar"
+    assert guarda.avaliar(Acao.PREENCHER, BUSCA, url=limpa).permitido is True
+    assert guarda.avaliar(Acao.PREENCHER, "#outro", url=limpa).permitido is False
