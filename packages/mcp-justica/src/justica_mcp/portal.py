@@ -2898,7 +2898,7 @@ def consultar_processo_estruturado(
 
     def capturar(pagina, guarda, estado_local, identidade):
         from .core.cnj import parse_numero
-        from .extracao import extrair_processo
+        from .extracao import esperar_tela_do_processo, extrair_processo
 
         numero = parse_numero(numero_processo)
         atual = pagina.url
@@ -2926,6 +2926,7 @@ def consultar_processo_estruturado(
         if guarda._termo_de_risco(pagina.url) is not None:
             guardado["erro"] = "Destino com termo de risco; leitura interrompida."
             return 1
+        esperar_tela_do_processo(pagina, 45)
         dados = extrair_processo(pagina, numero.formatado)
         dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
         estado_local.gravar_snapshot(
@@ -3331,13 +3332,18 @@ def consultar_processo(
             for e in erros:
                 print(f"    {e}")
 
-        from .extracao import extrair_processo, resumo
+        from .extracao import esperar_tela_do_processo, extrair_processo, resumo
 
-        # Assentar ANTES de ler, e nao so esperar a rede. O eproc chega nesta
-        # tela com `autocarregar=true` e monta o conteudo por script: a rede
-        # termina antes do desenho, e ler naquele instante devolve uma pagina
-        # sem tabela nenhuma, que e indistinguivel de processo inexistente.
+        # Esperar o CONTEUDO, e nao so a rede. O eproc chega nesta tela com
+        # `autocarregar=true`, navega no meio do caminho e traz os eventos
+        # depois do desenho: ler naquele instante devolve zero tabela, que e
+        # indistinguivel de processo inexistente.
         _assentar(pagina, segundos)
+        chegou = esperar_tela_do_processo(pagina, segundos)
+        if chegou == "nada":
+            print("  A tela do processo nao apareceu no tempo dado.")
+        elif chegou == "capa":
+            print("  A capa do processo apareceu, mas nenhuma linha de evento.")
         dados = extrair_processo(pagina, numero.formatado)
         if not dados["eventos"]:
             print("\n  [ATENCAO] Nenhum evento extraido. A tela pode ter outra")

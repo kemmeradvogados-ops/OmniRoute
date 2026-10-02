@@ -19,6 +19,49 @@ import re
 from typing import Any, Optional
 
 
+# Ancoras da tela de processo, lidas da tela real do eproc da Justica Federal do
+# Rio em 02/10/2026. `#tblEventos` e a tabela das movimentacoes, com uma linha
+# `tr#trEvento<N>` por evento; `#fldCapa` e a capa; `#divInfraAreaProcesso` e a
+# area que envolve as duas.
+ANCORAS_DA_TELA = "#tblEventos, #fldCapa, #divInfraAreaProcesso"
+LINHAS_DE_EVENTO = "#tblEventos tr[id^=trEvento]"
+
+
+def esperar_tela_do_processo(pagina: Any, segundos: int = 45) -> str:
+    """Espera a tela do processo terminar de montar. Devolve o que achou.
+
+    Por que nao basta esperar a rede assentar: o eproc chega nesta tela com
+    `autocarregar=true` e traz os eventos DEPOIS do desenho inicial, e ainda
+    navega no meio do caminho (`processo_consultar` leva a tela do processo).
+    Ler naquele instante devolve uma pagina com zero tabela, que e
+    indistinguivel de processo inexistente ou em segredo de justica.
+
+    Visto em campo em 02/10/2026: a leitura devolveu "Tabelas na pagina: []"
+    numa tela que, lida logo depois, tinha `#tblEventos` com 68 linhas de
+    evento. O defeito nao estava na extracao; estava no instante da leitura.
+
+    Devolve "eventos" quando as linhas ja estao la, "capa" quando a tela do
+    processo apareceu mas os eventos ainda nao, e "nada" quando nem isso. Nao
+    levanta erro: quem chama decide o que fazer, e o relato da tela continua
+    sendo entregue nos dois ultimos casos.
+    """
+    try:
+        pagina.wait_for_selector(ANCORAS_DA_TELA, timeout=segundos * 1000,
+                                 state="attached")
+    except Exception:
+        return "nada"
+    try:
+        # Metade do tempo para as linhas: a capa ja esta na tela, e esperar o
+        # mesmo tanto de novo dobraria a espera de uma tela que talvez nao tenha
+        # evento nenhum (processo recem-autuado existe).
+        pagina.wait_for_selector(LINHAS_DE_EVENTO,
+                                 timeout=max(segundos // 2, 5) * 1000,
+                                 state="attached")
+    except Exception:
+        return "capa"
+    return "eventos"
+
+
 def _texto(elemento: Any) -> str:
     try:
         return re.sub(r"\s+", " ", (elemento.inner_text() or "")).strip()

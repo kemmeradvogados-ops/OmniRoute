@@ -172,3 +172,68 @@ def test_resumo_mostra_contagens_e_os_mais_recentes():
     assert "eventos: 2" in texto
     assert "Conclusos para decisão" in texto
     assert "Juntada de petição" not in texto, "o resumo respeita o limite pedido"
+
+
+# ==========================================================================
+# A tela do eproc monta depois da rede
+#
+# Visto em campo em 02/10/2026: a leitura devolveu "Tabelas na pagina: []" numa
+# tela que, lida logo depois, tinha `#tblEventos` com 68 linhas de evento. O
+# defeito nao estava na extracao; estava no instante da leitura.
+# ==========================================================================
+
+from justica_mcp.extracao import (  # noqa: E402
+    ANCORAS_DA_TELA, LINHAS_DE_EVENTO, esperar_tela_do_processo,
+)
+
+
+class _TelaQueDemora:
+    """Conta as esperas e responde conforme o que ja teria montado."""
+
+    def __init__(self, tem_ancora=True, tem_eventos=True):
+        self.tem_ancora, self.tem_eventos = tem_ancora, tem_eventos
+        self.pedidos = []
+
+    def wait_for_selector(self, seletor, timeout=None, state=None):
+        self.pedidos.append((seletor, timeout))
+        if seletor == ANCORAS_DA_TELA and not self.tem_ancora:
+            raise TimeoutError("nao apareceu")
+        if seletor == LINHAS_DE_EVENTO and not self.tem_eventos:
+            raise TimeoutError("nao apareceu")
+        return object()
+
+
+def test_espera_a_capa_e_depois_as_linhas_de_evento():
+    tela = _TelaQueDemora()
+    assert esperar_tela_do_processo(tela, 40) == "eventos"
+    assert [p[0] for p in tela.pedidos] == [ANCORAS_DA_TELA, LINHAS_DE_EVENTO]
+
+
+def test_capa_sem_evento_e_dito_com_todas_as_letras():
+    """Processo recem-autuado existe e nao tem evento. Chamar isso de 'nada'
+    mandaria o operador procurar defeito onde ha so um processo novo."""
+    tela = _TelaQueDemora(tem_eventos=False)
+    assert esperar_tela_do_processo(tela, 40) == "capa"
+
+
+def test_tela_que_nao_aparece_devolve_nada_e_nao_levanta_erro():
+    """Quem chama precisa seguir para o relato da tela, que e o que permite
+    escrever a leitura certa depois."""
+    tela = _TelaQueDemora(tem_ancora=False)
+    assert esperar_tela_do_processo(tela, 40) == "nada"
+    assert len(tela.pedidos) == 1
+
+
+def test_a_espera_das_linhas_e_menor_que_a_da_capa():
+    """A capa ja esta na tela: esperar o mesmo tanto de novo dobraria a espera
+    de uma tela que talvez nao tenha evento nenhum."""
+    tela = _TelaQueDemora()
+    esperar_tela_do_processo(tela, 40)
+    capa, eventos = tela.pedidos[0][1], tela.pedidos[1][1]
+    assert eventos < capa
+
+
+def test_espera_curta_nao_vira_espera_de_zero():
+    tela = _TelaQueDemora()
+    esperar_tela_do_processo(tela, 2)
+    assert tela.pedidos[1][1] >= 5000
