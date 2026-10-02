@@ -1318,8 +1318,11 @@ SELETORES_POR_SISTEMA = {
     },
     # Lido do mapa de 22/09/2026 (eproc.jfrj.jus.br): form#frmLogin com
     # input#txtUsuario, input#pwdSenha e button#sbmEntrar. O segundo fator NAO
-    # aparece nesta tela (ha so o link a#lnk2fa), entao os campos dele ficam
-    # como estavam e so serao fixados quando uma tela real os mostrar.
+    # aparece nesta tela (ha so o link a#lnk2fa), e por isso os campos dele
+    # ficaram como palpite ate 02/10/2026, quando a autenticacao do TRF2 passou
+    # ponta a ponta: o codigo foi preenchido pelo cofre e o portal respondeu com
+    # a tela de selecao de perfil. Confirmados em campo, portanto, e nao mais
+    # deduzidos.
     "eproc": {
         "campo_usuario": "#txtUsuario",
         "campo_senha": "#pwdSenha",
