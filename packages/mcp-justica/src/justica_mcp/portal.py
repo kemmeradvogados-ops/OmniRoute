@@ -190,6 +190,32 @@ def abrir_navegador(p, oculto: bool, executavel):
     return contexto, pagina
 
 
+# Palavras que nomeiam campo de senha. Comparadas sem acento e em minusculas,
+# contra nome, identificador e rotulo do campo.
+MARCAS_DE_CAMPO_DE_SENHA = ("senha", "password", "passwd", "contrasena", "clave")
+
+
+def parece_campo_de_senha(tipo, nome, identificador, rotulo, autocomplete=None) -> bool:
+    """Diz se o campo guarda senha, sem depender so do atributo `type`.
+
+    Ate 02/10/2026 a regra era `tipo == "password"`, e o comentario dizia que o
+    tipo nao muda. A tela do eproc do Rio desmentiu isso: ela traz um olhinho de
+    mostrar a senha (`span#showHidePwd`) que TROCA o tipo do campo para `text`.
+    Lido em campo no mapa de 02/10/2026, com `#pwdSenha tipo=text`.
+
+    O estrago e duplo e silencioso. O relato deixava de marcar o campo como
+    SENHA, que e o aviso de que ali passa segredo; e `_tem_formulario_de_login`
+    passava a dizer que a tela de login nao tem formulario de login, o que faz a
+    conferencia de sessao cair em INDEFINIDO numa tela que e inequivoca.
+    """
+    if (tipo or "").lower() == "password":
+        return True
+    if "password" in (autocomplete or "").lower():
+        return True
+    texto = sem_acento(" ".join(p for p in (nome, identificador, rotulo) if p))
+    return any(marca in texto for marca in MARCAS_DE_CAMPO_DE_SENHA)
+
+
 @dataclass
 class Campo:
     marcador: str
@@ -328,7 +354,12 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             identificador=identificador,
             rotulo=rotulo or elemento.get_attribute("aria-label") or elemento.get_attribute("placeholder"),
             texto_visivel=None,
-            e_senha=tipo == "password",
+            e_senha=parece_campo_de_senha(
+                tipo, elemento.get_attribute("name"), identificador,
+                rotulo or elemento.get_attribute("aria-label")
+                or elemento.get_attribute("placeholder"),
+                extras.get("autocomplete"),
+            ),
             visivel=elemento.is_visible(),
             na_tela=_na_tela(elemento, largura, altura),
             habilitado=elemento.is_enabled(),
@@ -764,6 +795,14 @@ MARCAS_DE_SENHA_VENCIDA = (
 )
 
 
+def sem_acento(texto: str) -> str:
+    """Minusculas e sem acento, para comparar rotulo de tela com marca fixa."""
+    import unicodedata
+
+    decomposto = unicodedata.normalize("NFD", (texto or "").lower())
+    return "".join(c for c in decomposto if unicodedata.category(c) != "Mn")
+
+
 def senha_vencida(recados) -> bool:
     """Diz se algum recado da tela e de senha vencida.
 
@@ -772,12 +811,6 @@ def senha_vencida(recados) -> bool:
     a menos nao pode decidir se o operador vai renovar a senha ou procurar
     defeito no cofre.
     """
-    import unicodedata
-
-    def sem_acento(texto: str) -> str:
-        decomposto = unicodedata.normalize("NFD", (texto or "").lower())
-        return "".join(c for c in decomposto if unicodedata.category(c) != "Mn")
-
     for recado in recados or []:
         limpo = sem_acento(recado)
         if any(sem_acento(marca) in limpo for marca in MARCAS_DE_SENHA_VENCIDA):

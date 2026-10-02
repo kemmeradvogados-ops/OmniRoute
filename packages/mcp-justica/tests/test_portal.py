@@ -2533,3 +2533,76 @@ def test_codigo_recusado_encerra_antes_de_seguir_para_a_consulta():
     assert any(isinstance(no, ast.Return) for no in ramos[0].body), (
         "o ramo do codigo recusado precisa ENCERRAR a execucao: sem "
         "autenticacao, nada do que vem depois faz sentido")
+
+
+# ==========================================================================
+# Campo de senha que nao se declara senha
+#
+# Mapa do eproc do Rio em 02/10/2026: `#pwdSenha  tipo=text  rotulo='Senha'`.
+# O olhinho de mostrar a senha (span#showHidePwd) troca o tipo do campo. A
+# regra antiga, `tipo == "password"`, deixava de marcar o campo como SENHA no
+# relato e fazia `_tem_formulario_de_login` dizer que a tela de login do eproc
+# nao tem formulario de login.
+# ==========================================================================
+
+def test_campo_declarado_password_e_senha():
+    from justica_mcp.portal import parece_campo_de_senha
+
+    assert parece_campo_de_senha("password", "pwd", "pwd", None)
+
+
+def test_campo_do_eproc_com_tipo_trocado_pelo_olhinho_ainda_e_senha():
+    from justica_mcp.portal import parece_campo_de_senha
+
+    assert parece_campo_de_senha("text", "pwdSenha", "pwdSenha", "Senha")
+
+
+def test_rotulo_com_acento_nao_atrapalha():
+    from justica_mcp.portal import parece_campo_de_senha
+
+    assert parece_campo_de_senha("text", None, "campo7", "Informe sua Senha")
+
+
+def test_autocomplete_denuncia_o_campo_quando_o_nome_nao_denuncia():
+    from justica_mcp.portal import parece_campo_de_senha
+
+    assert parece_campo_de_senha("text", "f7", "f7", None, "current-password")
+
+
+def test_campo_comum_nao_vira_senha():
+    from justica_mcp.portal import parece_campo_de_senha
+
+    assert not parece_campo_de_senha("text", "txtUsuario", "txtUsuario", "Usuario")
+    assert not parece_campo_de_senha(
+        "text", "sidebar-searchbox", "sidebar-searchbox", "Pesquisar no Menu")
+
+
+def test_a_tela_do_eproc_passa_a_ser_reconhecida_como_login():
+    """Era o efeito pratico do defeito: a conferencia de sessao caia em
+    INDEFINIDO numa tela que e inequivoca."""
+    from justica_mcp.portal import Campo, _tem_formulario_de_login, parece_campo_de_senha
+
+    def _campo(tipo, nome, rotulo):
+        return Campo(
+            marcador="input", tipo=tipo, nome=nome, identificador=nome,
+            rotulo=rotulo, texto_visivel=None,
+            e_senha=parece_campo_de_senha(tipo, nome, nome, rotulo),
+        )
+
+    tela = [
+        _campo("text", "sidebar-searchbox", "Pesquisar no Menu (Alt + m)"),
+        _campo("text", "txtUsuario", "Usuario"),
+        _campo("text", "pwdSenha", "Senha"),
+    ]
+
+    class _Pagina:
+        pass
+
+    import justica_mcp.portal as portal_mod
+
+    original = portal_mod._coletar
+    portal_mod._coletar = lambda _p: (tela, [])
+    try:
+        assert _tem_formulario_de_login(_Pagina()) is True
+    finally:
+        portal_mod._coletar = original
