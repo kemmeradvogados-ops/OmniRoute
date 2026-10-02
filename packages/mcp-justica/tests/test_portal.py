@@ -2781,3 +2781,105 @@ def test_a_trava_registra_o_clique_de_gerar_nominalmente():
     _gerar_integra_do_eproc(_TelaDeAgendamento(), guarda, 10)
     assert [r["alvo"] for r in guarda.registro] == ["#btnGerar"]
     assert guarda.registro[0]["permitido"] is True
+
+
+# ==========================================================================
+# Sessao aberta nao se reautentica
+#
+# Ate 02/10/2026 o comando mandava credencial e codigo SEMPRE, e so depois
+# reparava que o portal nao tinha pedido o segundo fator porque a sessao ja
+# valia. O navegador roda com perfil persistente, entao a sessao do eproc
+# sobrevive entre execucoes: cada consulta gastava um login a toa. Varios
+# logins seguidos do mesmo lugar foi o que levantou o desafio do Cloudflare no
+# TRF2. A autenticacao que nao precisava acontecer e a que nao deve acontecer.
+# ==========================================================================
+
+class _TelaDeSessao:
+    """Fake de tela, com ou sem formulario de login e com ou sem a prova."""
+
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, com_login=False, com_busca=False):
+        self.com_login, self.com_busca = com_login, com_busca
+
+    def query_selector_all(self, seletor):
+        if seletor == "#txtNumProcessoPesquisaRapida" and self.com_busca:
+            class _Elemento:
+                def is_visible(self):
+                    return True
+
+                def bounding_box(self):
+                    return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+            return [_Elemento()]
+        return []
+
+
+def _fingir_coletar(monkeypatch, tem_senha, perfis=()):
+    from justica_mcp.portal import Campo
+
+    campos = [Campo(marcador="input", tipo="password", nome="pwd", identificador="pwd",
+                    rotulo="Senha", texto_visivel=None, e_senha=True)] if tem_senha else []
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: (campos, list(perfis)))
+
+
+def test_tela_de_login_nunca_conta_como_sessao_aberta(monkeypatch):
+    from justica_mcp.portal import _sessao_ja_aberta
+
+    _fingir_coletar(monkeypatch, tem_senha=True)
+    assert _sessao_ja_aberta(_TelaDeSessao(com_busca=True), "eproc") is False
+
+
+def test_a_barra_de_busca_do_eproc_prova_que_a_sessao_vale(monkeypatch):
+    """A tela de entrada do eproc NAO tem essa barra; a de dentro tem. Os dois
+    mapas sao de 02/10/2026."""
+    from justica_mcp.portal import _sessao_ja_aberta
+
+    _fingir_coletar(monkeypatch, tem_senha=False)
+    assert _sessao_ja_aberta(_TelaDeSessao(com_busca=True), "eproc") is True
+
+
+def test_ausencia_de_login_sozinha_nao_prova_nada(monkeypatch):
+    """Tela de erro, de manutencao ou de aviso tambem nao tem formulario de
+    login. Concluir por ausencia faria o comando seguir como autenticado sem
+    estar, e o operador leria 'processo nao encontrado' sobre processo que
+    existe."""
+    from justica_mcp.portal import _sessao_ja_aberta
+
+    _fingir_coletar(monkeypatch, tem_senha=False)
+    assert _sessao_ja_aberta(_TelaDeSessao(), "eproc") is False
+
+
+def test_sistema_sem_prova_conferida_nao_ganha_prova_inventada(monkeypatch):
+    """Nenhuma tela interna do PJe foi lida ainda."""
+    from justica_mcp.portal import _sessao_ja_aberta
+
+    _fingir_coletar(monkeypatch, tem_senha=False)
+    assert _sessao_ja_aberta(_TelaDeSessao(com_busca=True), "pje") is False
+
+
+def test_tela_de_selecao_de_perfil_prova_sessao_em_qualquer_sistema(monkeypatch):
+    from justica_mcp.portal import Campo, _sessao_ja_aberta
+
+    # `formulario` importa: no eproc os botoes de perfil vivem em
+    # `frmEscolherUsuario`, e e por isso que `_perfis_disponiveis` os reconhece.
+    botao = Campo(marcador="tr", tipo="", nome=None, identificador="tr0",
+                  rotulo=None, texto_visivel="RJ168943\nADVOGADO", e_senha=False,
+                  formulario="frmEscolherUsuario")
+    _fingir_coletar(monkeypatch, tem_senha=False, perfis=[botao])
+    assert _sessao_ja_aberta(_TelaDeSessao(), "pje") is True
+
+
+def test_a_credencial_so_e_enviada_quando_a_sessao_nao_vale():
+    """Guarda a forma do codigo: as duas etapas ficam sob `if not
+    sessao_aberta`, e a pergunta vem ANTES delas."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    antes, depois = fonte.split("if not sessao_aberta:", 1)
+    assert "_sessao_ja_aberta(" in antes
+    assert "etapa 1: credencial" not in antes
+    assert "etapa 1: credencial" in depois
+    assert "etapa 2: segundo fator" in depois

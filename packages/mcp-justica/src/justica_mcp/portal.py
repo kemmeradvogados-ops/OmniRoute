@@ -1830,271 +1830,295 @@ def autenticar(
             ):
                 return 1
 
-            # ---------- etapa 1: credencial ----------
-            for seletor, valor, rotulo in (
-                (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
-            ):
-                elemento = pagina.query_selector(seletor)
-                if elemento is None:
-                    print(f"  [FALHA] Campo de {rotulo} nao encontrado. Nada enviado.")
-                    return 1
-                guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
-                elemento.click()
-                elemento.fill(valor)
-
-            alvo = pagina.query_selector(campo_senha_oculto)
-            if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
-                print("  [ABORTADO] A senha nao chegou ao campo enviado. Nada enviado.")
-                return 1
-
-            guarda.pode_executar(Acao.CLICAR, botao_entrar, url=url)
-            estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
-                             sistema=identidade.sistema, resultado="enviado")
-            print("  Etapa 1: credencial enviada (uma vez).")
-            pagina.query_selector(botao_entrar).click()
-            try:
-                pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
-            except Exception:
-                pass
-
-            # O desafio do Cloudflare tambem aparece DEPOIS do envio da
-            # credencial, e nao so na abertura da pagina. Verificado em campo em
-            # 21 de setembro de 2026: o portal devolveu
-            # `acao=principal&acao_retorno=login` com o botao Enviar do desafio.
-            # A espera so rodava na abertura, entao o comando desistia de um
-            # login que apenas aguardava a pessoa, e gastava a tentativa a toa.
-            if achar_opcional(pagina, campo_codigo) is None and _ha_desafio_humano(pagina):
-                # Tres desfechos possiveis depois que a pessoa responde, e os
-                # tres precisam ser reconhecidos. Reconhecer so o segundo fator
-                # fazia o comando esperar os 180 segundos inteiros e desistir de
-                # um desafio que ja tinha sido resolvido.
-                def _passou(p):
-                    alvo = achar_opcional(p, campo_codigo)
-                    if alvo is not None and alvo.is_visible():
-                        return True          # foi direto ao segundo fator
-                    if _ja_autenticado(p):
-                        return True          # foi direto a selecao de perfil
-                    if _ha_desafio_humano(p):
-                        return False         # ainda no desafio
-                    usuario = p.query_selector(campo_usuario)
-                    return usuario is not None and usuario.is_visible()
-
-                _aguardar_desafio_humano(
-                    pagina, campo_codigo, espera_humana, oculto, pronto=_passou
+            # ---------- etapa 0: a sessao ja esta aberta? ----------
+            # Ate 02/10/2026 esta pergunta nunca era feita ANTES. O comando
+            # mandava credencial e codigo sempre, e so DEPOIS reparava que o
+            # portal nao tinha pedido o segundo fator porque a sessao ja valia.
+            # O preco disso aparecia inteiro em campo: o navegador roda com
+            # perfil persistente, entao a sessao do eproc sobrevive entre
+            # execucoes, e mesmo assim cada consulta gastava um login. Varios
+            # logins seguidos do mesmo lugar foi o que acabou levantando o
+            # desafio do Cloudflare no TRF2 em 02/10/2026.
+            #
+            # Nao se trata de contornar o desafio, e sim de parar de provoca-lo:
+            # a autenticacao que nao precisava acontecer e a que nao deve
+            # acontecer.
+            sessao_aberta = _sessao_ja_aberta(pagina, identidade.sistema)
+            if sessao_aberta:
+                print("  SESSAO REAPROVEITADA: o portal ja reconhece este navegador.")
+                print("  Nenhuma credencial foi enviada e nenhuma tentativa foi gasta.")
+                estado.registrar(
+                    acao="login_sessao_reaproveitada", tribunal=identidade.tribunal,
+                    sistema=identidade.sistema, resultado="sessao_valida",
                 )
-                # Se o portal devolveu o formulario de login, a credencial
-                # precisa ser reenviada. Este comando NAO reenvia sozinho: uma
-                # credencial recusada tambem devolve o formulario, e reenviar as
-                # cegas e como se bloqueia uma conta. O relato abaixo diz o que
-                # apareceu, e a decisao de repetir fica com o operador.
-                voltou = pagina.query_selector(campo_usuario)
-                if (achar_opcional(pagina, campo_codigo) is None
-                        and not _ha_desafio_humano(pagina)
-                        and voltou is not None and voltou.is_visible()):
-                    print("\n  O portal voltou ao formulario de login apos o desafio.")
-                    erros_do_desafio = _mensagens_de_erro(pagina)
-                    if erros_do_desafio:
-                        print("  MAS ha mensagem na tela, entao a credencial pode ter sido")
-                        print("  recusada. NAO foi reenviada:")
-                        for e in erros_do_desafio:
-                            print(f"    {e}")
-                    elif not reenviar:
-                        print("  A credencial precisa ser enviada de novo. Este comando nao")
-                        print("  faz isso sozinho por padrao: credencial recusada devolve a")
-                        print("  mesma tela, e reenviar as cegas e como se bloqueia conta.")
-                        print("  Sem mensagem de erro acima, ha dois caminhos:")
-                        print("    repetir o comando (a liberacao fica guardada no perfil), ou")
-                        print("    acrescentar --reenviar-apos-desafio para o reenvio na hora.")
-                    else:
-                        # Autorizado pelo operador na linha de comando, e so
-                        # quando NAO ha mensagem de erro. Nao e repetir uma
-                        # tentativa recusada: a primeira nunca chegou a ser
-                        # avaliada, foi desviada para o desafio.
-                        print("  Sem mensagem de erro, e o reenvio foi autorizado no comando.")
-                        if _reenviar_credencial(
-                            pagina, guarda, url, login, senha, campo_usuario, campo_senha,
-                            campo_senha_oculto, botao_entrar, segundos,
-                        ):
-                            estado.registrar(
-                                acao="login_resultado_credencial",
-                                tribunal=identidade.tribunal, sistema=identidade.sistema,
-                                resultado="reenviada_apos_desafio",
-                            )
+                final = pagina.url
 
-            erros = _mensagens_de_erro(pagina)
-            campo = achar_opcional(pagina, campo_codigo)
-            if campo is None:
-                # Duas situacoes muito diferentes chegavam aqui com a mesma
-                # mensagem de uma linha: credencial recusada e portal que
-                # simplesmente nao pediu o segundo fator porque a sessao
-                # anterior continua valida. Sem distinguir, o operador nao
-                # sabia se devia conferir a senha ou apenas rodar de novo, e a
-                # orientacao errada custa tentativas de uma conta que bloqueia.
-                if not _ja_autenticado(pagina):
-                    print("\n  [PARADO] A tela do segundo fator nao apareceu.")
-                    if erros:
-                        print("  Mensagens na tela:")
-                        for e in erros:
-                            print(f"    {e}")
-                    if senha_vencida(erros):
-                        # Sem esta distincao, o conselho impresso logo abaixo
-                        # ("confira o cofre") manda o operador procurar defeito
-                        # onde nao ha: a senha guardada esta certa, e o portal
-                        # e que nao a aceita mais.
-                        print("\n  ISTO NAO E RECUSA DE CREDENCIAL: a senha venceu.")
-                        print("  Conferir o cofre nao resolve, e repetir o comando so")
-                        print("  gasta tentativas de uma conta cuja senha o portal ja")
-                        print("  nao aceita. O caminho e renovar a senha NO PORTAL, no")
-                        print("  seu navegador comum, e depois grava-la aqui com:")
-                        print(f"    justica-credenciais guardar --tribunal "
-                              f"{identidade.tribunal} --sistema {identidade.sistema} "
-                              "--so-senha --janela")
-                        estado.registrar(
-                            acao="login_resultado_credencial",
-                            tribunal=identidade.tribunal,
-                            sistema=identidade.sistema, resultado="senha_vencida")
-                        _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
+            if not sessao_aberta:
+                # ---------- etapa 1: credencial ----------
+                for seletor, valor, rotulo in (
+                    (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
+                ):
+                    elemento = pagina.query_selector(seletor)
+                    if elemento is None:
+                        print(f"  [FALHA] Campo de {rotulo} nao encontrado. Nada enviado.")
                         return 1
-                    _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
-                    print("\n  NAO repita o comando antes de conferir o que ha acima:")
-                    print("  se for recusa de credencial, repetir queima tentativa da conta.")
-                    # Nome proprio, de proposito: este e o DESFECHO da etapa,
-                    # nao um segundo envio. Com o mesmo nome do envio, uma
-                    # unica tentativa consumia duas das seis do teto, e o
-                    # advogado ficava sem acesso na metade das tentativas que
-                    # acreditava ter.
-                    estado.registrar(acao="login_resultado_credencial",
-                                     tribunal=identidade.tribunal,
-                                     sistema=identidade.sistema, resultado="sem_tela_de_codigo")
-                    return 1
-                print("  Etapa 2: o portal nao pediu o segundo fator; "
-                      "a sessao ja esta autenticada.")
-                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
-                                 sistema=identidade.sistema, resultado="nao_solicitado")
-            else:
-                # ---------- etapa 2: segundo fator ----------
-                # Dois tipos de segundo fator, e a diferenca nao e detalhe: com
-                # semente o cofre GERA o codigo; sem semente quem o tem e a
-                # pessoa, porque o portal o enviou. Presumir semente para todos
-                # foi viavel enquanto so havia o eproc, e quebrou no e-SAJ.
-                if cofre.tem_semente(identidade):
-                    # Exige janela util: codigo gerado no fim da validade expira
-                    # entre o preenchimento e o envio, e o portal registra falha
-                    # por um motivo que nao e culpa da credencial.
-                    restante = cofre.segundos_restantes_do_codigo()
-                    if restante < 8:
-                        print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
-                    codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
-                    validade = f", valido por mais {cofre.segundos_restantes_do_codigo()}s"
-                else:
-                    tamanho = None
-                    bruto = campo.get_attribute("maxlength")
-                    if bruto and bruto.isdigit():
-                        tamanho = int(bruto)
-                    try:
-                        rotulo_do_campo = (campo.get_attribute("aria-label")
-                                           or campo.get_attribute("placeholder") or "")
-                        rotulo_do_campo = " ".join(rotulo_do_campo.split())[:120] or None
-                    except Exception:
-                        rotulo_do_campo = None
-                    codigo = _codigo_do_operador(identidade.rotulo, tamanho, oculto,
-                                                 rotulo_do_campo)
-                    if codigo is None:
-                        estado.registrar(
-                            acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
-                            sistema=identidade.sistema, resultado="codigo_nao_informado",
-                        )
-                        return 1
-                    validade = " (informado pelo operador)"
+                    guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
+                    elemento.click()
+                    elemento.fill(valor)
 
-                guarda.pode_executar(Acao.PREENCHER, campo_codigo, url=url)
-                try:
-                    campo.click()
-                    campo.fill(codigo)
-                    conferido = campo.evaluate("e => (e.value || '').length")
-                except Exception as exc:
-                    # A janela pode ter sido fechada, ou a propria pessoa pode
-                    # ter concluido o login nela enquanto o programa esperava o
-                    # codigo no terminal. Conferido em campo em 30/09/2026: o
-                    # erro subia como traceback de Playwright, o que parece
-                    # defeito grave e nao e. Estes dois desfechos precisam ser
-                    # ditos em portugues, porque a providencia e diferente em
-                    # cada um e nenhuma delas e "conferir a senha".
-                    print(f"\n  [PARADO] Nao consegui preencher o codigo: "
-                          f"{type(exc).__name__}.")
-                    if "closed" in str(exc).lower():
-                        print("  A janela do navegador nao esta mais aberta.")
-                        print("  Se foi voce que concluiu o login por la, esta tudo bem:")
-                        print("  a sessao ficou no perfil. Confira sem gastar tentativa:")
-                        print(f"    justica-portal sessao --tribunal {identidade.tribunal} "
-                              f"--sistema {identidade.sistema}")
-                        print("  Se a janela fechou sozinha, repita o comando.")
-                    estado.registrar(
-                        acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
-                        sistema=identidade.sistema, resultado="janela_indisponivel")
+                alvo = pagina.query_selector(campo_senha_oculto)
+                if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
+                    print("  [ABORTADO] A senha nao chegou ao campo enviado. Nada enviado.")
                     return 1
-                if conferido != len(codigo):
-                    print(f"  [ABORTADO] O codigo nao entrou no campo ({conferido} de {len(codigo)}).")
-                    print("             Nada foi enviado, para nao gastar tentativa.")
-                    return 1
-                print(f"  Etapa 2: codigo preenchido{validade}.")
 
-                guarda.pode_executar(Acao.CLICAR, botao_validar, url=url)
-                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                guarda.pode_executar(Acao.CLICAR, botao_entrar, url=url)
+                estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
                                  sistema=identidade.sistema, resultado="enviado")
-                pagina.query_selector(botao_validar).click()
+                print("  Etapa 1: credencial enviada (uma vez).")
+                pagina.query_selector(botao_entrar).click()
                 try:
                     pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
                 except Exception:
                     pass
 
-            # ---------- resultado ----------
-            final = pagina.url
-            print(f"\n  Endereco final: {final}")
-            print(f"  Titulo: {pagina.title()!r}\n")
+                # O desafio do Cloudflare tambem aparece DEPOIS do envio da
+                # credencial, e nao so na abertura da pagina. Verificado em campo em
+                # 21 de setembro de 2026: o portal devolveu
+                # `acao=principal&acao_retorno=login` com o botao Enviar do desafio.
+                # A espera so rodava na abertura, entao o comando desistia de um
+                # login que apenas aguardava a pessoa, e gastava a tentativa a toa.
+                if achar_opcional(pagina, campo_codigo) is None and _ha_desafio_humano(pagina):
+                    # Tres desfechos possiveis depois que a pessoa responde, e os
+                    # tres precisam ser reconhecidos. Reconhecer so o segundo fator
+                    # fazia o comando esperar os 180 segundos inteiros e desistir de
+                    # um desafio que ja tinha sido resolvido.
+                    def _passou(p):
+                        alvo = achar_opcional(p, campo_codigo)
+                        if alvo is not None and alvo.is_visible():
+                            return True          # foi direto ao segundo fator
+                        if _ja_autenticado(p):
+                            return True          # foi direto a selecao de perfil
+                        if _ha_desafio_humano(p):
+                            return False         # ainda no desafio
+                        usuario = p.query_selector(campo_usuario)
+                        return usuario is not None and usuario.is_visible()
 
-            erros = _mensagens_de_erro(pagina)
-            if erros:
-                print("  MENSAGENS NA TELA:")
-                for e in erros:
-                    print(f"    {e}")
-                print()
+                    _aguardar_desafio_humano(
+                        pagina, campo_codigo, espera_humana, oculto, pronto=_passou
+                    )
+                    # Se o portal devolveu o formulario de login, a credencial
+                    # precisa ser reenviada. Este comando NAO reenvia sozinho: uma
+                    # credencial recusada tambem devolve o formulario, e reenviar as
+                    # cegas e como se bloqueia uma conta. O relato abaixo diz o que
+                    # apareceu, e a decisao de repetir fica com o operador.
+                    voltou = pagina.query_selector(campo_usuario)
+                    if (achar_opcional(pagina, campo_codigo) is None
+                            and not _ha_desafio_humano(pagina)
+                            and voltou is not None and voltou.is_visible()):
+                        print("\n  O portal voltou ao formulario de login apos o desafio.")
+                        erros_do_desafio = _mensagens_de_erro(pagina)
+                        if erros_do_desafio:
+                            print("  MAS ha mensagem na tela, entao a credencial pode ter sido")
+                            print("  recusada. NAO foi reenviada:")
+                            for e in erros_do_desafio:
+                                print(f"    {e}")
+                        elif not reenviar:
+                            print("  A credencial precisa ser enviada de novo. Este comando nao")
+                            print("  faz isso sozinho por padrao: credencial recusada devolve a")
+                            print("  mesma tela, e reenviar as cegas e como se bloqueia conta.")
+                            print("  Sem mensagem de erro acima, ha dois caminhos:")
+                            print("    repetir o comando (a liberacao fica guardada no perfil), ou")
+                            print("    acrescentar --reenviar-apos-desafio para o reenvio na hora.")
+                        else:
+                            # Autorizado pelo operador na linha de comando, e so
+                            # quando NAO ha mensagem de erro. Nao e repetir uma
+                            # tentativa recusada: a primeira nunca chegou a ser
+                            # avaliada, foi desviada para o desafio.
+                            print("  Sem mensagem de erro, e o reenvio foi autorizado no comando.")
+                            if _reenviar_credencial(
+                                pagina, guarda, url, login, senha, campo_usuario, campo_senha,
+                                campo_senha_oculto, botao_entrar, segundos,
+                            ):
+                                estado.registrar(
+                                    acao="login_resultado_credencial",
+                                    tribunal=identidade.tribunal, sistema=identidade.sistema,
+                                    resultado="reenviada_apos_desafio",
+                                )
 
-            ainda_pede_codigo = achar_opcional(pagina, campo_codigo) is not None
-            if ainda_pede_codigo:
-                print("  A tela ainda pede o codigo: a validacao NAO passou.")
-                # O recado do portal e o que separa codigo errado de codigo
-                # vencido, e um do outro muda o que se faz em seguida: o
-                # primeiro e semente errada no cofre, o segundo e so tempo.
-                recados = _mensagens_de_erro(pagina)
-                if recados:
-                    print("  O portal disse:")
-                    for recado in recados:
-                        print(f"    {recado}")
+                erros = _mensagens_de_erro(pagina)
+                campo = achar_opcional(pagina, campo_codigo)
+                if campo is None:
+                    # Duas situacoes muito diferentes chegavam aqui com a mesma
+                    # mensagem de uma linha: credencial recusada e portal que
+                    # simplesmente nao pediu o segundo fator porque a sessao
+                    # anterior continua valida. Sem distinguir, o operador nao
+                    # sabia se devia conferir a senha ou apenas rodar de novo, e a
+                    # orientacao errada custa tentativas de uma conta que bloqueia.
+                    if not _ja_autenticado(pagina):
+                        print("\n  [PARADO] A tela do segundo fator nao apareceu.")
+                        if erros:
+                            print("  Mensagens na tela:")
+                            for e in erros:
+                                print(f"    {e}")
+                        if senha_vencida(erros):
+                            # Sem esta distincao, o conselho impresso logo abaixo
+                            # ("confira o cofre") manda o operador procurar defeito
+                            # onde nao ha: a senha guardada esta certa, e o portal
+                            # e que nao a aceita mais.
+                            print("\n  ISTO NAO E RECUSA DE CREDENCIAL: a senha venceu.")
+                            print("  Conferir o cofre nao resolve, e repetir o comando so")
+                            print("  gasta tentativas de uma conta cuja senha o portal ja")
+                            print("  nao aceita. O caminho e renovar a senha NO PORTAL, no")
+                            print("  seu navegador comum, e depois grava-la aqui com:")
+                            print(f"    justica-credenciais guardar --tribunal "
+                                  f"{identidade.tribunal} --sistema {identidade.sistema} "
+                                  "--so-senha --janela")
+                            estado.registrar(
+                                acao="login_resultado_credencial",
+                                tribunal=identidade.tribunal,
+                                sistema=identidade.sistema, resultado="senha_vencida")
+                            _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
+                            return 1
+                        _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
+                        print("\n  NAO repita o comando antes de conferir o que ha acima:")
+                        print("  se for recusa de credencial, repetir queima tentativa da conta.")
+                        # Nome proprio, de proposito: este e o DESFECHO da etapa,
+                        # nao um segundo envio. Com o mesmo nome do envio, uma
+                        # unica tentativa consumia duas das seis do teto, e o
+                        # advogado ficava sem acesso na metade das tentativas que
+                        # acreditava ter.
+                        estado.registrar(acao="login_resultado_credencial",
+                                         tribunal=identidade.tribunal,
+                                         sistema=identidade.sistema, resultado="sem_tela_de_codigo")
+                        return 1
+                    print("  Etapa 2: o portal nao pediu o segundo fator; "
+                          "a sessao ja esta autenticada.")
+                    estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                     sistema=identidade.sistema, resultado="nao_solicitado")
                 else:
-                    print("  O portal nao deixou mensagem nenhuma na tela.")
-                print("  NAO repita o comando. Confira a semente com:")
-                print("    justica-credenciais testar --tribunal "
-                      f"{identidade.tribunal} --sistema {identidade.sistema}")
-                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
-                                 sistema=identidade.sistema, resultado="recusado")
-                # PARA AQUI. Ate 30/09/2026 nao parava: o comando imprimia
-                # "a validacao NAO passou" e seguia para a selecao de perfil e
-                # para o `apos_autenticar` como se nada tivesse acontecido. Na
-                # pratica a consulta era disparada de dentro da tela de login,
-                # o portal a devolvia para o servidor de autenticacao, e a trava
-                # a barrava por dominio diferente. Ou seja: o operador via uma
-                # falha de navegacao no fim do relato e precisava subir vinte
-                # linhas para descobrir que o defeito de verdade era o codigo
-                # recusado. Sem autenticacao, nada do que vem depois faz sentido.
-                return 1
-            else:
-                print("  AUTENTICADO. A sessao esta aberta neste navegador.")
-                estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
-                                 sistema=identidade.sistema, resultado="autenticado")
-                # Zera o teto: a sequencia de falhas que ele mede terminou aqui.
-                estado.registrar(acao=ACAO_SUCESSO, tribunal=identidade.tribunal,
-                                 sistema=identidade.sistema, resultado="autenticado")
+                    # ---------- etapa 2: segundo fator ----------
+                    # Dois tipos de segundo fator, e a diferenca nao e detalhe: com
+                    # semente o cofre GERA o codigo; sem semente quem o tem e a
+                    # pessoa, porque o portal o enviou. Presumir semente para todos
+                    # foi viavel enquanto so havia o eproc, e quebrou no e-SAJ.
+                    if cofre.tem_semente(identidade):
+                        # Exige janela util: codigo gerado no fim da validade expira
+                        # entre o preenchimento e o envio, e o portal registra falha
+                        # por um motivo que nao e culpa da credencial.
+                        restante = cofre.segundos_restantes_do_codigo()
+                        if restante < 8:
+                            print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
+                        codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
+                        validade = f", valido por mais {cofre.segundos_restantes_do_codigo()}s"
+                    else:
+                        tamanho = None
+                        bruto = campo.get_attribute("maxlength")
+                        if bruto and bruto.isdigit():
+                            tamanho = int(bruto)
+                        try:
+                            rotulo_do_campo = (campo.get_attribute("aria-label")
+                                               or campo.get_attribute("placeholder") or "")
+                            rotulo_do_campo = " ".join(rotulo_do_campo.split())[:120] or None
+                        except Exception:
+                            rotulo_do_campo = None
+                        codigo = _codigo_do_operador(identidade.rotulo, tamanho, oculto,
+                                                     rotulo_do_campo)
+                        if codigo is None:
+                            estado.registrar(
+                                acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                sistema=identidade.sistema, resultado="codigo_nao_informado",
+                            )
+                            return 1
+                        validade = " (informado pelo operador)"
+
+                    guarda.pode_executar(Acao.PREENCHER, campo_codigo, url=url)
+                    try:
+                        campo.click()
+                        campo.fill(codigo)
+                        conferido = campo.evaluate("e => (e.value || '').length")
+                    except Exception as exc:
+                        # A janela pode ter sido fechada, ou a propria pessoa pode
+                        # ter concluido o login nela enquanto o programa esperava o
+                        # codigo no terminal. Conferido em campo em 30/09/2026: o
+                        # erro subia como traceback de Playwright, o que parece
+                        # defeito grave e nao e. Estes dois desfechos precisam ser
+                        # ditos em portugues, porque a providencia e diferente em
+                        # cada um e nenhuma delas e "conferir a senha".
+                        print(f"\n  [PARADO] Nao consegui preencher o codigo: "
+                              f"{type(exc).__name__}.")
+                        if "closed" in str(exc).lower():
+                            print("  A janela do navegador nao esta mais aberta.")
+                            print("  Se foi voce que concluiu o login por la, esta tudo bem:")
+                            print("  a sessao ficou no perfil. Confira sem gastar tentativa:")
+                            print(f"    justica-portal sessao --tribunal {identidade.tribunal} "
+                                  f"--sistema {identidade.sistema}")
+                            print("  Se a janela fechou sozinha, repita o comando.")
+                        estado.registrar(
+                            acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, resultado="janela_indisponivel")
+                        return 1
+                    if conferido != len(codigo):
+                        print(f"  [ABORTADO] O codigo nao entrou no campo ({conferido} de {len(codigo)}).")
+                        print("             Nada foi enviado, para nao gastar tentativa.")
+                        return 1
+                    print(f"  Etapa 2: codigo preenchido{validade}.")
+
+                    guarda.pode_executar(Acao.CLICAR, botao_validar, url=url)
+                    estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                     sistema=identidade.sistema, resultado="enviado")
+                    pagina.query_selector(botao_validar).click()
+                    try:
+                        pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+                    except Exception:
+                        pass
+
+                # ---------- resultado ----------
+                final = pagina.url
+                print(f"\n  Endereco final: {final}")
+                print(f"  Titulo: {pagina.title()!r}\n")
+
+                erros = _mensagens_de_erro(pagina)
+                if erros:
+                    print("  MENSAGENS NA TELA:")
+                    for e in erros:
+                        print(f"    {e}")
+                    print()
+
+                ainda_pede_codigo = achar_opcional(pagina, campo_codigo) is not None
+                if ainda_pede_codigo:
+                    print("  A tela ainda pede o codigo: a validacao NAO passou.")
+                    # O recado do portal e o que separa codigo errado de codigo
+                    # vencido, e um do outro muda o que se faz em seguida: o
+                    # primeiro e semente errada no cofre, o segundo e so tempo.
+                    recados = _mensagens_de_erro(pagina)
+                    if recados:
+                        print("  O portal disse:")
+                        for recado in recados:
+                            print(f"    {recado}")
+                    else:
+                        print("  O portal nao deixou mensagem nenhuma na tela.")
+                    print("  NAO repita o comando. Confira a semente com:")
+                    print("    justica-credenciais testar --tribunal "
+                          f"{identidade.tribunal} --sistema {identidade.sistema}")
+                    estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                     sistema=identidade.sistema, resultado="recusado")
+                    # PARA AQUI. Ate 30/09/2026 nao parava: o comando imprimia
+                    # "a validacao NAO passou" e seguia para a selecao de perfil e
+                    # para o `apos_autenticar` como se nada tivesse acontecido. Na
+                    # pratica a consulta era disparada de dentro da tela de login,
+                    # o portal a devolvia para o servidor de autenticacao, e a trava
+                    # a barrava por dominio diferente. Ou seja: o operador via uma
+                    # falha de navegacao no fim do relato e precisava subir vinte
+                    # linhas para descobrir que o defeito de verdade era o codigo
+                    # recusado. Sem autenticacao, nada do que vem depois faz sentido.
+                    return 1
+                else:
+                    print("  AUTENTICADO. A sessao esta aberta neste navegador.")
+                    estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
+                                     sistema=identidade.sistema, resultado="autenticado")
+                    # Zera o teto: a sequencia de falhas que ele mede terminou aqui.
+                    estado.registrar(acao=ACAO_SUCESSO, tribunal=identidade.tribunal,
+                                     sistema=identidade.sistema, resultado="autenticado")
 
             termo = guarda._termo_de_risco(final)
             if termo is not None:
@@ -2680,6 +2704,40 @@ def _ja_autenticado(pagina) -> bool:
     except Exception:
         return False
     return bool(_perfis_disponiveis(botoes))
+
+
+# Prova POSITIVA de sessao aberta, por sistema. Cada entrada e um seletor que
+# so existe DEPOIS do login, conferido nos mapas das duas telas reais.
+#
+#   eproc  o mapa da tela de entrada (02/10/2026) tem `#txtUsuario`, `#pwdSenha`
+#          e `#sidebar-searchbox`, e NAO tem a barra de busca de processo. O
+#          mapa de dentro, do mesmo dia, tem `#txtNumProcessoPesquisaRapida` em
+#          `form#formPesquisaRapida`. A presenca dela separa as duas telas.
+#
+# O PJe nao esta aqui de proposito: nenhuma tela interna dele foi lida ainda, e
+# inventar uma prova faria o comando seguir como autenticado sem estar.
+PROVA_DE_SESSAO_POR_SISTEMA = {
+    "eproc": ("#txtNumProcessoPesquisaRapida",),
+}
+
+
+def _sessao_ja_aberta(pagina, sistema: str) -> bool:
+    """Diz se a sessao ja vale, por PROVA POSITIVA e nunca por ausencia.
+
+    Duas condicoes, as duas necessarias. Nao pode haver formulario de login na
+    tela, e tem de haver algo que so existe depois do login. Concluir por
+    ausencia aqui seria o pior erro possivel: o comando seguiria como
+    autenticado numa tela de erro ou de manutencao, tentaria consultar, e o
+    operador leria "processo nao encontrado" sobre um processo que existe.
+    """
+    if _tem_formulario_de_login(pagina):
+        return False
+    if _ja_autenticado(pagina):
+        return True
+    for prova in PROVA_DE_SESSAO_POR_SISTEMA.get((sistema or "").lower().strip(), ()):
+        if elemento_visivel(pagina, prova) is not None:
+            return True
+    return False
 
 
 def caminhos_de_navegacao(ligacoes) -> list[str]:
