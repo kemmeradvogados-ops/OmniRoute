@@ -210,7 +210,16 @@ def parece_campo_de_senha(tipo, nome, identificador, rotulo, autocomplete=None) 
     """
     if (tipo or "").lower() == "password":
         return True
-    if "password" in (autocomplete or "").lower():
+    # SO `current-password`, e nao qualquer `autocomplete` com "password".
+    # A primeira versao desta funcao aceitava os dois, e a tela de cadastro do
+    # eproc do Rio desmentiu isso no mesmo dia (02/10/2026): ela marca CPF, RG,
+    # orgao emissor e data de emissao com `autocomplete=new-password`, que ali
+    # nao descreve senha nenhuma, e sim o pedido para o navegador nao preencher
+    # o campo sozinho. O relato passou a estampar ** SENHA ** em cima do CPF, e,
+    # pior, `_tem_formulario_de_login` passaria a ver formulario de login numa
+    # tela de cadastro: a conferencia de sessao diria FECHADA com a sessao
+    # aberta. `current-password` nao tem esse uso desviado.
+    if (autocomplete or "").strip().lower() == "current-password":
         return True
     texto = sem_acento(" ".join(p for p in (nome, identificador, rotulo) if p))
     return any(marca in texto for marca in MARCAS_DE_CAMPO_DE_SENHA)
@@ -2845,6 +2854,14 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
 #          digitou antes de pesquisar; se a forma nao bater, ele para.
 SISTEMAS_COM_CONSULTA = frozenset({"esaj", "eproc", "pje"})
 
+# Conferidos na tela real do TRF2 em 02/10/2026, depois da selecao de perfil:
+# `input#txtNumProcessoPesquisaRapida` com rotulo "Número do processo", e
+# `button[name=btnPesquisaRapidaSubmit]`, os dois em `form=formPesquisaRapida`.
+# A mesma leitura confirmou as duas coisas que justificam usar a busca rapida
+# aqui: o portal desemboca na tela de cadastro (`frmPessoaAlteracao`), e a busca
+# vive em formulario separado dela, entao consultar nao encosta no cadastro. E
+# confirmou tambem o par visivel/oculto de cada campo, que e o motivo de
+# `elemento_visivel` existir.
 BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
 BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
 

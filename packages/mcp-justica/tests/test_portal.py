@@ -2606,3 +2606,51 @@ def test_a_tela_do_eproc_passa_a_ser_reconhecida_como_login():
         assert _tem_formulario_de_login(_Pagina()) is True
     finally:
         portal_mod._coletar = original
+
+
+def test_new_password_sozinho_nao_faz_de_cpf_um_campo_de_senha():
+    """Tela de cadastro do eproc do Rio, lida em 02/10/2026: CPF, RG, orgao
+    emissor e data de emissao vem com `autocomplete=new-password`, que ali so
+    pede ao navegador que nao preencha o campo. Aceitar isso como senha fazia a
+    tela de cadastro passar por tela de login."""
+    from justica_mcp.portal import parece_campo_de_senha
+
+    assert not parece_campo_de_senha("text", "txtCpf", "txtCpf", "CPF:", "new-password")
+    assert not parece_campo_de_senha(
+        "text", "txtRgNum", "txtRgNum", "Identidade Civil (RG, CNH, Cert. Nasc.):",
+        "new-password")
+    assert not parece_campo_de_senha(
+        "text", "txtDataEmissao", "txtDataEmissao", None, "new-password")
+
+
+def test_campo_que_se_declara_senha_atual_continua_sendo_senha():
+    from justica_mcp.portal import parece_campo_de_senha
+
+    assert parece_campo_de_senha("text", "f7", "f7", None, "current-password")
+
+
+def test_a_tela_de_cadastro_do_eproc_nao_e_tela_de_login():
+    from justica_mcp.portal import Campo, _tem_formulario_de_login, parece_campo_de_senha
+
+    def _campo(nome, rotulo, autocomplete=None):
+        return Campo(
+            marcador="input", tipo="text", nome=nome, identificador=nome,
+            rotulo=rotulo, texto_visivel=None,
+            e_senha=parece_campo_de_senha("text", nome, nome, rotulo, autocomplete),
+        )
+
+    cadastro = [
+        _campo("txtNumProcessoPesquisaRapida", "Numero do processo"),
+        _campo("txtCpf", "CPF:", "new-password"),
+        _campo("txtRgNum", "Identidade Civil (RG, CNH, Cert. Nasc.):", "new-password"),
+        _campo("txtIdentPrinc", None, "new-password"),
+    ]
+
+    import justica_mcp.portal as portal_mod
+
+    original = portal_mod._coletar
+    portal_mod._coletar = lambda _p: (cadastro, [])
+    try:
+        assert _tem_formulario_de_login(object()) is False
+    finally:
+        portal_mod._coletar = original
