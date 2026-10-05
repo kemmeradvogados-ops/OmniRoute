@@ -3653,3 +3653,68 @@ def test_o_conselho_muda_quando_o_portal_nao_respondeu():
     # O conselho oposto ao padrao: aqui repetir e o certo.
     assert "Repita o comando" in trecho
     assert "Nao ha nada a conferir no cofre" in trecho
+
+
+# ==========================================================================
+# Clique feito e navegacao lenta nao e clique que falhou
+#
+# O Playwright espera, depois do clique, pelas navegacoes que ele disparou. Se o
+# portal demora, essa espera estoura e o erro sai como se o CLIQUE tivesse
+# falhado. Visto em campo em 05/10/2026 no eproc do Rio, logo depois de o portal
+# ficar fora do ar: credencial e codigo ja enviados, e o comando caiu em
+# traceback com "click action done" escrito no proprio registro do erro.
+# ==========================================================================
+
+class _ElementoLento:
+    REGISTRO_DO_CLIQUE_FEITO = (
+        "ElementHandle.click: Timeout 30000ms exceeded.\n"
+        "Call log:\n  - performing click action\n  - click action done\n"
+        "  - waiting for scheduled navigations to finish\n")
+    REGISTRO_DO_CLIQUE_NAO_FEITO = (
+        "ElementHandle.click: Timeout 30000ms exceeded.\n"
+        "Call log:\n  - waiting for element to be visible, enabled and stable\n"
+        "    - element is not visible\n")
+
+    def __init__(self, erro=None):
+        self.erro, self.cliques = erro, 0
+
+    def click(self, timeout=None):
+        self.cliques += 1
+        if self.erro:
+            raise TimeoutError(self.erro)
+
+
+def test_navegacao_lenta_depois_do_clique_nao_derruba(capsys):
+    from justica_mcp.portal import clicar_tolerando_lentidao
+
+    alvo = _ElementoLento(_ElementoLento.REGISTRO_DO_CLIQUE_FEITO)
+    clicar_tolerando_lentidao(alvo, "#kc-login", 30)
+    assert alvo.cliques == 1, "o clique NAO pode ser refeito: ele ja aconteceu"
+    assert "ACONTECEU" in capsys.readouterr().out
+
+
+def test_clique_que_nao_saiu_continua_subindo():
+    """Ai o clique realmente nao aconteceu, e esconder isso faria o comando
+    seguir como se a credencial tivesse sido enviada."""
+    from justica_mcp.portal import clicar_tolerando_lentidao
+
+    with pytest.raises(TimeoutError):
+        clicar_tolerando_lentidao(
+            _ElementoLento(_ElementoLento.REGISTRO_DO_CLIQUE_NAO_FEITO), "#x", 30)
+
+
+def test_clique_normal_nao_imprime_nada(capsys):
+    from justica_mcp.portal import clicar_tolerando_lentidao
+
+    clicar_tolerando_lentidao(_ElementoLento(), "#x", 30)
+    assert capsys.readouterr().out == ""
+
+
+def test_os_dois_cliques_do_login_toleram_lentidao():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    assert "clicar_tolerando_lentidao(entrar_visivel, botao_entrar, segundos)" in fonte
+    assert "clicar_tolerando_lentidao(validar_visivel, botao_validar, segundos)" in fonte

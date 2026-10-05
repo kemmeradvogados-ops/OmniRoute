@@ -827,6 +827,36 @@ def sem_acento(texto: str) -> str:
 MARCAS_DE_PAGINA_DE_ERRO = ("chrome-error://", "about:neterror", "edge-error://")
 
 
+def clicar_tolerando_lentidao(elemento, alvo: str, segundos: int) -> None:
+    """Clica e aceita que a navegacao seguinte demore mais que o teto.
+
+    O Playwright espera, depois do clique, pelas navegacoes que o clique
+    disparou. Se o portal demora, essa espera estoura e o erro sai como se o
+    CLIQUE tivesse falhado. A diferenca e enorme: no login, um clique que falhou
+    nao enviou nada e pode ser refeito; um clique que aconteceu ja gastou a
+    tentativa, e refazer gasta outra.
+
+    O proprio registro do Playwright separa os dois casos, e e nele que esta
+    escrito o que de fato ocorreu. Visto em campo em 05/10/2026, no eproc do Rio,
+    logo depois de o portal ter ficado fora do ar:
+
+        - performing click action
+        - click action done
+        - waiting for scheduled navigations to finish   <- estourou AQUI
+
+    Quando o registro diz que o clique foi feito, seguir em frente e o certo: a
+    tela seguinte sera lida como sempre, e dira o que aconteceu. Quando nao diz,
+    o erro sobe inteiro, porque ai o clique realmente nao saiu.
+    """
+    try:
+        elemento.click(timeout=segundos * 1000)
+    except Exception as exc:
+        if "click action done" not in str(exc):
+            raise
+        print(f"    O clique em {alvo} ACONTECEU; o que estourou foi a espera pela")
+        print("    navegacao seguinte. O portal esta lento. Nada foi repetido.")
+
+
 def pagina_de_erro_do_navegador(endereco: str) -> bool:
     """Se o endereco atual e pagina de erro do navegador, e nao do portal."""
     baixo = (endereco or "").lower()
@@ -2003,7 +2033,7 @@ def autenticar(
                 estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
                                  sistema=identidade.sistema, resultado="enviado")
                 print("  Etapa 1: credencial enviada (uma vez).")
-                entrar_visivel.click()
+                clicar_tolerando_lentidao(entrar_visivel, botao_entrar, segundos)
                 try:
                     pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
                 except Exception:
@@ -2223,7 +2253,7 @@ def autenticar(
                               "O codigo foi digitado e NAO foi enviado.")
                         _relatar_tela(pagina, "TELA DO SEGUNDO FATOR")
                         return 1
-                    validar_visivel.click()
+                    clicar_tolerando_lentidao(validar_visivel, botao_validar, segundos)
                     try:
                         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
                     except Exception:
