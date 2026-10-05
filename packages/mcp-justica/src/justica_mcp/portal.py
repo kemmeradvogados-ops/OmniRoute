@@ -2992,6 +2992,37 @@ def _links_das_partes(pagina) -> list:
     return achados
 
 
+def _gravar_pela_sessao(contexto, endereco: str, arquivo) -> str:
+    """Busca o arquivo pelo endereco, usando a sessao que o navegador ja tem.
+
+    Por que nao esperar o evento de download: os links de parte abrem em ABA
+    NOVA, conferido em campo em 05/10/2026. O clique funcionava, as duas abas
+    abriam com os PDFs, e a espera morria na aba velha, onde download nenhum
+    acontece. Mesma armadilha ja vista no e-SAJ, e mesma saida: com o endereco
+    em maos, buscar o arquivo pela sessao e mais simples e mais firme que
+    perseguir o evento de uma aba que o navegador pode ate fechar sozinho.
+
+    Recusa o que nao for arquivo. Uma pagina de erro do portal tem endereco de
+    arquivo e corpo de HTML, e gravada com nome de PDF ela entra no acervo como
+    se fossem autos: o advogado so descobre ao abrir, meses depois.
+    """
+    resposta = contexto.request.get(endereco)
+    if not resposta.ok:
+        raise ConteudoInesperado(f"o portal respondeu {resposta.status}")
+    corpo = resposta.body()
+    if corpo[:4] not in (b"%PDF", b"PK\x03\x04"):
+        tipo = (resposta.headers or {}).get("content-type", "desconhecido")
+        raise ConteudoInesperado(
+            f"o que veio nao e PDF nem arquivo compactado (tipo {tipo}, "
+            f"{len(corpo)} byte(s))")
+    arquivo.write_bytes(corpo)
+    return str(arquivo)
+
+
+class ConteudoInesperado(RuntimeError):
+    """O endereco respondeu, mas o que veio nao e arquivo."""
+
+
 def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
                             segundos: int) -> list:
     """Baixa as partes do arquivo completo que o portal ja gerou.
@@ -2999,6 +3030,10 @@ def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
     Devolve a lista dos arquivos gravados, na ordem das partes. Lista vazia
     quer dizer que esta tela nao tem parte nenhuma pronta, que e o caso normal
     logo depois de pedir a geracao.
+
+    Cada parte abre em aba nova. O endereco dessa aba e que vale, e nao o do
+    link: ele e o que o navegador de fato resolveu, com ticket, sessao e tudo.
+    O link serve para achar e para clicar; a aba, para saber o endereco certo.
 
     Uma parte que falha NAO cancela as outras: copia parcial e pior que copia
     nenhuma se passar por inteira, entao cada falha e dita em voz alta e quem
@@ -3022,26 +3057,42 @@ def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
     destino.mkdir(parents=True, exist_ok=True)
     gravados = []
     for ordem, link in enumerate(links, 1):
-        endereco = link.get_attribute("href") or ""
-        guarda.pode_executar(Acao.BAIXAR, endereco, url=pagina.url)
+        rotulo = f"parte {ordem} de {len(links)}"
+        aba = None
         try:
-            with pagina.expect_download(timeout=segundos * 1000) as info:
+            with pagina.context.expect_page(timeout=segundos * 1000) as info:
                 link.click()
-            baixado = info.value
-        except Exception as exc:
-            print(f"      parte {ordem} de {len(links)}: nao veio "
-                  f"({type(exc).__name__}).")
+            aba = info.value
+            try:
+                aba.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
+            except Exception:
+                # Aba que ja virou arquivo nao termina de "carregar", e isso nao
+                # e erro: o endereco dela ja e o que interessa.
+                pass
+            endereco = aba.url
+        except Exception:
+            # Sem aba nova, resta o endereco do proprio link. Pode faltar o que
+            # o portal acrescenta na hora, e por isso e a segunda opcao.
+            endereco = link.get_attribute("href") or ""
+
+        if not endereco:
+            print(f"      {rotulo}: nao deu para saber o endereco do arquivo.")
+            _fechar(aba)
             continue
-        sugerido = baixado.suggested_filename or f"{chave}-parte{ordem}"
-        arquivo = Path(destino) / f"integra-parte{ordem}-{sugerido}"
+
+        guarda.pode_executar(Acao.BAIXAR, endereco, url=pagina.url)
+        nome = _nome_do_endereco(endereco) or f"{chave}-parte{ordem}.pdf"
+        arquivo = Path(destino) / f"integra-parte{ordem}-{nome}"
         try:
-            baixado.save_as(str(arquivo))
+            _gravar_pela_sessao(pagina.context, endereco, arquivo)
         except Exception as exc:
-            print(f"      parte {ordem} de {len(links)}: baixou e nao gravou "
-                  f"({type(exc).__name__}).")
+            print(f"      {rotulo}: nao gravou ({type(exc).__name__}: {exc}).")
+            _fechar(aba)
             continue
-        print(f"      parte {ordem} de {len(links)}: {arquivo.name}")
+        print(f"      {rotulo}: {arquivo.name} "
+              f"({arquivo.stat().st_size // 1024} KB)")
         gravados.append(str(arquivo))
+        _fechar(aba)
 
     if gravados and len(gravados) != len(links):
         # Dizer isto importa mais que o numero: um acervo com metade dos autos
@@ -3050,6 +3101,34 @@ def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
         print(f"      ATENCAO: {len(gravados)} de {len(links)} partes gravadas. "
               "A copia esta INCOMPLETA.")
     return gravados
+
+
+def _fechar(aba) -> None:
+    if aba is None:
+        return
+    try:
+        aba.close()
+    except Exception:
+        pass
+
+
+def _nome_do_endereco(endereco: str) -> str:
+    """O nome do arquivo que o endereco carrega, quando carrega.
+
+    O eproc poe o nome no parametro `file`, e ele ja vem com numero do processo
+    e data da geracao, que e exatamente o que se quer no acervo.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    try:
+        campos = parse_qs(urlparse(endereco).query)
+    except Exception:
+        return ""
+    for chave in ("file", "arquivo", "nome"):
+        valores = campos.get(chave) or []
+        if valores:
+            return valores[0].rstrip("/").split("/")[-1][:120]
+    return ""
 
 
 def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> list:

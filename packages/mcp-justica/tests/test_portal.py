@@ -5,6 +5,8 @@ o endereco que o operador digita vira permissao efemera, e nada alem dele
 passa, nem mesmo uma pagina vizinha do mesmo portal.
 """
 
+import pathlib
+
 import pytest
 
 from justica_mcp.core.guarda_navegacao import Acao, GuardaNavegacao, Modo
@@ -2980,21 +2982,88 @@ def test_itens_do_menu_sem_repeticao():
 
 
 # ==========================================================================
-# A copia integral do eproc vem PARTIDA, e em outro endereco
+# A copia integral do eproc vem PARTIDA, em outro endereco, e em ABA NOVA
 #
-# Tela real da Justica Federal do Rio, 05/10/2026, numa execucao posterior ao
-# pedido de geracao. A MESMA tela que antes trazia "Gerar Arquivo Completo"
-# passou a trazer:
+# Tela real da Justica Federal do Rio, 05/10/2026. A MESMA tela que antes
+# trazia "Gerar Arquivo Completo" passou a trazer, com o arquivo pronto:
 #
 #     'BAIXAR ARQUIVO PARTE 1'  -> https://eproc-down.jfrj.jus.br/...
 #     'BAIXAR ARQUIVO PARTE 2'  -> https://eproc-down.jfrj.jus.br/...
 #     'forcar nova geracao de download completo'
+#
+# E o clique abre ABA NOVA: as duas abas apareceram com os PDFs, enquanto a
+# espera do download morria na aba velha, onde download nenhum acontece.
 # ==========================================================================
 
+PDF_FALSO = b"%PDF-1.4 conteudo de teste"
+
+URL_PARTE = ("https://eproc-down.jfrj.jus.br/eproc/controlador.php"
+             "?acao=download_completo_download_pronto_enviar"
+             "&file=/download72h/999/RJ-123-2026-10-5_PARTE_{n}.PDF&hash=abc")
+
+
+class _AbaDoArquivo:
+    def __init__(self, url):
+        self.url = url
+        self.fechada = False
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def close(self):
+        self.fechada = True
+
+
+class _RespostaDoPortal:
+    def __init__(self, corpo, ok=True, status=200, tipo="application/pdf"):
+        self._corpo, self.ok, self.status = corpo, ok, status
+        self.headers = {"content-type": tipo}
+
+    def body(self):
+        return self._corpo
+
+
+class _Requisicoes:
+    def __init__(self, respostas):
+        self.respostas = respostas
+        self.pedidos = []
+
+    def get(self, endereco):
+        self.pedidos.append(endereco)
+        return self.respostas.get(endereco) or _RespostaDoPortal(PDF_FALSO)
+
+
+class _ContextoDoNavegador:
+    def __init__(self, tela, respostas=None, abre_aba=True):
+        self.tela, self.abre_aba = tela, abre_aba
+        self.request = _Requisicoes(respostas or {})
+        self.abas = []
+
+    def expect_page(self, timeout=None):
+        contexto = self
+
+        class _Espera:
+            def __enter__(self_):
+                return self_
+
+            def __exit__(self_, *a):
+                if not contexto.abre_aba:
+                    raise TimeoutError("nenhuma aba abriu")
+                return False
+
+            @property
+            def value(self_):
+                alvo = contexto.tela.links[len(contexto.tela.cliques) - 1]
+                aba = _AbaDoArquivo(alvo.href)
+                contexto.abas.append(aba)
+                return aba
+
+        return _Espera()
+
+
 class _LinkDeParte:
-    def __init__(self, tela, texto, href, baixa=True, grava=True):
+    def __init__(self, tela, texto, href):
         self.tela, self.texto, self.href = tela, texto, href
-        self.baixa, self.grava = baixa, grava
 
     def inner_text(self):
         return self.texto
@@ -3006,64 +3075,25 @@ class _LinkDeParte:
         self.tela.cliques.append(self.texto)
 
 
-class _Baixado:
-    def __init__(self, link):
-        self.link = link
-        self.suggested_filename = "autos.pdf"
-
-    def save_as(self, caminho):
-        if not self.link.grava:
-            raise OSError("disco recusou")
-        self.link.destino = caminho
-
-
 class _TelaDePartes:
     viewport_size = {"width": 1280, "height": 720}
 
-    def __init__(self, links):
+    def __init__(self, com_partes=True, **kw):
         self.url = ("https://eproc.jfrj.jus.br/eproc/controlador.php"
                     "?acao=selecionar_processos_agendar_arquivo_completo&hash=x")
-        self.links = links
         self.cliques = []
-        self._proximo = None
+        self.links = []
+        if com_partes:
+            self.links = [
+                _LinkDeParte(self, "BAIXAR ARQUIVO PARTE 1", URL_PARTE.format(n=1)),
+                _LinkDeParte(self, "BAIXAR ARQUIVO PARTE 2", URL_PARTE.format(n=2)),
+                _LinkDeParte(self, "forçar nova geração de download completo",
+                             "controlador.php?acao=selecionar_processos_agendar"),
+            ]
+        self.context = _ContextoDoNavegador(self, **kw)
 
     def query_selector_all(self, seletor):
         return list(self.links) if seletor == "a[href]" else []
-
-    def expect_download(self, timeout=None):
-        tela = self
-
-        class _Espera:
-            def __enter__(self_):
-                tela._proximo = None
-                return self_
-
-            def __exit__(self_, *a):
-                alvo = tela.links[len(tela.cliques) - 1]
-                if not alvo.baixa:
-                    raise TimeoutError("nao veio")
-                tela._proximo = _Baixado(alvo)
-                return False
-
-            @property
-            def value(self_):
-                return tela._proximo
-
-        return _Espera()
-
-
-def _duas_partes(**kw):
-    tela = _TelaDePartes([])
-    tela.links = [
-        _LinkDeParte(tela, "BAIXAR ARQUIVO PARTE 1",
-                     "https://eproc-down.jfrj.jus.br/eproc/controlador.php?acao=a&t=1",
-                     **kw),
-        _LinkDeParte(tela, "BAIXAR ARQUIVO PARTE 2",
-                     "https://eproc-down.jfrj.jus.br/eproc/controlador.php?acao=a&t=2"),
-        _LinkDeParte(tela, "forçar nova geração de download completo",
-                     "controlador.php?acao=selecionar_processos_agendar_arquivo_completo"),
-    ]
-    return tela
 
 
 def _guarda_que_baixa():
@@ -3077,49 +3107,71 @@ def _guarda_que_baixa():
 def test_as_partes_sao_achadas_pelo_rotulo():
     from justica_mcp.portal import _links_das_partes
 
-    tela = _duas_partes()
-    assert [l.texto for l in _links_das_partes(tela)] == [
+    assert [l.texto for l in _links_das_partes(_TelaDePartes())] == [
         "BAIXAR ARQUIVO PARTE 1", "BAIXAR ARQUIVO PARTE 2"]
 
 
 def test_o_link_de_forcar_nova_geracao_nunca_entra():
-    """Ele descarta o arquivo pronto e devolve o processo para a fila. Clicar
-    nele por engano joga fora o trabalho inteiro."""
+    """Ele descarta o arquivo pronto e devolve o processo para a fila."""
     from justica_mcp.portal import _links_das_partes
 
-    tela = _duas_partes()
-    achados = _links_das_partes(tela)
+    achados = _links_das_partes(_TelaDePartes())
     assert all("geração" not in l.texto for l in achados)
 
 
 def test_as_duas_partes_sao_gravadas_na_ordem(tmp_path):
     from justica_mcp.portal import _baixar_partes_do_eproc
 
-    tela = _duas_partes()
+    tela = _TelaDePartes()
     gravados = _baixar_partes_do_eproc(tela, _guarda_que_baixa(), tmp_path, "123", 5)
+
     assert len(gravados) == 2
-    assert gravados[0].endswith("integra-parte1-autos.pdf")
-    assert gravados[1].endswith("integra-parte2-autos.pdf")
-    assert tela.cliques == ["BAIXAR ARQUIVO PARTE 1", "BAIXAR ARQUIVO PARTE 2"]
+    assert pathlib.Path(gravados[0]).read_bytes() == PDF_FALSO
+    # O nome vem do parametro `file` do endereco, que ja traz processo e data.
+    assert gravados[0].endswith("integra-parte1-RJ-123-2026-10-5_PARTE_1.PDF")
+    assert gravados[1].endswith("integra-parte2-RJ-123-2026-10-5_PARTE_2.PDF")
 
 
-def test_parte_que_falha_nao_cancela_as_outras_e_a_falta_e_dita(tmp_path, capsys):
-    """Copia parcial que se apresenta como integra e uma armadilha para a
-    proxima consulta, que vai achar que ja tem tudo."""
+def test_o_endereco_buscado_e_o_da_ABA_NOVA(tmp_path):
+    """O clique abre aba nova, e o endereco que vale e o dela: e o que o
+    navegador de fato resolveu, com ticket e sessao."""
     from justica_mcp.portal import _baixar_partes_do_eproc
 
-    tela = _duas_partes(baixa=False)
-    gravados = _baixar_partes_do_eproc(tela, _guarda_que_baixa(), tmp_path, "123", 1)
+    tela = _TelaDePartes()
+    _baixar_partes_do_eproc(tela, _guarda_que_baixa(), tmp_path, "123", 5)
+    assert tela.context.request.pedidos == [URL_PARTE.format(n=1), URL_PARTE.format(n=2)]
+    assert all(aba.fechada for aba in tela.context.abas)
+
+
+def test_pagina_de_erro_com_nome_de_pdf_e_recusada(tmp_path, capsys):
+    """Pagina de erro tem endereco de arquivo e corpo de HTML. Gravada com nome
+    de PDF, ela entra no acervo como se fossem autos, e o advogado so descobre
+    ao abrir, meses depois."""
+    from justica_mcp.portal import _baixar_partes_do_eproc
+
+    erro = _RespostaDoPortal(b"<html>Sessao expirada</html>", tipo="text/html")
+    tela = _TelaDePartes(respostas={URL_PARTE.format(n=1): erro})
+    gravados = _baixar_partes_do_eproc(tela, _guarda_que_baixa(), tmp_path, "123", 5)
+
     assert len(gravados) == 1
     saida = capsys.readouterr().out
+    assert "nao e PDF" in saida
     assert "INCOMPLETA" in saida
+
+
+def test_sem_aba_nova_sobra_o_endereco_do_link(tmp_path):
+    from justica_mcp.portal import _baixar_partes_do_eproc
+
+    tela = _TelaDePartes(abre_aba=False)
+    gravados = _baixar_partes_do_eproc(tela, _guarda_que_baixa(), tmp_path, "123", 1)
+    assert len(gravados) == 2
 
 
 def test_tela_sem_parte_pronta_devolve_lista_vazia(tmp_path):
     """Caso normal logo depois de pedir a geracao."""
     from justica_mcp.portal import _baixar_partes_do_eproc
 
-    tela = _TelaDePartes([])
+    tela = _TelaDePartes(com_partes=False)
     assert _baixar_partes_do_eproc(tela, _guarda_que_baixa(), tmp_path, "123", 5) == []
 
 
@@ -3127,14 +3179,14 @@ def test_o_download_passa_pela_trava_parte_a_parte(tmp_path):
     from justica_mcp.portal import _baixar_partes_do_eproc
 
     guarda = _guarda_que_baixa()
-    _baixar_partes_do_eproc(_duas_partes(), guarda, tmp_path, "123", 5)
-    acoes = [(r["acao"], r["permitido"]) for r in guarda.registro]
-    assert acoes == [("baixar", True), ("baixar", True)]
+    _baixar_partes_do_eproc(_TelaDePartes(), guarda, tmp_path, "123", 5)
+    assert [(r["acao"], r["permitido"]) for r in guarda.registro] == [
+        ("baixar", True), ("baixar", True)]
 
 
 def test_o_pronto_vem_antes_de_pedir_geracao_nova():
-    """Pedir geracao por cima de um arquivo pronto descartaria o arquivo e
-    devolveria o processo para a fila."""
+    """Pedir geracao por cima de um arquivo pronto o descartaria e devolveria o
+    processo para a fila."""
     import inspect
 
     from justica_mcp import portal
