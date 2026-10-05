@@ -2776,6 +2776,42 @@ def test_geracao_que_nao_devolve_arquivo_nao_e_tratada_como_erro():
     assert tela.cliques == ["#btnGerar"]
 
 
+def test_pedido_aceito_e_desfecho_bom_e_nao_falha(capsys):
+    """Tela real do eproc do Rio, 05/10/2026: "Status do download: Em
+    processamento: 31%". O portal aceitou o pedido e esta montando o arquivo.
+    Tratar isso como falha fazia o relato terminar em "copia nao concluida
+    (TimeoutError)" depois de tudo ter dado certo."""
+    from justica_mcp.portal import GERACAO_PEDIDA, _gerar_integra_do_eproc
+
+    class _TelaQuePediu(_TelaDeAgendamento):
+        def query_selector(self, seletor):
+            class _Area:
+                def inner_text(self_):
+                    return ("Status do download: Em processamento: 31% "
+                            "(solicitação foi feita em 05/10/2026 19:47:57).")
+
+            return _Area() if seletor == "#divInfraAreaDados" else None
+
+    tela = _TelaQuePediu(baixa=False)
+    assert _gerar_integra_do_eproc(tela, _guarda_de_copia(), 1) is GERACAO_PEDIDA
+    saida = capsys.readouterr().out
+    assert "ACEITOU o pedido" in saida
+    assert "Nao ha nada a corrigir" in saida
+
+
+def test_o_fim_da_saida_nao_desmente_o_que_aconteceu():
+    """Dizia "botao de copia integral nao encontrado nesta tela" mesmo quando o
+    botao fora encontrado, clicado e o portal respondera que esta montando o
+    arquivo."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "botao de copia integral nao encontrado nesta tela." not in fonte
+    assert "o motivo " in fonte
+
+
 def test_a_trava_registra_o_clique_de_gerar_nominalmente():
     from justica_mcp.portal import _gerar_integra_do_eproc
 

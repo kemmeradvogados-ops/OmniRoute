@@ -2498,6 +2498,19 @@ TETO_DO_DOWNLOAD_DIRETO = 8
 BOTAO_GERAR_INTEGRA = "#btnGerar"
 MARCA_DA_TELA_DE_GERACAO = "agendar_arquivo_completo"
 
+# O que o portal escreve enquanto monta o arquivo. Lido da tela real do eproc do
+# Rio em 05/10/2026: "Status do download: Em processamento: 31% (solicitacao foi
+# feita em ...)" e "Dependendo do tamanho do processo, este procedimento pode
+# demorar algumas horas". Isso NAO e falha: e a resposta certa a um pedido que
+# acabou de ser aceito.
+MARCAS_DE_GERACAO_EM_CURSO = ("em processamento", "sendo processado",
+                              "aguarde", "em andamento")
+
+# Devolvido quando a geracao foi PEDIDA e aceita, e o arquivo vira depois. Nao e
+# arquivo, e tambem nao e falha; confundir os dois fazia o relato terminar em
+# "copia nao concluida (TimeoutError)" depois de tudo ter dado certo.
+GERACAO_PEDIDA = "geracao pedida"
+
 # Terceiro e ultimo passo, lido da tela real da Justica Federal do Rio em
 # 05/10/2026, numa execucao posterior ao pedido de geracao. A MESMA tela que
 # antes trazia "Gerar Arquivo Completo" passa a trazer, quando o arquivo fica
@@ -3199,6 +3212,15 @@ def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
         if recado:
             print("\n    O QUE O PORTAL ESCREVEU NESTA TELA:")
             print(f"      {recado}")
+        if any(m in sem_acento(recado) for m in MARCAS_DE_GERACAO_EM_CURSO):
+            # Desfecho BOM, e precisa ser dito como tal. O portal aceitou o
+            # pedido e esta montando o arquivo; ele avisa por e-mail quando
+            # terminar, e pode demorar horas. Tratar isto como falha fazia o
+            # relato pedir conferencia de seletor onde nao falta seletor nenhum.
+            print("\n    O portal ACEITOU o pedido e esta montando o arquivo.")
+            print("    Nao ha nada a corrigir aqui: rode o mesmo comando mais tarde")
+            print("    e as partes prontas serao baixadas sozinhas.")
+            return GERACAO_PEDIDA
         itens = _itens_do_menu(pagina)
         if itens:
             print(f"\n    MENU DO PORTAL ({len(itens)} item(ns)), para achar onde o")
@@ -3617,6 +3639,8 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
         return partes
 
     baixado = _gerar_integra_do_eproc(janela, guarda, segundos)
+    if baixado is GERACAO_PEDIDA:
+        return []
     if baixado is not None:
         from pathlib import Path
 
@@ -3722,6 +3746,8 @@ def _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave: str,
         if partes:
             return partes
         baixado = _gerar_integra_do_eproc(pagina, guarda, segundos)
+        if baixado is GERACAO_PEDIDA:
+            return []
         if baixado is None:
             print("    Segue o que ha na tela, para o seletor ser conferido antes de")
             print("    virar codigo. Nada mais foi clicado.")
@@ -4399,7 +4425,16 @@ def consultar_processo(
                             )
                         print(f"    cobrindo ate o evento {ate}")
                     elif not falhou:
-                        print("    botao de copia integral nao encontrado nesta tela.")
+                        # Mensagem NEUTRA de proposito. Ela dizia "botao de copia
+                        # integral nao encontrado nesta tela", o que passou a ser
+                        # falso no dia em que o pedido de geracao passou a ser
+                        # aceito: o botao foi encontrado, clicado, e o portal
+                        # respondeu que esta montando o arquivo. Quem le so o fim
+                        # da saida concluiria o contrario do que aconteceu. O
+                        # motivo verdadeiro, qualquer que seja, ja foi impresso
+                        # pelas funcoes acima, que sabem qual e.
+                        print("    Nenhum arquivo gravado nesta execucao; o motivo "
+                              "esta logo acima.")
 
                 elif estrategia["acao"] == "complemento":
                     faltantes = estrategia["faltantes"]
