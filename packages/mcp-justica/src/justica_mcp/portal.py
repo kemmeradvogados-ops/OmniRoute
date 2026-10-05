@@ -870,6 +870,61 @@ def clicar_tolerando_lentidao(elemento, alvo: str, segundos: int) -> None:
         print("    navegacao seguinte. O portal esta lento. Nada foi repetido.")
 
 
+# Onde portais costumam pendurar aviso que aparece por cima da tela. A lista e
+# larga de proposito: cada aplicacao usa a sua, e aqui o custo de olhar num
+# lugar a mais e zero, enquanto o custo de nao ver o recado e uma execucao
+# inteira perdida.
+MARCAS_DE_AVISO = (
+    "[role=alert]", ".alert", ".toast", ".snackbar", ".notification",
+    ".mensagem", ".message", ".v-alert", ".el-message", ".p-toast",
+    ".swal2-html-container", ".modal-body",
+)
+
+# Texto dos botoes de fechar. Quando a aplicacao nao usa nenhuma classe
+# conhecida, ELES sao a pista: um "x" que apareceu depois do envio da credencial
+# quer dizer que algo foi aberto para ser lido e fechado. Visto na Central do
+# Processo Eletronico do Superior Tribunal de Justica em 05/10/2026, onde o
+# relato mostrou dois "x" novos e nenhuma mensagem.
+MARCAS_DE_FECHAR = ("x", "✕", "×", "fechar", "close")
+
+
+def avisos_na_tela(pagina, teto: int = 400) -> list[str]:
+    """O que o portal escreveu em caixa de aviso, se houver.
+
+    Serve para tela de SISTEMA, como a de login. Nao e para tela de processo: ali
+    o texto da pagina e dado de cliente, e este projeto nao o imprime.
+    """
+    vistos, saida = set(), []
+
+    def guardar(texto: str) -> None:
+        limpo = " ".join((texto or "").split())[:teto]
+        if limpo and limpo not in vistos:
+            vistos.add(limpo)
+            saida.append(limpo)
+
+    for marca in MARCAS_DE_AVISO:
+        try:
+            for alvo in pagina.query_selector_all(marca):
+                if alvo.is_visible():
+                    guardar(alvo.inner_text())
+        except Exception:
+            continue
+
+    # O caminho do botao de fechar: sobe um nivel e le o que esta junto dele.
+    try:
+        for alvo in pagina.query_selector_all(ALVOS_CLICAVEIS):
+            if not alvo.is_visible():
+                continue
+            texto = sem_acento(alvo.inner_text() or "").strip()
+            if texto not in MARCAS_DE_FECHAR:
+                continue
+            guardar(alvo.evaluate(
+                "e => e.parentElement ? e.parentElement.innerText : ''"))
+    except Exception:
+        pass
+    return saida
+
+
 def pagina_de_erro_do_navegador(endereco: str) -> bool:
     """Se o endereco atual e pagina de erro do navegador, e nao do portal."""
     baixo = (endereco or "").lower()
@@ -2192,6 +2247,13 @@ def autenticar(
                     # orientacao errada custa tentativas de uma conta que bloqueia.
                     if not _ja_autenticado(pagina):
                         print("\n  [PARADO] A tela do segundo fator nao apareceu.")
+                        # O que o portal ESCREVEU vale mais que a lista de
+                        # campos. Na Central do Processo Eletronico do Superior
+                        # Tribunal de Justica, em 05/10/2026, o relato mostrou
+                        # dois botoes "x" novos e nenhuma mensagem: havia um
+                        # aviso aberto na tela, e ninguem o leu.
+                        for aviso in avisos_na_tela(pagina):
+                            print(f"  AVISO NA TELA: {aviso}")
                         if pagina_de_erro_do_navegador(pagina.url):
                             # Distincao que muda o conselho por inteiro. O aviso
                             # padrao ("nao repita, pode ser recusa de credencial")

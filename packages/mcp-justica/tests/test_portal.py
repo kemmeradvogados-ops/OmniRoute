@@ -4076,3 +4076,92 @@ def test_a_tela_do_stj_e_reconhecida_entre_as_familias():
 
     familia = familia_da_tela(_TelaDeLogin({"#cpf"}))
     assert familia["nome"] == "stj-cpe"
+
+
+# ==========================================================================
+# O aviso que o portal abre por cima da tela
+#
+# Central do Processo Eletronico do Superior Tribunal de Justica, 05/10/2026.
+# Depois de a credencial ser enviada, a tela continuou a mesma, so que com DOIS
+# botoes "✕" novos e nenhuma mensagem no relato. Havia um aviso aberto, e
+# ninguem o leu: o relato mostra estrutura, e o unico dado util ali era texto.
+# ==========================================================================
+
+class _AlvoDeAviso:
+    def __init__(self, texto, pai=""):
+        self.texto, self.pai = texto, pai
+
+    def is_visible(self):
+        return True
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, nome):
+        return None
+
+    def evaluate(self, _):
+        return self.pai
+
+
+class _TelaComAviso:
+    def __init__(self, por_marca=None, fechaveis=()):
+        self.por_marca = por_marca or {}
+        self.fechaveis = list(fechaveis)
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.portal import ALVOS_CLICAVEIS
+
+        if seletor == ALVOS_CLICAVEIS:
+            return list(self.fechaveis)
+        return list(self.por_marca.get(seletor, ()))
+
+
+def test_aviso_em_classe_conhecida_e_lido():
+    from justica_mcp.portal import avisos_na_tela
+
+    tela = _TelaComAviso({".toast": [_AlvoDeAviso("  CPF  ou senha\n invalidos ")]})
+    assert avisos_na_tela(tela) == ["CPF ou senha invalidos"]
+
+
+def test_o_botao_de_fechar_entrega_o_aviso_sem_classe_conhecida():
+    """Quando a aplicacao nao usa nenhuma classe que conhecemos, o "x" e a
+    pista: ele apareceu porque algo foi aberto para ser lido e fechado."""
+    from justica_mcp.portal import avisos_na_tela
+
+    tela = _TelaComAviso(fechaveis=[_AlvoDeAviso("✕", pai="Senha expirada ✕")])
+    assert avisos_na_tela(tela) == ["Senha expirada ✕"]
+
+
+def test_botao_comum_nao_e_confundido_com_fechar():
+    from justica_mcp.portal import avisos_na_tela
+
+    tela = _TelaComAviso(fechaveis=[_AlvoDeAviso("Entrar", pai="formulario inteiro")])
+    assert avisos_na_tela(tela) == []
+
+
+def test_aviso_repetido_aparece_uma_vez_so():
+    """A mesma caixa costuma casar com mais de uma marca."""
+    from justica_mcp.portal import avisos_na_tela
+
+    igual = "Credencial invalida"
+    tela = _TelaComAviso({".toast": [_AlvoDeAviso(igual)],
+                          ".alert": [_AlvoDeAviso(igual)]})
+    assert avisos_na_tela(tela) == [igual]
+
+
+def test_o_aviso_e_encurtado():
+    from justica_mcp.portal import avisos_na_tela
+
+    tela = _TelaComAviso({".alert": [_AlvoDeAviso("a" * 5000)]})
+    assert len(avisos_na_tela(tela, teto=50)[0]) == 50
+
+
+def test_a_parada_do_login_le_o_aviso_antes_de_aconselhar():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("A tela do segundo fator nao apareceu")[1]
+    assert "avisos_na_tela(pagina)" in trecho.split("pagina_de_erro_do_navegador")[0]
