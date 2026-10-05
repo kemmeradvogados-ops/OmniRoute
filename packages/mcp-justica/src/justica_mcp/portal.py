@@ -2262,6 +2262,14 @@ BOTAO_INTEGRA = "#btnDownloadCompletoRS"
 # portal pode nao devolver o arquivo na hora, e sim enfileirar a geracao. Por
 # isso o codigo abaixo nao afirma que o arquivo vem; ele clica, espera, e
 # relata a tela quando nao vier.
+# Quanto se espera pelo arquivo no PRIMEIRO clique, o do botao da tela do
+# processo. Curto de proposito: em duas execucoes reais, 02 e 05/10/2026, esse
+# clique NUNCA devolveu arquivo. O efeito dele e navegar para a tela de
+# geracao, e so. Esperar os mesmos 45s da operacao inteira era jogar fora
+# quarenta e cinco segundos em toda consulta, por um arquivo que ninguem nunca
+# viu chegar por ali. O clique continua; o que encolheu foi a espera.
+TETO_DO_DOWNLOAD_DIRETO = 8
+
 BOTAO_GERAR_INTEGRA = "#btnGerar"
 MARCA_DA_TELA_DE_GERACAO = "agendar_arquivo_completo"
 
@@ -3167,10 +3175,15 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> list:
         pass
 
     try:
-        with pagina.expect_download(timeout=segundos * 1000) as info:
+        with pagina.expect_download(timeout=TETO_DO_DOWNLOAD_DIRETO * 1000) as info:
             botao.click()
-    except Exception as exc:
-        print(f"    O clique nao devolveu arquivo: {type(exc).__name__}.")
+    except Exception:
+        # Caminho NORMAL, e nao falha. Dizer "nao devolveu arquivo" aqui fazia
+        # o relato comecar por um erro que nao existe, e quem lesse so o comeco
+        # concluiria que a copia tinha dado errado quando ela mal tinha
+        # comecado.
+        print("    O botao leva a tela de geracao, e nao devolve arquivo direto.")
+        _assentar(pagina, segundos)
         # Ordem deliberada. Primeiro procura o que JA ESTA PRONTO: pedir
         # geracao nova por cima de um arquivo pronto descartaria o arquivo e
         # devolveria o processo para a fila. So quando nao ha parte nenhuma e

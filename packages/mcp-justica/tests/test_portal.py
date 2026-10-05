@@ -3193,3 +3193,28 @@ def test_o_pronto_vem_antes_de_pedir_geracao_nova():
 
     fonte = inspect.getsource(portal._baixar_integra)
     assert fonte.index("_baixar_partes_do_eproc") < fonte.index("_gerar_integra_do_eproc")
+
+
+def test_a_espera_do_primeiro_clique_e_curta():
+    """Em duas execucoes reais, 02 e 05/10/2026, o botao da tela do processo
+    NUNCA devolveu arquivo: o efeito dele e navegar para a tela de geracao.
+    Esperar os 45s da operacao inteira jogava fora 45 segundos por consulta."""
+    import inspect
+
+    from justica_mcp import portal
+
+    assert portal.TETO_DO_DOWNLOAD_DIRETO <= 10
+    fonte = inspect.getsource(portal._baixar_integra)
+    assert "expect_download(timeout=TETO_DO_DOWNLOAD_DIRETO * 1000)" in fonte
+
+
+def test_o_caminho_normal_nao_se_anuncia_como_erro():
+    """Dizer 'nao devolveu arquivo' fazia o relato comecar por um erro que nao
+    existe, e quem lesse so o comeco concluiria que a copia deu errado."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_integra)
+    assert "O clique nao devolveu arquivo" not in fonte
+    assert "leva a tela de geracao" in fonte
