@@ -264,14 +264,20 @@ class _AutCampo:
     """Um dos seis campos do numero."""
 
     def __init__(self, pagina, identificador, maxlength=None, visivel=True,
-                 tipo="text", readonly=None, disabled=None, engole=False):
+                 tipo="text", readonly=None, disabled=None, engole=False,
+                 so_teclado=False):
         self.pagina = pagina
         self.atributos = {"id": identificador, "type": tipo,
                           "maxlength": maxlength, "readonly": readonly,
                           "disabled": disabled}
         self.visivel = visivel
         self.engole = engole
+        # Campo que ignora `fill` e so reconhece o que vem de teclado de
+        # verdade, porque e a sequencia de eventos de tecla que dispara a
+        # atualizacao interna do framework.
+        self.so_teclado = so_teclado
         self.valor = ""
+        self.digitado = False
 
     def get_attribute(self, nome):
         return self.atributos.get(nome)
@@ -283,8 +289,15 @@ class _AutCampo:
         self.pagina.cliques.append(self.atributos["id"])
 
     def fill(self, valor):
-        if not self.engole:
+        if not self.engole and not (self.so_teclado and valor):
             self.valor = valor
+        self.pagina.preenchidos[self.atributos["id"]] = self.valor
+
+    def type(self, valor, delay=None):
+        if self.engole:
+            return
+        self.digitado = True
+        self.valor = valor
         self.pagina.preenchidos[self.atributos["id"]] = self.valor
 
     def evaluate(self, _):
@@ -316,14 +329,16 @@ TELA_AUT = "https://tjrj.pje.jus.br/1g/Processo/ConsultaProcesso/listView.seam"
 class _AutTela:
     viewport_size = {"width": 1280, "height": 720}
 
-    def __init__(self, campos=None, botao=True, engole=False, destino=None):
+    def __init__(self, campos=None, botao=True, engole=False, destino=None,
+                 so_teclado=False):
         self.url = TELA_AUT
         self.destino = destino
         self.cliques = []
         self.preenchidos = {}
         self.navegou = []
         self.campos = campos if campos is not None else [
-            _AutCampo(self, f"f:parte{i}", maxlength=str(t), engole=engole)
+            _AutCampo(self, f"f:parte{i}", maxlength=str(t), engole=engole,
+                      so_teclado=so_teclado)
             for i, t in enumerate(TAMANHOS_DAS_PARTES, 1)
         ]
         self.botao = _AutBotao(self, "f:pesquisar", "Pesquisar") if botao else None
@@ -334,6 +349,11 @@ class _AutTela:
 
     def query_selector_all(self, seletor):
         if seletor == SELETOR_CANDIDATO_DO_NUMERO:
+            return list(self.campos)
+        # Na tela de verdade `input` pega todo campo, inclusive os que o
+        # seletor deduzido do numero nao pega. E justamente o que o relato de
+        # "nao achei nada" precisa enxergar.
+        if seletor == "input":
             return list(self.campos)
         if seletor == "input[type=submit], button":
             return [self.botao] if self.botao else []
@@ -599,3 +619,83 @@ def test_o_tratador_do_dialogo_nao_deixa_erro_vazar():
     ler_aviso(pagina, False, registro)
     pagina.ouvinte(_Mudo())
     assert registro == ["(aviso sem texto legivel)"]
+
+
+# ==========================================================================
+# O que a tela ensina quando a forma nao bate
+#
+# `SELETOR_CANDIDATO_DO_NUMERO` foi escrito por deducao, e nao lido em tela
+# real. Quando ele nao acha nada, a hipotese mais provavel e que o palpite
+# errou. Sem relatar o que a tela tem, cada tentativa frustrada gasta um login
+# e nao ensina nada, e o palpite seguinte sai tao no escuro quanto o primeiro.
+# ==========================================================================
+
+def test_tela_sem_nenhum_campo_relata_o_que_ela_tem():
+    from justica_mcp.pje import campos_de_texto_a_vista
+
+    tela = _AutTela(campos=[])
+    tela.campos = [
+        _AutCampo(tela, "f:numeroUnico", maxlength="20"),
+        _AutCampo(tela, "f:classe"),
+    ]
+    with pytest.raises(ConsultaPJeIndisponivel) as erro:
+        conferir_forma_dos_campos([], tela)
+    recado = str(erro.value)
+    assert "deduzido e errou o alvo" in recado
+    assert "f:numeroUnico" in recado and "maxlength=20" in recado
+    assert campos_de_texto_a_vista(tela)[0].startswith("id=f:numeroUnico")
+
+
+def test_o_relato_da_tela_traz_forma_e_nunca_conteudo():
+    """Tela de busca tem campo vazio, e ainda assim a regra vale: o que sai
+    daqui e estrutura."""
+    from justica_mcp.pje import campos_de_texto_a_vista
+
+    tela = _AutTela(campos=[])
+    campo = _AutCampo(tela, "f:parte0", maxlength="7")
+    campo.valor = "0854091"
+    tela.campos = [campo]
+    assert campos_de_texto_a_vista(tela) == ["id=f:parte0 maxlength=7"]
+
+
+def test_botao_e_campo_oculto_ficam_de_fora_do_relato():
+    from justica_mcp.pje import campos_de_texto_a_vista
+
+    tela = _AutTela(campos=[])
+    tela.campos = [
+        _AutCampo(tela, "f:enviar", tipo="submit"),
+        _AutCampo(tela, "f:estado", tipo="hidden"),
+        _AutCampo(tela, "f:invisivel", visivel=False),
+    ]
+    assert campos_de_texto_a_vista(tela) == []
+
+
+def test_conferencia_sem_a_tela_continua_valendo():
+    """A tela e opcional: quem chama so para conferir a forma nao precisa dela,
+    e os chamadores antigos nao mudam."""
+    with pytest.raises(ConsultaPJeIndisponivel, match="5 campo"):
+        conferir_forma_dos_campos(_AutTela().campos[:5])
+
+
+# ==========================================================================
+# Campo que ignora `fill`
+#
+# Aprendido na Central do Processo Eletronico do Superior Tribunal de Justica,
+# em 05/10/2026: campo controlado por framework as vezes so reconhece o que
+# veio de teclado de verdade. Aqui desistir no `fill` custa o login inteiro,
+# porque a conferencia do numero remontado pararia o comando com a sessao ja
+# gasta.
+# ==========================================================================
+
+def test_campo_que_so_aceita_teclado_nao_perde_a_busca():
+    tela = _AutTela(so_teclado=True)
+    buscar_autenticado(tela, _guarda(), parse_numero(PROCESSO), LOGIN_AUT, 10)
+    assert tuple(tela.preenchidos.values()) == PARTES_ESPERADAS
+    assert all(c.digitado for c in tela.campos)
+    assert tela.cliques[-1] == "f:pesquisar"
+
+
+def test_campo_comum_nao_e_digitado_tecla_a_tecla():
+    tela = _AutTela()
+    buscar_autenticado(tela, _guarda(), parse_numero(PROCESSO), LOGIN_AUT, 10)
+    assert not any(c.digitado for c in tela.campos)

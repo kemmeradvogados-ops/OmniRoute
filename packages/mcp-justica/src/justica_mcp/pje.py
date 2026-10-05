@@ -253,7 +253,45 @@ def campos_do_numero(pagina: Any) -> list:
     return achados
 
 
-def conferir_forma_dos_campos(campos: list) -> None:
+def campos_de_texto_a_vista(pagina: Any, teto: int = 12) -> list[str]:
+    """Descricao dos campos de texto visiveis: identificador, nome e tamanho.
+
+    So a FORMA, nunca o conteudo. Numa tela de busca os campos estao vazios, e
+    ainda assim a regra vale: o que se imprime daqui e estrutura.
+
+    Existe porque `SELETOR_CANDIDATO_DO_NUMERO` foi escrito por deducao, e nao
+    lido em tela real. Quando ele nao acha nada, a hipotese mais provavel e que
+    o palpite errou, e nao que a tela mudou. Sem este relato cada tentativa
+    frustrada gasta um login e nao ensina nada, e o proximo palpite sai tao no
+    escuro quanto o primeiro.
+    """
+    saida: list[str] = []
+    try:
+        elementos = pagina.query_selector_all("input")
+    except Exception:
+        return saida
+    for elemento in elementos:
+        if len(saida) >= teto:
+            break
+        try:
+            if (elemento.get_attribute("type") or "text").lower() in (
+                    "hidden", "submit", "button", "image", "checkbox", "radio"):
+                continue
+            if not elemento.is_visible():
+                continue
+            pecas = []
+            for atributo in ("id", "name", "maxlength"):
+                valor = elemento.get_attribute(atributo)
+                if valor:
+                    pecas.append(f"{atributo}={valor}")
+        except Exception:
+            continue
+        if pecas:
+            saida.append(" ".join(pecas))
+    return saida
+
+
+def conferir_forma_dos_campos(campos: list, pagina: Any = None) -> None:
     """Recusa a tela que nao tem a forma fotografada. Antes de digitar nada.
 
     Duas conferencias. A contagem, porque digitar seis partes em cinco campos
@@ -263,10 +301,22 @@ def conferir_forma_dos_campos(campos: list) -> None:
     processo inexistente, que e o pior erro que esta consulta pode cometer.
     """
     if len(campos) != len(TAMANHOS_DAS_PARTES):
-        raise ConsultaPJeIndisponivel(
-            f"A tela da consulta tem {len(campos)} campo(s) de numero, e o caminho "
-            f"conferido em campo tem {len(TAMANHOS_DAS_PARTES)}. Nada foi digitado. "
-            "A tela mudou, ou a autenticacao parou antes dela.")
+        recado = (
+            f"A tela da consulta tem {len(campos)} campo(s) de numero achado(s) por "
+            f"{SELETOR_CANDIDATO_DO_NUMERO}, e o caminho fotografado tem "
+            f"{len(TAMANHOS_DAS_PARTES)}. Nada foi digitado.")
+        if not campos:
+            # Ordem das hipoteses pela probabilidade, nao pela gravidade: este
+            # seletor foi DEDUZIDO, e e o suspeito numero um de nao achar nada.
+            recado += (
+                " Achar zero campo quer dizer, antes de tudo, que este seletor foi"
+                " deduzido e errou o alvo; depois, que a autenticacao parou antes"
+                " desta tela; por ultimo, que a tela mudou.")
+        if pagina is not None:
+            a_vista = campos_de_texto_a_vista(pagina)
+            if a_vista:
+                recado += " Campos de texto que a tela mostra: " + "; ".join(a_vista)
+        raise ConsultaPJeIndisponivel(recado)
     for posicao, (campo, tamanho) in enumerate(zip(campos, TAMANHOS_DAS_PARTES), 1):
         try:
             declarado = campo.get_attribute("maxlength")
@@ -289,7 +339,7 @@ def buscar_autenticado(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     responsabilidade.
     """
     from .core.guarda_navegacao import Acao, Permissao
-    from .portal import _assentar, permissao_efemera
+    from .portal import _assentar, permissao_efemera, preencher_conferindo
 
     destino = endereco_da_consulta_autenticada(url_de_login)
     # A tela da consulta nao e a mesma do login, e a trava nega por padrao. A
@@ -309,7 +359,7 @@ def buscar_autenticado(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
         conferir_redirecionamento(destino, final, SUFIXO_CONSULTA_AUTENTICADA)
 
     campos = campos_do_numero(pagina)
-    conferir_forma_dos_campos(campos)
+    conferir_forma_dos_campos(campos, pagina)
 
     # A autorizacao so e escrita DEPOIS de a forma bater, e nomeia os
     # identificadores que a propria tela declarou. Liberar antes seria liberar
@@ -329,10 +379,13 @@ def buscar_autenticado(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
         seletores_preenchiveis=identificadores,
     ))
 
-    for campo, seletor, parte in zip(campos, identificadores, partes_do_numero(numero)):
+    for posicao, (campo, seletor, parte) in enumerate(
+            zip(campos, identificadores, partes_do_numero(numero)), 1):
         guarda.pode_executar(Acao.PREENCHER, seletor, url=pagina.url)
-        campo.click()
-        campo.fill(parte)
+        # `fill` sozinho desiste em silencio em campo controlado por framework,
+        # e aqui desistir custa o login inteiro: a conferencia abaixo acusaria
+        # o numero incompleto e o comando pararia, com a sessao ja gasta.
+        preencher_conferindo(campo, parte, f"{posicao}ª parte do numero")
 
     # Confere o que entrou ANTES de pesquisar, remontando o numero a partir da
     # tela. Campo com mascara que rejeita o formato fica vazio sem reclamar, e a
