@@ -2265,6 +2265,26 @@ BOTAO_INTEGRA = "#btnDownloadCompletoRS"
 BOTAO_GERAR_INTEGRA = "#btnGerar"
 MARCA_DA_TELA_DE_GERACAO = "agendar_arquivo_completo"
 
+# Terceiro e ultimo passo, lido da tela real da Justica Federal do Rio em
+# 05/10/2026, numa execucao posterior ao pedido de geracao. A MESMA tela que
+# antes trazia "Gerar Arquivo Completo" passa a trazer, quando o arquivo fica
+# pronto:
+#
+#     'BAIXAR ARQUIVO PARTE 1'  -> https://eproc-down.jfrj.jus.br/...
+#     'BAIXAR ARQUIVO PARTE 2'  -> https://eproc-down.jfrj.jus.br/...
+#     'forcar nova geracao de download completo'
+#
+# Tres coisas que essa leitura ensinou e que nao dava para supor:
+#   1. a copia vem PARTIDA, e o numero de partes depende do processo;
+#   2. os arquivos moram em OUTRO endereco (`eproc-down`), e nao no portal;
+#   3. a mesma tela serve para pedir a geracao e para buscar o resultado.
+MARCA_DE_PARTE = "baixar arquivo parte"
+
+# NUNCA clicado por conta propria. Este link descarta o arquivo que ja esta
+# pronto e manda gerar tudo de novo: quem o aperta por engano joga fora o
+# trabalho e volta para a fila. Esta aqui para ser RECONHECIDO e evitado.
+MARCA_DE_NOVA_GERACAO = "nova geracao"
+
 
 # Marcadores do desafio "Confirme que e humano" do Cloudflare, visto no eproc
 # do Tribunal Regional Federal da 2a Regiao em 21 de setembro de 2026.
@@ -2950,7 +2970,89 @@ def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
     return info.value
 
 
-def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optional[str]:
+def _links_das_partes(pagina) -> list:
+    """Os links de BAIXAR ARQUIVO PARTE da tela, na ordem em que aparecem.
+
+    Casa pelo texto do link, e nao pelo endereco: o endereco traz um ticket
+    gerado na hora, que muda a cada geracao, enquanto o rotulo e estavel. O
+    link de forcar nova geracao fica de fora por nome proprio, e nao por
+    acidente de ordem.
+    """
+    achados = []
+    for link in pagina.query_selector_all("a[href]"):
+        try:
+            texto = sem_acento(link.inner_text() or "")
+            endereco = link.get_attribute("href") or ""
+        except Exception:
+            continue
+        if MARCA_DE_NOVA_GERACAO in texto:
+            continue
+        if MARCA_DE_PARTE in texto and endereco:
+            achados.append(link)
+    return achados
+
+
+def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
+                            segundos: int) -> list:
+    """Baixa as partes do arquivo completo que o portal ja gerou.
+
+    Devolve a lista dos arquivos gravados, na ordem das partes. Lista vazia
+    quer dizer que esta tela nao tem parte nenhuma pronta, que e o caso normal
+    logo depois de pedir a geracao.
+
+    Uma parte que falha NAO cancela as outras: copia parcial e pior que copia
+    nenhuma se passar por inteira, entao cada falha e dita em voz alta e quem
+    chama decide. O que nao se faz aqui, em hipotese alguma, e clicar no link
+    de forcar nova geracao para "tentar de novo": isso descartaria o arquivo
+    pronto e devolveria o processo para a fila.
+    """
+    from pathlib import Path
+
+    links = _links_das_partes(pagina)
+    if not links:
+        return []
+
+    print(f"    O portal ja tem o arquivo pronto, em {len(links)} parte(s).")
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="baixar as partes do arquivo completo ja gerado",
+        conferido_em="execucao atual",
+    ))
+
+    destino.mkdir(parents=True, exist_ok=True)
+    gravados = []
+    for ordem, link in enumerate(links, 1):
+        endereco = link.get_attribute("href") or ""
+        guarda.pode_executar(Acao.BAIXAR, endereco, url=pagina.url)
+        try:
+            with pagina.expect_download(timeout=segundos * 1000) as info:
+                link.click()
+            baixado = info.value
+        except Exception as exc:
+            print(f"      parte {ordem} de {len(links)}: nao veio "
+                  f"({type(exc).__name__}).")
+            continue
+        sugerido = baixado.suggested_filename or f"{chave}-parte{ordem}"
+        arquivo = Path(destino) / f"integra-parte{ordem}-{sugerido}"
+        try:
+            baixado.save_as(str(arquivo))
+        except Exception as exc:
+            print(f"      parte {ordem} de {len(links)}: baixou e nao gravou "
+                  f"({type(exc).__name__}).")
+            continue
+        print(f"      parte {ordem} de {len(links)}: {arquivo.name}")
+        gravados.append(str(arquivo))
+
+    if gravados and len(gravados) != len(links):
+        # Dizer isto importa mais que o numero: um acervo com metade dos autos
+        # que se apresenta como integra e uma armadilha para a proxima consulta,
+        # que vai achar que ja tem tudo.
+        print(f"      ATENCAO: {len(gravados)} de {len(links)} partes gravadas. "
+              "A copia esta INCOMPLETA.")
+    return gravados
+
+
+def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> list:
     """Copia integral pelo botao do proprio portal.
 
     Unico download que exige clique: o botao nao tem endereco proprio, o
@@ -2968,7 +3070,7 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
 
     botao = elemento_visivel(pagina, BOTAO_INTEGRA)
     if botao is None:
-        return None
+        return []
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,
         descricao="copia integral pelo botao do portal",
@@ -2990,6 +3092,13 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
             botao.click()
     except Exception as exc:
         print(f"    O clique nao devolveu arquivo: {type(exc).__name__}.")
+        # Ordem deliberada. Primeiro procura o que JA ESTA PRONTO: pedir
+        # geracao nova por cima de um arquivo pronto descartaria o arquivo e
+        # devolveria o processo para a fila. So quando nao ha parte nenhuma e
+        # que se pede a geracao.
+        partes = _baixar_partes_do_eproc(pagina, guarda, destino, chave, segundos)
+        if partes:
+            return partes
         baixado = _gerar_integra_do_eproc(pagina, guarda, segundos)
         if baixado is None:
             print("    Segue o que ha na tela, para o seletor ser conferido antes de")
@@ -3006,14 +3115,14 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> Optio
         sugerido = baixado.suggested_filename or f"{chave}-integra.zip"
         arquivo = Path(destino) / f"integra-{sugerido}"
         baixado.save_as(str(arquivo))
-        return str(arquivo)
+        return [str(arquivo)]
 
     baixado = info.value
     destino.mkdir(parents=True, exist_ok=True)
     sugerido = baixado.suggested_filename or f"{chave}-integra.zip"
     arquivo = Path(destino) / f"integra-{sugerido}"
     baixado.save_as(str(arquivo))
-    return str(arquivo)
+    return [str(arquivo)]
 
 
 # Sistemas que TEM caminho de consulta escrito e conferido em tela real. O que
@@ -3626,31 +3735,41 @@ def consultar_processo(
                     print("  COPIA INTEGRAL (pelo botao do portal)...")
                     falhou = False
                     try:
-                        arquivo = _baixar_integra(
+                        # A copia do eproc vem PARTIDA: conferido em campo em
+                        # 05/10/2026, com duas partes. O numero depende do
+                        # processo, entao aqui se recebe uma lista.
+                        arquivos = _baixar_integra(
                             pagina, guarda, pasta, numero.apenas_digitos, segundos
                         )
                     except Exception as exc:
-                        arquivo, falhou = None, True
+                        arquivos, falhou = [], True
                         # So o nome do erro: o relato da tela, impresso acima, e o
                         # que serve para decidir o proximo passo. O despejo do log
                         # do Playwright sepultava esse relato.
                         print(f"    Copia integral nao concluida ({type(exc).__name__}).")
-                    if arquivo:
+                    if arquivos:
                         from pathlib import Path as _P
 
                         from .core.acervo import maior_evento
 
-                        item = indice.acrescentar(
-                            _P(arquivo), "integra",
-                            evento_ate=maior_evento(dados["eventos"]),
-                        )
-                        print(f"    gravada: {_P(arquivo).name}  ({item.faixa()}), "
-                              f"cobrindo ate o evento {item.evento_ate}")
-                        estado_local.registrar(
-                            acao="copia_integral", tribunal=identidade.tribunal,
-                            sistema=identidade.sistema, numero=numero.formatado,
-                            documento=arquivo, resultado=item.faixa(),
-                        )
+                        ate = maior_evento(dados["eventos"])
+                        # Cada parte entra como um item, e a numeracao de folhas
+                        # segue continua de uma para a outra. Juntar as partes num
+                        # arquivo so seria mais bonito e exigiria supor o formato
+                        # delas, que ainda nao foi visto.
+                        for ordem, arquivo in enumerate(arquivos, 1):
+                            item = indice.acrescentar(
+                                _P(arquivo), "integra", evento_ate=ate,
+                                rotulo=(f"parte {ordem} de {len(arquivos)}"
+                                        if len(arquivos) > 1 else None),
+                            )
+                            print(f"    gravada: {_P(arquivo).name}  ({item.faixa()})")
+                            estado_local.registrar(
+                                acao="copia_integral", tribunal=identidade.tribunal,
+                                sistema=identidade.sistema, numero=numero.formatado,
+                                documento=arquivo, resultado=item.faixa(),
+                            )
+                        print(f"    cobrindo ate o evento {ate}")
                     elif not falhou:
                         print("    botao de copia integral nao encontrado nesta tela.")
 
