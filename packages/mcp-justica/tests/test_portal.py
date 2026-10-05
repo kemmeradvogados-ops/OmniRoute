@@ -3218,3 +3218,53 @@ def test_o_caminho_normal_nao_se_anuncia_como_erro():
     fonte = inspect.getsource(portal._baixar_integra)
     assert "O clique nao devolveu arquivo" not in fonte
     assert "leva a tela de geracao" in fonte
+
+
+# ==========================================================================
+# A etapa de credencial precisa do campo VISIVEL
+#
+# O eproc monta a mesma tela duas vezes, uma para tela grande e outra para
+# telefone, com os MESMOS identificadores. `query_selector` devolve a primeira
+# do documento, que pode ser a oculta. `elemento_visivel` existe no projeto
+# desde setembro por causa disso, e a etapa de credencial era o unico lugar que
+# ainda nao a usava.
+#
+# Conferido em campo em 05/10/2026, no eproc do Rio: o clique passou 30
+# segundos tentando acertar um campo invisivel e terminou em traceback.
+# ==========================================================================
+
+def test_a_credencial_procura_o_campo_visivel():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    etapa = fonte.split("etapa 1: credencial")[1].split("etapa 2")[0]
+    assert "elemento_visivel(pagina, seletor)" in etapa
+    assert "elemento = pagina.query_selector(seletor)" not in etapa
+    # O campo espelho continua sendo procurado pelo caminho antigo, de
+    # proposito: ele existe justamente para conferir se a senha chegou ao campo
+    # que vai ser enviado, e esse e oculto por natureza.
+    assert "pagina.query_selector(campo_senha_oculto)" in etapa
+
+
+def test_campo_que_existe_mas_nao_aparece_e_dito_com_todas_as_letras():
+    """Insistir nele seria digitar onde ninguem ve, e o relato precisa separar
+    isso de 'campo nao encontrado', que tem outra causa e outro conserto."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    assert "nenhuma copia dele esta visivel" in fonte
+    assert "encontrado. Nada enviado." in fonte
+
+
+def test_o_botao_de_entrar_tambem_tem_de_estar_visivel():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    assert "entrar_visivel = elemento_visivel(pagina, botao_entrar)" in fonte
+    assert "pagina.query_selector(botao_entrar).click()" not in fonte

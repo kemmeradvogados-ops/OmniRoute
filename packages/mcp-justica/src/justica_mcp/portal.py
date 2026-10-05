@@ -1858,9 +1858,27 @@ def autenticar(
                 for seletor, valor, rotulo in (
                     (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
                 ):
-                    elemento = pagina.query_selector(seletor)
+                    # `elemento_visivel`, e nao `query_selector`. O eproc monta a
+                    # mesma tela duas vezes, uma para tela grande e outra para
+                    # telefone, com os MESMOS identificadores, e `query_selector`
+                    # devolve a primeira do documento, que pode ser a oculta.
+                    # `elemento_visivel` existe no projeto desde setembro por causa
+                    # disso, e a etapa de credencial era o unico lugar que ainda nao
+                    # a usava. Conferido em campo em 05/10/2026 no eproc do Rio: o
+                    # clique ficou 30 segundos tentando acertar um campo invisivel e
+                    # terminou em traceback de Playwright.
+                    elemento = elemento_visivel(pagina, seletor)
                     if elemento is None:
-                        print(f"  [FALHA] Campo de {rotulo} nao encontrado. Nada enviado.")
+                        existe = pagina.query_selector(seletor) is not None
+                        if existe:
+                            print(f"  [FALHA] O campo de {rotulo} ({seletor}) existe na "
+                                  "pagina, mas nenhuma copia dele esta visivel.")
+                            print("  Insistir nele seria digitar onde ninguem ve. Nada "
+                                  "foi enviado.")
+                        else:
+                            print(f"  [FALHA] Campo de {rotulo} ({seletor}) nao "
+                                  "encontrado. Nada enviado.")
+                        _relatar_tela(pagina, "TELA DE LOGIN")
                         return 1
                     guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
                     elemento.click()
@@ -1871,11 +1889,17 @@ def autenticar(
                     print("  [ABORTADO] A senha nao chegou ao campo enviado. Nada enviado.")
                     return 1
 
+                entrar_visivel = elemento_visivel(pagina, botao_entrar)
+                if entrar_visivel is None:
+                    print(f"  [FALHA] O botao {botao_entrar} nao esta visivel na tela. "
+                          "Nada foi enviado.")
+                    _relatar_tela(pagina, "TELA DE LOGIN")
+                    return 1
                 guarda.pode_executar(Acao.CLICAR, botao_entrar, url=url)
                 estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
                                  sistema=identidade.sistema, resultado="enviado")
                 print("  Etapa 1: credencial enviada (uma vez).")
-                pagina.query_selector(botao_entrar).click()
+                entrar_visivel.click()
                 try:
                     pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
                 except Exception:
@@ -2066,7 +2090,14 @@ def autenticar(
                     guarda.pode_executar(Acao.CLICAR, botao_validar, url=url)
                     estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
                                      sistema=identidade.sistema, resultado="enviado")
-                    pagina.query_selector(botao_validar).click()
+                    validar_visivel = (elemento_visivel(pagina, botao_validar)
+                                       or pagina.query_selector(botao_validar))
+                    if validar_visivel is None:
+                        print(f"  [FALHA] O botao {botao_validar} nao esta na tela. "
+                              "O codigo foi digitado e NAO foi enviado.")
+                        _relatar_tela(pagina, "TELA DO SEGUNDO FATOR")
+                        return 1
+                    validar_visivel.click()
                     try:
                         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
                     except Exception:
