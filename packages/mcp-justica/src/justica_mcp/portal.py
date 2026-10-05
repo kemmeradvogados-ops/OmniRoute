@@ -2469,6 +2469,14 @@ MARCA_DO_ACESSO_A_INTEGRA = "integra do processo"
 CAMPOS_DE_CODIGO = ("#otp", "#txtAcessoCodigo")
 BOTOES_DE_CODIGO = ("#kc-login", "#btnValidar")
 
+# Nem todo botao de validar tem identificador. A tela "Acesso a Integra do
+# Processo" do eproc do Rio, lida em 05/10/2026 dentro do quadro embutido, tem
+# `#txtAcessoCodigo` e dois botoes SEM ID: "Confirmar" e "Cancelar". Quando o
+# identificador falha, o texto e o que resta, e ele e bom o bastante desde que
+# o que NAO deve ser clicado esteja nomeado tambem.
+TEXTOS_DE_CONFIRMAR = ("confirmar", "validar", "enviar", "ok", "prosseguir")
+TEXTOS_A_NUNCA_CLICAR = ("cancelar", "limpar", "voltar", "fechar", "sair")
+
 # Segundo passo da copia integral no eproc, lido da tela real da Justica Federal
 # do Rio em 02/10/2026. O primeiro clique nao devolve arquivo: leva a
 # `acao=selecionar_processos_agendar_arquivo_completo`, cujo titulo e "Agenda
@@ -3256,6 +3264,40 @@ def _acesso_a_integra(pagina):
     return None
 
 
+def _botao_de_confirmar(pagina) -> tuple:
+    """O botao que envia o codigo: por identificador, ou pelo texto.
+
+    Devolve `(elemento, rotulo)`, ou `(None, None)`. O rotulo e o que aparece no
+    relato da trava, e quando o botao nao tem identificador ele e o proprio
+    texto, que e o unico sinal que a tela oferece.
+
+    "Cancelar" e os seus irmaos sao nomeados para serem EVITADOS, e nao por
+    excesso de zelo: naquela tela eles ficam lado a lado com "Confirmar", e
+    clicar no errado fecha o acesso que acabou de ser pedido.
+    """
+    for candidato in BOTOES_DE_CODIGO:
+        achado = elemento_visivel(pagina, candidato)
+        if achado is not None:
+            return achado, candidato
+    for alvo in pagina.query_selector_all("button, input[type=submit], input[type=button], a"):
+        try:
+            if not alvo.is_visible():
+                continue
+            # `bruto` e o que esta escrito, e vai para o relato da trava; `texto`
+            # e a versao sem acento e em minusculas, que serve para comparar.
+            # Misturar os dois faria o relato dizer 'botao:"confirmar"' onde a
+            # tela diz "Confirmar", e o operador confere o relato contra a tela.
+            bruto = (alvo.inner_text() or alvo.get_attribute("value") or "").strip()
+            texto = sem_acento(bruto)
+        except Exception:
+            continue
+        if not texto or any(m in texto for m in TEXTOS_A_NUNCA_CLICAR):
+            continue
+        if any(texto.startswith(m) for m in TEXTOS_DE_CONFIRMAR):
+            return alvo, f'botao:"{bruto[:30]}"'
+    return None, None
+
+
 def _responder_segundo_fator(pagina, guarda, identidade, segundos: int) -> bool:
     """Responde o segundo fator que o portal pede para abrir os autos.
 
@@ -3289,16 +3331,11 @@ def _responder_segundo_fator(pagina, guarda, identidade, segundos: int) -> bool:
         print(f"    Codigo atual expira em {restante}s; aguardando a proxima janela.")
     codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
 
-    botao = botao_seletor = None
-    for candidato in BOTOES_DE_CODIGO:
-        achado = elemento_visivel(pagina, candidato)
-        if achado is not None:
-            botao, botao_seletor = achado, candidato
-            break
+    botao, botao_seletor = _botao_de_confirmar(pagina)
     if botao is None:
         raise ConteudoInesperado(
-            "o campo do codigo apareceu, mas nenhum botao conhecido de validar. "
-            "O codigo NAO foi digitado.")
+            "o campo do codigo apareceu, mas nenhum botao de confirmar, nem por "
+            "identificador nem por texto. O codigo NAO foi digitado.")
 
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,

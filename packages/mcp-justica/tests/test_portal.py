@@ -3792,3 +3792,118 @@ def test_o_download_de_dentro_do_quadro_usa_a_pagina():
 
     assert pagina_de(_Frame()) is pagina
     assert pagina_de(pagina) is pagina
+
+
+# ==========================================================================
+# Nem todo botao de validar tem identificador
+#
+# Tela "Acesso à Íntegra do Processo" do eproc do Rio, lida em 05/10/2026 dentro
+# do quadro embutido: `#txtAcessoCodigo` e dois botoes SEM ID, "Confirmar" e
+# "Cancelar", lado a lado. O codigo nao chegou a ser digitado, que e o certo:
+# digitar um codigo que nao seria enviado queima a validade dele por nada.
+# ==========================================================================
+
+class _BotaoDeTexto:
+    def __init__(self, tela, texto, identificador=None):
+        self.tela, self.texto, self.identificador = tela, texto, identificador
+        self.cliques = 0
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, nome):
+        return self.identificador if nome == "id" else None
+
+    def click(self):
+        self.cliques += 1
+
+
+class _TelaDeConfirmacao:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, textos, com_id=None):
+        self.alvos = [_BotaoDeTexto(self, x) for x in textos]
+        self.com_id = com_id or {}
+
+    def query_selector_all(self, seletor):
+        if seletor in self.com_id:
+            return [self.com_id[seletor]]
+        if seletor.startswith("#"):
+            return []
+        return list(self.alvos)
+
+
+def test_o_botao_de_confirmar_e_achado_pelo_texto():
+    from justica_mcp.portal import _botao_de_confirmar
+
+    tela = _TelaDeConfirmacao(["Confirmar", "Cancelar"])
+    botao, rotulo = _botao_de_confirmar(tela)
+    assert botao is tela.alvos[0]
+    assert "Confirmar" in rotulo
+
+
+def test_cancelar_nunca_e_escolhido():
+    """Naquela tela ele fica lado a lado com Confirmar, e clicar no errado fecha
+    o acesso que acabou de ser pedido."""
+    from justica_mcp.portal import _botao_de_confirmar
+
+    tela = _TelaDeConfirmacao(["Cancelar", "Fechar", "Voltar"])
+    assert _botao_de_confirmar(tela) == (None, None)
+
+
+def test_o_identificador_tem_precedencia_sobre_o_texto():
+    """Quando ha identificador conferido em campo, ele vale mais: texto e o que
+    resta quando nao ha identificador."""
+    from justica_mcp.portal import _botao_de_confirmar
+
+    porid = _BotaoDeTexto(None, "Validar", "btnValidar")
+    tela = _TelaDeConfirmacao(["Confirmar"], com_id={"#btnValidar": porid})
+    botao, rotulo = _botao_de_confirmar(tela)
+    assert botao is porid
+    assert rotulo == "#btnValidar"
+
+
+def test_o_rotulo_do_botao_sem_id_entra_no_relato_da_trava(monkeypatch):
+    from justica_mcp import portal
+
+    class _Campo:
+        def is_visible(self):
+            return True
+
+        def bounding_box(self):
+            return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+        def click(self):
+            pass
+
+        def fill(self, valor):
+            self.valor = valor
+
+    class _Tela(_TelaDeConfirmacao):
+        url = "https://eproc1g.tjrj.jus.br/eproc/controlador.php?acao=processo_vista"
+
+        def query_selector_all(self, seletor):
+            if seletor == "#txtAcessoCodigo":
+                return [_Campo()]
+            return super().query_selector_all(seletor)
+
+        def wait_for_load_state(self, *a, **kw):
+            pass
+
+        def wait_for_selector(self, *a, **kw):
+            pass
+
+    monkeypatch.setattr(portal, "Cofre", lambda: _CofreFalso())
+    tela = _Tela(["Confirmar", "Cancelar"])
+    guarda = _guarda_simples()
+    assert portal._responder_segundo_fator(tela, guarda, _Identidade(), 5) is True
+    assert tela.alvos[0].cliques == 1
+    assert tela.alvos[1].cliques == 0, "Cancelar nao pode ter sido clicado"
+    assert [r["alvo"] for r in guarda.registro] == [
+        "#txtAcessoCodigo", 'botao:"Confirmar"']
