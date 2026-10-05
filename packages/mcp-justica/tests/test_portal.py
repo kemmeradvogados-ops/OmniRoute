@@ -3400,3 +3400,217 @@ def test_sem_botao_de_copia_o_menu_tambem_e_listado():
     fonte = inspect.getsource(portal._baixar_integra)
     cabeca = fonte.split("return []")[0]
     assert "_itens_do_menu(pagina)" in cabeca
+
+
+# ==========================================================================
+# O botao de copia do eproc do Rio, perdido por um acento
+#
+# A tela do processo do Rio tem, no quadro "Acoes", um link escrito
+# "Acesso íntegra do processo". O relato jurou duas vezes que nao havia botao de
+# copia ali, porque o filtro procurava "integra" e `"integra" in "íntegra"` e
+# falso. Ja "Arrecadacao Integrada", sem acento, passava e virava ruido.
+#
+# O operador informou em 05/10/2026 que clicar nesse link dispara um SEGUNDO
+# FATOR, como no login: estar autenticado nao basta para abrir os autos.
+# ==========================================================================
+
+class _AlvoComTexto:
+    def __init__(self, texto, visivel=True):
+        self.texto, self.visivel = texto, visivel
+        self.cliques = 0
+
+    def is_visible(self):
+        return self.visivel
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, nome):
+        return None
+
+    def click(self):
+        self.cliques += 1
+
+
+class _TelaDeAcoes:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, textos):
+        self.url = "https://eproc1g.tjrj.jus.br/eproc/controlador.php?acao=processo_selecionar"
+        self.alvos = [_AlvoComTexto(x) for x in textos]
+
+    def query_selector_all(self, seletor):
+        return list(self.alvos) if seletor == "a, button" else []
+
+
+def test_o_acento_nao_pode_mais_esconder_o_acesso_a_integra():
+    from justica_mcp.portal import _acesso_a_integra
+
+    tela = _TelaDeAcoes([
+        "Arrecadação Integrada na Web",
+        "Acesso íntegra do processo",
+        "Movimentar/Peticionar",
+    ])
+    achado = _acesso_a_integra(tela)
+    assert achado is tela.alvos[1]
+
+
+def test_arrecadacao_integrada_nao_e_confundida_com_a_integra():
+    from justica_mcp.portal import _acesso_a_integra
+
+    tela = _TelaDeAcoes(["Arrecadação Integrada na Web", "Guias Depósito Judicial"])
+    assert _acesso_a_integra(tela) is None
+
+
+def test_alvo_invisivel_nao_conta():
+    from justica_mcp.portal import _acesso_a_integra
+
+    tela = _TelaDeAcoes(["Acesso íntegra do processo"])
+    tela.alvos[0].visivel = False
+    assert _acesso_a_integra(tela) is None
+
+
+def test_o_filtro_do_relato_compara_sem_acento():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._relatar_tela)
+    assert "sem_acento(texto)" in fonte
+    assert "integra" in portal.TERMOS_DE_COPIA
+
+
+class _CampoDeCodigo:
+    def __init__(self, tela, seletor):
+        self.tela, self.seletor = tela, seletor
+        self.valor = None
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def click(self):
+        pass
+
+    def fill(self, valor):
+        self.valor = valor
+        self.tela.digitado[self.seletor] = valor
+
+
+class _BotaoDeCodigo:
+    def __init__(self, tela, seletor):
+        self.tela, self.seletor = tela, seletor
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+    def click(self):
+        self.tela.cliques.append(self.seletor)
+
+
+class _TelaDeCodigo:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, presentes):
+        self.url = "https://eproc1g.tjrj.jus.br/eproc/controlador.php?acao=integra"
+        self.presentes = set(presentes)
+        self.digitado, self.cliques = {}, []
+
+    def query_selector_all(self, seletor):
+        if seletor not in self.presentes:
+            return []
+        if seletor.startswith("#btn") or seletor == "#kc-login":
+            return [_BotaoDeCodigo(self, seletor)]
+        return [_CampoDeCodigo(self, seletor)]
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+class _CofreFalso:
+    def __init__(self, com_semente=True):
+        self.com_semente = com_semente
+
+    def tem_semente(self, identidade):
+        return self.com_semente
+
+    def segundos_restantes_do_codigo(self):
+        return 25
+
+    def _codigo_segundo_fator(self, identidade, minimo_segundos=8):
+        return "123456"
+
+
+class _Identidade:
+    tribunal, sistema, rotulo = "TJRJ", "eproc", "TJRJ / eproc"
+
+
+def _guarda_simples():
+    from justica_mcp.core.guarda_navegacao import GuardaNavegacao, Modo
+
+    return GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
+
+
+def test_tela_sem_campo_de_codigo_nao_pede_nada(monkeypatch):
+    """Nem todo clique na integra pede segundo fator; dizer que pediu levaria o
+    operador a procurar um codigo que ninguem quis."""
+    from justica_mcp.portal import _responder_segundo_fator
+
+    assert _responder_segundo_fator(
+        _TelaDeCodigo([]), _guarda_simples(), _Identidade(), 5) is False
+
+
+def test_o_codigo_sai_do_cofre_e_e_enviado(monkeypatch):
+    from justica_mcp import portal
+
+    monkeypatch.setattr(portal, "Cofre", lambda: _CofreFalso())
+    tela = _TelaDeCodigo(["#otp", "#kc-login"])
+    guarda = _guarda_simples()
+
+    assert portal._responder_segundo_fator(tela, guarda, _Identidade(), 5) is True
+    assert tela.digitado == {"#otp": "123456"}
+    assert tela.cliques == ["#kc-login"]
+    assert [r["acao"] for r in guarda.registro] == ["preencher", "clicar"]
+
+
+def test_a_familia_do_eproc_tambem_serve(monkeypatch):
+    from justica_mcp import portal
+
+    monkeypatch.setattr(portal, "Cofre", lambda: _CofreFalso())
+    tela = _TelaDeCodigo(["#txtAcessoCodigo", "#btnValidar"])
+    assert portal._responder_segundo_fator(tela, _guarda_simples(), _Identidade(), 5)
+    assert tela.digitado == {"#txtAcessoCodigo": "123456"}
+
+
+def test_sem_semente_o_pedido_de_codigo_vira_recusa_com_motivo(monkeypatch):
+    """A consulta ja terminou; dizer so 'copia nao concluida' mandaria procurar
+    defeito onde ha falta de semente."""
+    from justica_mcp import portal
+
+    monkeypatch.setattr(portal, "Cofre", lambda: _CofreFalso(com_semente=False))
+    with pytest.raises(portal.ConteudoInesperado, match="semente"):
+        portal._responder_segundo_fator(
+            _TelaDeCodigo(["#otp", "#kc-login"]), _guarda_simples(), _Identidade(), 5)
+
+
+def test_campo_sem_botao_nao_digita_o_codigo(monkeypatch):
+    """Digitar um codigo que nao sera enviado queima a janela de validade dele
+    por nada."""
+    from justica_mcp import portal
+
+    monkeypatch.setattr(portal, "Cofre", lambda: _CofreFalso())
+    tela = _TelaDeCodigo(["#otp"])
+    with pytest.raises(portal.ConteudoInesperado, match="botao"):
+        portal._responder_segundo_fator(tela, _guarda_simples(), _Identidade(), 5)
+    assert tela.digitado == {}

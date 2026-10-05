@@ -2376,6 +2376,23 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
 
 BOTAO_INTEGRA = "#btnDownloadCompletoRS"
 
+# Palavras que denunciam um caminho de copia dos autos. Comparadas SEM ACENTO,
+# contra o texto do link ou do botao.
+TERMOS_DE_COPIA = ("gerar", "download", "baixar", "completo", "integra", "autos",
+                   "copia")
+
+# O eproc do Rio nao tem `#btnDownloadCompletoRS`. Ele tem, no quadro "Acoes" da
+# tela do processo, um link escrito "Acesso integra do processo", conferido na
+# tela real em 05/10/2026. O operador informou, na mesma data, que clicar nele
+# dispara um SEGUNDO FATOR, como no login: acessar os autos inteiros exige mais
+# que estar autenticado.
+MARCA_DO_ACESSO_A_INTEGRA = "integra do processo"
+
+# Campos de codigo ja vistos em tela real, nas duas familias de portal. A ordem
+# importa pouco; o que importa e so aceitar o que esta VISIVEL.
+CAMPOS_DE_CODIGO = ("#otp", "#txtAcessoCodigo")
+BOTOES_DE_CODIGO = ("#kc-login", "#btnValidar")
+
 # Segundo passo da copia integral no eproc, lido da tela real da Justica Federal
 # do Rio em 02/10/2026. O primeiro clique nao devolve arquivo: leva a
 # `acao=selecionar_processos_agendar_arquivo_completo`, cujo titulo e "Agenda
@@ -2992,7 +3009,12 @@ def _relatar_tela(pagina, titulo: str) -> None:
     interessantes = []
     for a in ligacoes:
         texto = (a.inner_text() or "").strip()
-        if any(t in texto.lower() for t in ("gerar", "download", "baixar", "completo", "integra")):
+        # SEM ACENTO, e esta linha custou uma noite. O botao de copia do eproc do
+        # Rio chama-se "Acesso integra do processo", com acento no i, e
+        # `"integra" in "íntegra"` e falso. O relato jurou que a tela nao tinha
+        # botao de copia enquanto ele estava ali, escrito em portugues correto.
+        # Ja "Arrecadacao Integrada", que nao tem acento, passava e virava ruido.
+        if any(t in sem_acento(texto) for t in TERMOS_DE_COPIA):
             interessantes.append((texto[:60], (a.get_attribute("href") or "")[:90]))
     if interessantes:
         print(f"    LIGACOES COM TERMO DE COPIA ({len(interessantes)}):")
@@ -3101,6 +3123,85 @@ def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
                 print(f"      {item}")
         return None
     return info.value
+
+
+def _acesso_a_integra(pagina):
+    """O link "Acesso integra do processo" do quadro Acoes, se estiver na tela.
+
+    Procura pelo TEXTO, sem acento, e nao pelo identificador: o link nao tem id
+    na tela do Rio, e o texto e o unico sinal estavel que ele oferece.
+    """
+    for alvo in pagina.query_selector_all("a, button"):
+        try:
+            if not alvo.is_visible():
+                continue
+            texto = sem_acento(alvo.inner_text() or "")
+        except Exception:
+            continue
+        if MARCA_DO_ACESSO_A_INTEGRA in texto:
+            return alvo
+    return None
+
+
+def _responder_segundo_fator(pagina, guarda, identidade, segundos: int) -> bool:
+    """Responde o segundo fator que o portal pede para abrir os autos.
+
+    Devolve True quando respondeu, False quando NAO havia o que responder (a
+    tela nao pediu codigo). Levanta quando pediu e nao foi possivel responder:
+    seguir adiante sem o aceite daria a impressao de que a copia falhou por
+    outro motivo.
+
+    Por que isso existe: no eproc do Rio, estar autenticado nao basta para abrir
+    os autos inteiros. O clique em "Acesso integra do processo" pede um segundo
+    fator novo, como no login. Informado pelo operador em 05/10/2026.
+    """
+    campo = seletor = None
+    for candidato in CAMPOS_DE_CODIGO:
+        achado = elemento_visivel(pagina, candidato)
+        if achado is not None:
+            campo, seletor = achado, candidato
+            break
+    if campo is None:
+        return False
+
+    print("    O portal pede um segundo fator para abrir os autos.")
+    cofre = Cofre()
+    if not cofre.tem_semente(identidade):
+        raise ConteudoInesperado(
+            f"o portal pediu codigo para abrir os autos e nao ha semente para "
+            f"{identidade.rotulo} no cofre. A consulta acima vale; so a copia parou.")
+
+    restante = cofre.segundos_restantes_do_codigo()
+    if restante < 8:
+        print(f"    Codigo atual expira em {restante}s; aguardando a proxima janela.")
+    codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
+
+    botao = botao_seletor = None
+    for candidato in BOTOES_DE_CODIGO:
+        achado = elemento_visivel(pagina, candidato)
+        if achado is not None:
+            botao, botao_seletor = achado, candidato
+            break
+    if botao is None:
+        raise ConteudoInesperado(
+            "o campo do codigo apareceu, mas nenhum botao conhecido de validar. "
+            "O codigo NAO foi digitado.")
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="segundo fator para abrir os autos",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(botao_seletor,),
+        seletores_preenchiveis=(seletor,),
+    ))
+    guarda.pode_executar(Acao.PREENCHER, seletor, url=pagina.url)
+    campo.click()
+    campo.fill(codigo)
+    guarda.pode_executar(Acao.CLICAR, botao_seletor, url=pagina.url)
+    botao.click()
+    _assentar(pagina, segundos)
+    print("    Codigo do cofre enviado.")
+    return True
 
 
 def _links_das_partes(pagina) -> list:
@@ -3264,7 +3365,86 @@ def _nome_do_endereco(endereco: str) -> str:
     return ""
 
 
-def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> list:
+# Rotulo do alvo no relato da trava. O link nao tem identificador na tela do
+# Rio, entao o que o identifica e o proprio texto.
+SELETOR_DO_ACESSO = 'a:"Acesso integra do processo"'
+
+
+def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
+                         identidade, segundos: int) -> list:
+    """Caminho da copia no eproc do Rio, pelo quadro "Acoes" da tela do processo.
+
+    Tres diferencas em relacao ao do Tribunal Regional Federal da 2a Regiao, e
+    as tres vieram da tela real e do operador, em 05/10/2026: o alvo e um link
+    com texto, e nao um botao com identificador; o clique pede um SEGUNDO FATOR,
+    porque estar autenticado nao basta para abrir os autos inteiros; e o
+    resultado pode vir em aba nova.
+
+    Do segundo fator em diante, o caminho volta a ser o mesmo do eproc ja
+    conhecido: partes prontas, ou pedido de geracao. Se nao for, o relato da
+    tela diz o que e, e nada e adivinhado.
+    """
+    print('    O portal do Rio usa "Acesso integra do processo", e nao um botao.')
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="abrir a integra do processo pelo quadro Acoes",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(SELETOR_DO_ACESSO,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, SELETOR_DO_ACESSO, url=pagina.url)
+
+    abertas: list = []
+    try:
+        pagina.context.on("page", lambda p: abertas.append(p))
+    except Exception:
+        pass
+    acesso.click()
+    _assentar(pagina, segundos)
+
+    # A integra pode abrir em aba nova, como as partes do arquivo. Quando abre,
+    # e nela que esta tudo o que interessa daqui para a frente.
+    janela = pagina
+    if abertas:
+        janela = abertas[-1]
+        try:
+            janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
+        except Exception:
+            pass
+        _assentar(janela, segundos)
+        print("    Os autos abriram em aba nova.")
+
+    try:
+        _responder_segundo_fator(janela, guarda, identidade, segundos)
+    except ConteudoInesperado as exc:
+        print(f"    [PAROU] {exc}")
+        _relatar_tela(janela, "TELA DO SEGUNDO FATOR DA INTEGRA")
+        return []
+
+    recados = _mensagens_de_erro(janela)
+    for recado in recados:
+        print(f"    O portal disse: {recado}")
+
+    partes = _baixar_partes_do_eproc(janela, guarda, destino, chave, segundos)
+    if partes:
+        return partes
+
+    baixado = _gerar_integra_do_eproc(janela, guarda, segundos)
+    if baixado is not None:
+        from pathlib import Path
+
+        destino.mkdir(parents=True, exist_ok=True)
+        sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
+        arquivo = Path(destino) / f"integra-{sugerido}"
+        baixado.save_as(str(arquivo))
+        return [str(arquivo)]
+
+    print("    A tela dos autos nao tem parte pronta nem botao de gerar conhecido.")
+    _relatar_tela(janela, "TELA DOS AUTOS")
+    return []
+
+
+def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
+                    segundos: int) -> list:
     """Copia integral pelo botao do proprio portal.
 
     Unico download que exige clique: o botao nao tem endereco proprio, o
@@ -3288,8 +3468,15 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> list:
         # sem entregar nada com que descobrir qual e o botao de la. O relato
         # lista os botoes e as ligacoes com termo de copia, que e exatamente o
         # material para escrever o seletor certo sem adivinhar.
-        print(f"    O botao {BOTAO_INTEGRA} nao esta nesta tela. Ele e o do eproc")
-        print("    do Tribunal Regional Federal da 2a Regiao, e nem todo eproc o tem.")
+        # Antes de desistir, o caminho do Rio: o quadro "Acoes" da tela do
+        # processo traz "Acesso integra do processo", que nao e botao com
+        # identificador, e sim um link com texto.
+        acesso = _acesso_a_integra(pagina)
+        if acesso is not None:
+            return _integra_pelo_acesso(pagina, guarda, acesso, destino, chave,
+                                        identidade, segundos)
+        print(f"    O botao {BOTAO_INTEGRA} nao esta nesta tela, e tambem nao ha")
+        print('    link de "acesso a integra do processo".')
         _relatar_tela(pagina, "TELA DO PROCESSO")
         itens = _itens_do_menu(pagina)
         if itens:
@@ -3971,7 +4158,8 @@ def consultar_processo(
                         # 05/10/2026, com duas partes. O numero depende do
                         # processo, entao aqui se recebe uma lista.
                         arquivos = _baixar_integra(
-                            pagina, guarda, pasta, numero.apenas_digitos, segundos
+                            pagina, guarda, pasta, numero.apenas_digitos,
+                            identidade, segundos
                         )
                     except Exception as exc:
                         arquivos, falhou = [], True
