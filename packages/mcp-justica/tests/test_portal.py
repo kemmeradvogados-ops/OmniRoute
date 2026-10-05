@@ -3357,3 +3357,17 @@ def test_a_tela_reconhecida_entra_na_trava_nominalmente():
         "etapa 1: credencial")[0]
     assert "guarda.permissoes.append(permissao)" in trecho
     assert "seletores_preenchiveis=(campo_usuario, campo_senha," in trecho
+
+
+def test_sem_botao_de_copia_o_comando_relata_a_tela():
+    """Conferido em campo em 05/10/2026: o eproc do Rio nao tem
+    `#btnDownloadCompletoRS`, e o comando parava dizendo so que nao achou, sem
+    entregar nada com que descobrir qual e o botao de la."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_integra)
+    trecho = fonte.split("botao = elemento_visivel(pagina, BOTAO_INTEGRA)")[1]
+    cabeca = trecho.split("return []")[0]
+    assert '_relatar_tela(pagina, "TELA DO PROCESSO")' in cabeca

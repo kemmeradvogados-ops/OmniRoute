@@ -3271,6 +3271,15 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> list:
 
     botao = elemento_visivel(pagina, BOTAO_INTEGRA)
     if botao is None:
+        # Beco, se parar aqui calado. Conferido em campo em 05/10/2026: o eproc
+        # do Rio nao tem `#btnDownloadCompletoRS` na tela do processo, e o
+        # comando dizia so "botao de copia integral nao encontrado nesta tela",
+        # sem entregar nada com que descobrir qual e o botao de la. O relato
+        # lista os botoes e as ligacoes com termo de copia, que e exatamente o
+        # material para escrever o seletor certo sem adivinhar.
+        print(f"    O botao {BOTAO_INTEGRA} nao esta nesta tela. Ele e o do eproc")
+        print("    do Tribunal Regional Federal da 2a Regiao, e nem todo eproc o tem.")
+        _relatar_tela(pagina, "TELA DO PROCESSO")
         return []
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,
