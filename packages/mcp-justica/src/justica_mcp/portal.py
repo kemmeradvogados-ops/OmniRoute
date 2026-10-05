@@ -3570,17 +3570,39 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
             print("    Os autos abriram num quadro embutido na propria pagina.")
 
     try:
-        _responder_segundo_fator(janela, guarda, identidade, segundos)
+        respondeu = _responder_segundo_fator(janela, guarda, identidade, segundos)
     except ConteudoInesperado as exc:
         print(f"    [PAROU] {exc}")
         _relatar_tela(janela, "TELA DO SEGUNDO FATOR DA INTEGRA")
         return []
 
-    recados = _mensagens_de_erro(janela)
+    if respondeu:
+        # O quadro de antes NAO serve mais. Ao aceitar o codigo, o portal troca
+        # o conteudo do quadro, e o objeto antigo fica solto: qualquer leitura
+        # nele levanta erro do Playwright sem mensagem util. Foi o que aconteceu
+        # em campo em 05/10/2026, com a execucao terminando em "(Error)" seco,
+        # depois de o codigo ter sido aceito.
+        _assentar(pagina, segundos)
+        renovado = quadro_da_integra(pagina)
+        janela = renovado if renovado is not None else pagina
+
+    try:
+        recados = _mensagens_de_erro(janela)
+    except Exception:
+        recados = []
     for recado in recados:
         print(f"    O portal disse: {recado}")
 
-    partes = _baixar_partes_do_eproc(janela, guarda, destino, chave, segundos)
+    # Daqui para a frente a janela pode ser um quadro que o portal troca sob os
+    # pes. Qualquer erro vira relato, e nao traceback: a consulta ja terminou, e
+    # o que falta e descobrir como e a tela dos autos no Rio.
+    try:
+        partes = _baixar_partes_do_eproc(janela, guarda, destino, chave, segundos)
+    except Exception as exc:
+        print(f"    A leitura da tela dos autos falhou ({type(exc).__name__}: "
+              f"{str(exc).strip().splitlines()[0][:120]}).")
+        _relatar_tela(pagina, "PAGINA DE CIMA")
+        return []
     if partes:
         return partes
 
@@ -4319,10 +4341,15 @@ def consultar_processo(
                         )
                     except Exception as exc:
                         arquivos, falhou = [], True
-                        # So o nome do erro: o relato da tela, impresso acima, e o
-                        # que serve para decidir o proximo passo. O despejo do log
-                        # do Playwright sepultava esse relato.
-                        print(f"    Copia integral nao concluida ({type(exc).__name__}).")
+                        # O nome da classe sozinho nao diz nada: o Playwright chama
+                        # tudo de `Error`, e a execucao de 05/10/2026 terminou num
+                        # "(Error)" seco que nao permitia decidir nada. A PRIMEIRA
+                        # linha da mensagem diz o essencial; o resto e o despejo do
+                        # log, que sepultava o relato da tela impresso acima.
+                        primeira = str(exc).strip().splitlines()[:1]
+                        detalhe = primeira[0][:160] if primeira else "sem mensagem"
+                        print(f"    Copia integral nao concluida "
+                              f"({type(exc).__name__}: {detalhe}).")
                     if arquivos:
                         from pathlib import Path as _P
 

@@ -3907,3 +3907,30 @@ def test_o_rotulo_do_botao_sem_id_entra_no_relato_da_trava(monkeypatch):
     assert tela.alvos[1].cliques == 0, "Cancelar nao pode ter sido clicado"
     assert [r["alvo"] for r in guarda.registro] == [
         "#txtAcessoCodigo", 'botao:"Confirmar"']
+
+
+def test_o_quadro_e_reacolhido_depois_do_codigo_aceito():
+    """Ao aceitar o codigo, o portal troca o conteudo do quadro, e o objeto
+    antigo fica solto: qualquer leitura nele levanta erro do Playwright sem
+    mensagem util. Foi assim que a execucao de 05/10/2026 terminou em '(Error)'
+    seco, depois de o codigo ter sido aceito."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._integra_pelo_acesso)
+    depois = fonte.split("_responder_segundo_fator(")[1]
+    assert "renovado = quadro_da_integra(pagina)" in depois
+    assert "janela = renovado if renovado is not None else pagina" in depois
+
+
+def test_a_falha_da_copia_diz_mais_que_o_nome_da_classe():
+    """O Playwright chama tudo de `Error`: o nome sozinho nao permite decidir
+    nada."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split("Copia integral nao concluida")[1][:200]
+    assert "{detalhe}" in trecho
