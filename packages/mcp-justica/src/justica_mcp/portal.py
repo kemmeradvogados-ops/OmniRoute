@@ -2853,6 +2853,52 @@ def _relatar_tela(pagina, titulo: str) -> None:
             print(f"      {caminho}")
 
 
+# Onde o eproc costuma escrever o recado da tela, em ordem do mais estreito
+# para o mais largo. Lidos dos mapas reais de 02 e 05/10/2026.
+AREAS_DE_RECADO = ("#divInfraAreaDados", "#divInfraAreaTelaD", "#divInfraAreaTela", "body")
+
+
+def _recado_da_tela(pagina, limite: int = 800) -> str:
+    """O texto que o portal escreveu nesta tela, encurtado.
+
+    Existe por uma lacuna que custou uma execucao inteira: o relato desta casa
+    imprime ESTRUTURA e nunca conteudo, por causa de dado de cliente. Isso esta
+    certo para tela de processo. Para uma tela de sistema, como a que confirma
+    o pedido de geracao de arquivo, vira um buraco: o portal explica ali o que
+    vai acontecer e para onde ir buscar, e ninguem le.
+    """
+    for area in AREAS_DE_RECADO:
+        try:
+            alvo = pagina.query_selector(area)
+            if alvo is None:
+                continue
+            texto = " ".join((alvo.inner_text() or "").split())
+        except Exception:
+            continue
+        if texto:
+            return texto[:limite]
+    return ""
+
+
+def _itens_do_menu(pagina, teto: int = 60) -> list[str]:
+    """Os rotulos do menu lateral, sem endereco e sem repeticao.
+
+    Rotulo de menu e texto do sistema, nao dado de processo: "Consultas",
+    "Relatorios" e afins. Serve para achar por onde se chega a uma tela que
+    ainda nao foi vista, como a dos arquivos ja gerados.
+    """
+    vistos, saida = set(), []
+    try:
+        for item in pagina.query_selector_all("#sidebar-wrapper a, #main-menu a"):
+            texto = " ".join((item.inner_text() or "").split())[:40]
+            if texto and texto not in vistos:
+                vistos.add(texto)
+                saida.append(texto)
+    except Exception:
+        return saida
+    return saida[:teto]
+
+
 def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
     """Segundo clique da copia integral no eproc: a tela que pede para GERAR.
 
@@ -2890,6 +2936,16 @@ def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
         print("    O nome da acao no portal fala em AGENDAR, entao o arquivo pode estar")
         print("    sendo montado para depois. Nada foi perdido e nada foi clicado alem")
         print("    do botao de gerar.")
+        recado = _recado_da_tela(pagina)
+        if recado:
+            print("\n    O QUE O PORTAL ESCREVEU NESTA TELA:")
+            print(f"      {recado}")
+        itens = _itens_do_menu(pagina)
+        if itens:
+            print(f"\n    MENU DO PORTAL ({len(itens)} item(ns)), para achar onde o")
+            print("    arquivo gerado fica guardado:")
+            for item in itens:
+                print(f"      {item}")
         return None
     return info.value
 

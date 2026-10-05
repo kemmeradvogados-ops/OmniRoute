@@ -2899,3 +2899,81 @@ def test_falha_do_acervo_nao_derruba_a_consulta_ja_concluida():
         "os dois ramos, e-SAJ e eproc, precisam sobreviver a falha do acervo")
     # A gravacao da consulta acontece antes, e o aviso aponta para ela.
     assert "A consulta acima vale e ja esta no arquivo indicado abaixo." in fonte
+
+
+# ==========================================================================
+# A tela de sistema precisa ser LIDA, e nao so descrita
+#
+# O relato desta casa imprime estrutura e nunca conteudo, por causa de dado de
+# cliente. Certo para tela de processo. Para a tela que confirma o pedido de
+# geracao de arquivo, virou buraco: em 05/10/2026 os dois cliques funcionaram,
+# o portal aceitou o pedido, e ninguem ficou sabendo onde o arquivo vai parar
+# porque o texto da tela nunca foi lido.
+# ==========================================================================
+
+class _TelaComRecado:
+    def __init__(self, areas=None, menu=()):
+        self.areas = areas or {}
+        self.menu = list(menu)
+
+    def query_selector(self, seletor):
+        valor = self.areas.get(seletor)
+        if valor is None:
+            return None
+
+        class _Area:
+            def inner_text(self_):
+                return valor
+
+        return _Area()
+
+    def query_selector_all(self, _seletor):
+        itens = self.menu
+
+        class _Item:
+            def __init__(self_, texto):
+                self_.texto = texto
+
+            def inner_text(self_):
+                return self_.texto
+
+        return [_Item(t) for t in itens]
+
+
+def test_o_recado_vem_da_area_mais_estreita_que_existir():
+    from justica_mcp.portal import _recado_da_tela
+
+    tela = _TelaComRecado({
+        "#divInfraAreaDados": "  O arquivo   sera gerado\n e ficara disponivel. ",
+        "#divInfraAreaTela": "texto largo demais",
+    })
+    assert _recado_da_tela(tela) == "O arquivo sera gerado e ficara disponivel."
+
+
+def test_area_ausente_cai_para_a_seguinte():
+    from justica_mcp.portal import _recado_da_tela
+
+    tela = _TelaComRecado({"body": "recado de ultimo recurso"})
+    assert _recado_da_tela(tela) == "recado de ultimo recurso"
+
+
+def test_tela_muda_devolve_vazio_e_nao_explode():
+    from justica_mcp.portal import _recado_da_tela
+
+    assert _recado_da_tela(_TelaComRecado()) == ""
+
+
+def test_o_recado_e_encurtado():
+    from justica_mcp.portal import _recado_da_tela
+
+    tela = _TelaComRecado({"#divInfraAreaDados": "x" * 5000})
+    assert len(_recado_da_tela(tela, limite=100)) == 100
+
+
+def test_itens_do_menu_sem_repeticao():
+    """O eproc monta duas barras, uma para tela grande e outra para telefone,
+    com os mesmos rotulos. Repetir tudo dobraria a lista sem acrescentar nada."""
+    from justica_mcp.portal import _itens_do_menu
+
+    tela = _TelaComRecado(menu=["Consultas", "Relatorios", "Consultas", "  "])
+    assert _itens_do_menu(tela) == ["Consultas", "Relatorios"]
