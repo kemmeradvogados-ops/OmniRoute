@@ -929,6 +929,81 @@ def avisos_na_tela(pagina, teto: int = 400) -> list[str]:
     return saida
 
 
+# ==========================================================================
+# De onde vem o codigo do segundo fator
+#
+# Duas telas parecidas pedem a mesma coisa e esperam codigos de origem
+# diferente: a do aplicativo autenticador, que o cofre sabe gerar da semente,
+# e a do codigo que o PROPRIO portal enviou por mensagem ou e-mail, que so a
+# pessoa tem. Ter semente guardada decidia sozinho qual usar, e nas contas que
+# bloqueiam por tentativa isso custa caro: a semente gera um numero que a tela
+# nunca aceitaria, e a tentativa vai embora sem ninguem saber por que.
+#
+# Ler o que a tela ESCREVEU separa os dois de graca, antes do envio.
+# ==========================================================================
+
+MARCAS_DE_CODIGO_DO_APLICATIVO = (
+    "aplicativo de autenticacao", "aplicativo autenticador",
+    "aplicativo de autenticador", "autenticador", "authenticator",
+    "aplicativo movel", "gerado pelo aplicativo", "codigo do aplicativo",
+    "one-time", "otp",
+)
+
+MARCAS_DE_CODIGO_ENVIADO = (
+    "enviamos", "foi enviado", "enviado para", "enviado ao",
+    "reenviar codigo", "receber novo codigo", "reenviar o codigo",
+    "sms", "mensagem de texto", "torpedo",
+    "e-mail cadastrado", "email cadastrado", "caixa de entrada",
+    "celular cadastrado", "telefone cadastrado",
+)
+
+
+def classificar_origem_do_codigo(texto: str) -> Optional[str]:
+    """`aplicativo`, `enviado`, ou None quando a tela nao disse.
+
+    O aplicativo ganha do envio quando as duas marcas aparecem. Motivo: a
+    palavra "enviar" cabe no botao de qualquer uma das duas telas, enquanto
+    "aplicativo de autenticacao" nao aparece por acaso numa tela que manda
+    codigo por e-mail.
+
+    Nenhuma marca encontrada devolve None, e None NAO e "enviado": na duvida o
+    comando segue como seguia antes, porque chutar a origem errada e o defeito
+    que esta funcao existe para evitar, e ele vale nos dois sentidos.
+    """
+    limpo = sem_acento(texto or "")
+    if any(marca in limpo for marca in MARCAS_DE_CODIGO_DO_APLICATIVO):
+        return "aplicativo"
+    if any(marca in limpo for marca in MARCAS_DE_CODIGO_ENVIADO):
+        return "enviado"
+    return None
+
+
+def texto_ao_redor(pagina, campo=None, teto: int = 1200) -> str:
+    """O texto do formulario em volta do campo, ou o da tela inteira.
+
+    Vale para tela de SISTEMA, como a de login e a do segundo fator. Nao e para
+    tela de processo: ali o texto da pagina e dado de cliente, e este projeto
+    nao o le.
+    """
+    if campo is not None:
+        try:
+            texto = campo.evaluate(
+                "e => { const f = e.closest('form') || e.parentElement; "
+                "return f ? f.innerText : ''; }")
+            if texto and texto.strip():
+                return " ".join(texto.split())[:teto]
+        except Exception:
+            pass
+    try:
+        return " ".join((pagina.inner_text("body") or "").split())[:teto]
+    except Exception:
+        return ""
+
+
+def origem_do_codigo(pagina, campo=None) -> Optional[str]:
+    """Le a tela do segundo fator e diz de onde o codigo deveria vir."""
+    return classificar_origem_do_codigo(texto_ao_redor(pagina, campo))
+
 def _valor_de(elemento) -> str:
     try:
         return elemento.evaluate("e => e.value || ''")
@@ -2322,6 +2397,32 @@ def autenticar(
 
                 erros = _mensagens_de_erro(pagina)
                 campo = achar_opcional(pagina, campo_codigo)
+                if campo is None and not campo_codigo:
+                    a_vista = seletor_de_codigo_a_vista(pagina)
+                    if a_vista:
+                        print("\n  [PARADO] A tela PEDE um codigo de segundo fator, e este")
+                        print("           portal ainda nao tem o campo registrado aqui.")
+                        print(f"           Na tela ele aparece como  {a_vista}")
+                        for aviso in avisos_na_tela(pagina):
+                            print(f"  AVISO NA TELA: {aviso}")
+                        origem = origem_do_codigo(pagina)
+                        if origem == "aplicativo":
+                            print("  A tela pede o codigo do APLICATIVO autenticador.")
+                        elif origem == "enviado":
+                            print("  A tela diz que o codigo foi ENVIADO pelo portal.")
+                        print("  A credencial foi aceita: nao e caso de conferir a senha.")
+                        print("  Para seguir, repita o comando acrescentando o campo acima")
+                        print("  e o botao que a tela mostra, por exemplo:")
+                        print(f"    --campo-codigo {a_vista} --botao-validar texto=Confirmar")
+                        print("  Isso custa mais uma tentativa de login, e e de proposito:")
+                        print("  preencher campo que eu mesmo descobri, sem o seu aval,")
+                        print("  esvaziaria a guarda que impede agir em tela desconhecida.")
+                        _relatar_tela(pagina, "TELA DO SEGUNDO FATOR")
+                        estado.registrar(
+                            acao="login_etapa_segundo_fator",
+                            tribunal=identidade.tribunal, sistema=identidade.sistema,
+                            resultado="campo_sem_seletor_registrado")
+                        return 1
                 if campo is None:
                     # Duas situacoes muito diferentes chegavam aqui com a mesma
                     # mensagem de uma linha: credencial recusada e portal que
@@ -2405,7 +2506,16 @@ def autenticar(
                     # semente o cofre GERA o codigo; sem semente quem o tem e a
                     # pessoa, porque o portal o enviou. Presumir semente para todos
                     # foi viavel enquanto so havia o eproc, e quebrou no e-SAJ.
-                    if cofre.tem_semente(identidade):
+                    # A tela manda mais que o cofre. Ter semente guardada decidia
+                    # sozinho gerar o codigo, e numa tela que ENVIOU o codigo isso
+                    # queima uma tentativa com um numero que ela nunca aceitaria.
+                    origem = origem_do_codigo(pagina, campo)
+                    if origem == "enviado" and cofre.tem_semente(identidade):
+                        print("  A tela diz que o codigo foi ENVIADO pelo portal, e nao")
+                        print("  que vem do aplicativo autenticador. A semente guardada")
+                        print("  NAO foi usada: ela geraria um numero que esta tela nao")
+                        print("  espera, e a tentativa seria perdida.")
+                    if cofre.tem_semente(identidade) and origem != "enviado":
                         # Exige janela util: codigo gerado no fim da validade expira
                         # entre o preenchimento e o envio, e o portal registra falha
                         # por um motivo que nao e culpa da credencial.
@@ -2426,7 +2536,7 @@ def autenticar(
                         except Exception:
                             rotulo_do_campo = None
                         codigo = _codigo_do_operador(identidade.rotulo, tamanho, oculto,
-                                                     rotulo_do_campo)
+                                                     rotulo_do_campo, origem)
                         if codigo is None:
                             estado.registrar(
                                 acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
@@ -2820,6 +2930,37 @@ def _ha_desafio_humano(pagina) -> bool:
     return False
 
 
+def seletor_de_codigo_a_vista(pagina) -> Optional[str]:
+    """Campo de codigo visivel na tela, para portal sem seletor registrado.
+
+    Seletor vazio na tabela quer dizer "ainda nao sei ONDE este portal pede o
+    codigo", e nao "este portal nao pede". Com os dois tratados igual, a tela
+    do segundo fator da Central do Processo Eletronico do Superior Tribunal de
+    Justica seria anunciada como "a tela do segundo fator nao apareceu", que e
+    o contrario do que estava acontecendo, e mandaria o operador conferir a
+    senha quando a senha ja tinha sido aceita.
+
+    Devolve o seletor APENAS para o relato. Quem autoriza preencher um campo
+    descoberto assim e o operador, passando --campo-codigo na linha de comando:
+    achar sozinho e depois dar permissao a si mesmo esvaziaria a guarda de
+    navegacao, que existe justamente para nao agir em tela que nao se conhece.
+    """
+    try:
+        campos, _ = _coletar(pagina)
+    except Exception:
+        return None
+    for campo in campos:
+        if not campo.visivel or campo.e_senha:
+            continue
+        if not _parece_segundo_fator(campo):
+            continue
+        if campo.identificador:
+            return f"#{campo.identificador}"
+        if campo.nome:
+            return f"input[name={campo.nome}]"
+    return None
+
+
 def achar_opcional(pagina, seletor):
     """`query_selector` que aceita seletor ausente, devolvendo None.
 
@@ -3064,7 +3205,8 @@ def _listar_ligacoes(pagina, teto: int = 60) -> None:
 
 
 def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool,
-                        rotulo_do_campo: Optional[str] = None) -> Optional[str]:
+                        rotulo_do_campo: Optional[str] = None,
+                        origem: Optional[str] = None) -> Optional[str]:
     """Pede ao operador o codigo do segundo fator.
 
     Nem todo portal usa codigo gerado de semente. O e-SAJ de Sao Paulo envia um
@@ -3099,6 +3241,11 @@ def _codigo_do_operador(rotulo: str, tamanho: Optional[int], oculto: bool,
     # suposicao minha sobre como cada tribunal manda o codigo.
     if rotulo_do_campo:
         print(f"\n  O portal pede um codigo{limite}. Ele diz: {rotulo_do_campo!r}")
+    elif origem == "aplicativo":
+        print(f"\n  O portal pede um codigo{limite} do seu APLICATIVO autenticador.")
+        print("  Nao espere mensagem nem e-mail: este codigo nao e enviado.")
+    elif origem == "enviado":
+        print(f"\n  O portal ENVIOU um codigo{limite}, por mensagem ou e-mail.")
     else:
         print(f"\n  O portal pede um codigo{limite}. Pode vir por mensagem, por")
         print("  e-mail ou do seu aplicativo autenticador, conforme o tribunal.")

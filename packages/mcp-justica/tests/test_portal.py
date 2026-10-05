@@ -4318,3 +4318,171 @@ def test_caixa_que_so_tem_o_x_nao_vira_aviso():
 
     tela = _TelaComAviso(fechaveis=[_AlvoDeAviso("✕", pai="✕")])
     assert avisos_na_tela(tela) == []
+
+
+# ==========================================================================
+# De onde vem o codigo do segundo fator
+#
+# A tela do PJe do Rio, lida em 22/09/2026, diz "Entre no seu aplicativo de
+# autenticacao". A do e-SAJ de Sao Paulo, lida em 21/09/2026, traz "Receber
+# novo codigo". Sao pedidos de coisas diferentes com a mesma aparencia, e ter
+# semente guardada decidia sozinho qual usar.
+# ==========================================================================
+
+def test_tela_do_pje_e_de_aplicativo_autenticador():
+    from justica_mcp.portal import classificar_origem_do_codigo
+
+    lido = "Entre no seu aplicativo de autenticação e informe o código. Validar"
+    assert classificar_origem_do_codigo(lido) == "aplicativo"
+
+
+def test_tela_que_enviou_o_codigo_e_reconhecida():
+    from justica_mcp.portal import classificar_origem_do_codigo
+
+    lido = "Informe o código. Não recebeu? Receber novo código"
+    assert classificar_origem_do_codigo(lido) == "enviado"
+
+
+def test_aplicativo_ganha_quando_as_duas_marcas_aparecem():
+    """"Enviar" cabe no botao de qualquer uma das duas telas; "aplicativo de
+    autenticacao" nao aparece por acaso numa tela que manda codigo por e-mail."""
+    from justica_mcp.portal import classificar_origem_do_codigo
+
+    lido = "Entre no seu aplicativo de autenticação. Enviamos para você. Enviar"
+    assert classificar_origem_do_codigo(lido) == "aplicativo"
+
+
+def test_tela_calada_nao_vira_palpite():
+    """None NAO e "enviado": na duvida o comando segue como seguia, porque
+    chutar a origem errada e o defeito que esta leitura existe para evitar."""
+    from justica_mcp.portal import classificar_origem_do_codigo
+
+    assert classificar_origem_do_codigo("Código Validar") is None
+    assert classificar_origem_do_codigo("") is None
+
+
+def test_acento_nao_decide_a_origem():
+    from justica_mcp.portal import classificar_origem_do_codigo
+
+    assert classificar_origem_do_codigo("APLICATIVO DE AUTENTICACAO") == "aplicativo"
+
+
+class _CampoNumFormulario:
+    def __init__(self, texto):
+        self.texto = texto
+
+    def evaluate(self, _):
+        return self.texto
+
+
+class _TelaDoSegundoFator:
+    def __init__(self, corpo=""):
+        self.corpo = corpo
+
+    def inner_text(self, _):
+        return self.corpo
+
+
+def test_le_o_formulario_em_volta_do_campo():
+    from justica_mcp.portal import origem_do_codigo
+
+    tela = _TelaDoSegundoFator("nada aqui")
+    campo = _CampoNumFormulario("Entre no seu aplicativo de autenticação")
+    assert origem_do_codigo(tela, campo) == "aplicativo"
+
+
+def test_sem_formulario_cai_para_o_corpo_da_tela():
+    from justica_mcp.portal import origem_do_codigo
+
+    tela = _TelaDoSegundoFator("Enviamos um código para o seu e-mail cadastrado")
+    assert origem_do_codigo(tela, _CampoNumFormulario("")) == "enviado"
+
+
+def test_semente_nao_e_usada_quando_a_tela_diz_que_enviou():
+    """Numa conta que bloqueia por tentativa, gerar da semente um numero que a
+    tela nunca aceitaria custa uma das tentativas sem ninguem saber por que."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("etapa 2: segundo fator")[1]
+    assert 'origem = origem_do_codigo(pagina, campo)' in trecho
+    assert 'cofre.tem_semente(identidade) and origem != "enviado"' in trecho
+    # E o operador precisa saber que a semente ficou de fora, e por que.
+    assert "NAO foi usada" in trecho
+
+
+# ==========================================================================
+# Portal que pede codigo sem ter o campo registrado
+#
+# Central do Processo Eletronico do Superior Tribunal de Justica, 05/10/2026.
+# A credencial foi aceita e a tela passou a pedir o segundo fator, mas na
+# tabela deste projeto o campo de codigo daquele portal ainda esta vazio. Como
+# vazio e ausente eram tratados igual, o comando anunciaria que a tela do
+# segundo fator nao apareceu e mandaria conferir a senha, que ja tinha sido
+# aceita.
+# ==========================================================================
+
+def _campo_qualquer(**troca):
+    from justica_mcp.portal import Campo
+
+    base = dict(marcador="input", tipo="text", nome=None, identificador=None,
+                rotulo=None, texto_visivel=None, e_senha=False, extras={})
+    base.update(troca)
+    return Campo(**base)
+
+
+class _TelaComCampos:
+    def __init__(self, campos):
+        self.campos = campos
+
+
+def test_acha_o_campo_de_codigo_que_a_tela_mostra(monkeypatch):
+    from justica_mcp import portal
+
+    campo = _campo_qualquer(identificador="codigoAcesso", rotulo="Código")
+    monkeypatch.setattr(portal, "_coletar", lambda _: ([campo], []))
+    assert portal.seletor_de_codigo_a_vista(object()) == "#codigoAcesso"
+
+
+def test_campo_sem_identificador_vira_seletor_por_nome(monkeypatch):
+    from justica_mcp import portal
+
+    campo = _campo_qualquer(nome="otpCode", extras={"maxlength": "6"})
+    monkeypatch.setattr(portal, "_coletar", lambda _: ([campo], []))
+    assert portal.seletor_de_codigo_a_vista(object()) == "input[name=otpCode]"
+
+
+def test_campo_de_senha_nunca_e_oferecido_como_campo_de_codigo(monkeypatch):
+    from justica_mcp import portal
+
+    campo = _campo_qualquer(identificador="password", e_senha=True,
+                            extras={"maxlength": "8"})
+    monkeypatch.setattr(portal, "_coletar", lambda _: ([campo], []))
+    assert portal.seletor_de_codigo_a_vista(object()) is None
+
+
+def test_tela_sem_campo_de_codigo_devolve_nada(monkeypatch):
+    from justica_mcp import portal
+
+    campo = _campo_qualquer(identificador="pesquisa", rotulo="Buscar")
+    monkeypatch.setattr(portal, "_coletar", lambda _: ([campo], []))
+    assert portal.seletor_de_codigo_a_vista(object()) is None
+
+
+def test_campo_descoberto_e_relatado_e_nao_preenchido():
+    """Preencher campo que o programa mesmo descobriu, sem o aval do operador,
+    esvaziaria a guarda que impede agir em tela desconhecida."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("campo is None and not campo_codigo")[1].split(
+        "if campo is None:")[0]
+    assert "--campo-codigo" in trecho
+    assert "nao e caso de conferir a senha" in trecho
+    # Relata e PARA. Nenhum preenchimento nem clique no caminho.
+    assert "return 1" in trecho
+    assert "pode_executar" not in trecho
