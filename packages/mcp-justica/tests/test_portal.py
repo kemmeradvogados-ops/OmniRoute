@@ -3718,3 +3718,77 @@ def test_os_dois_cliques_do_login_toleram_lentidao():
     fonte = inspect.getsource(portal.autenticar)
     assert "clicar_tolerando_lentidao(entrar_visivel, botao_entrar, segundos)" in fonte
     assert "clicar_tolerando_lentidao(validar_visivel, botao_validar, segundos)" in fonte
+
+
+# ==========================================================================
+# No Rio a integra abre em QUADRO EMBUTIDO, e nao em aba nova
+#
+# Tela real de 05/10/2026, depois do clique em "Acesso íntegra do processo":
+#
+#     'Acesso íntegra do processo'  ->  javascript:void(0);
+#     QUADROS EMBUTIDOS (2):
+#       src=controlador.php?acao=processo_vista_sem_procuracao&txtNumProcesso=...
+#
+# O link nao tem endereco para seguir, so o efeito do script. E o segundo fator
+# e os arquivos ficam DENTRO do quadro: procura-los no documento de cima nao
+# acha nada.
+# ==========================================================================
+
+class _QuadroEmbutido:
+    def __init__(self, url):
+        self.url = url
+
+
+class _PaginaDeQuadrosEmbutidos:
+    def __init__(self, urls):
+        self.frames = [_QuadroEmbutido(u) for u in urls]
+
+
+def test_o_quadro_da_integra_e_achado_pelo_endereco():
+    from justica_mcp.portal import quadro_da_integra
+
+    pagina = _PaginaDeQuadrosEmbutidos([
+        "https://eproc1g.tjrj.jus.br/eproc/controlador.php?acao=processo_selecionar",
+        "https://eproc1g.tjrj.jus.br/eproc/controlador.php"
+        "?acao=processo_vista_sem_procuracao&txtNumProcesso=123",
+    ])
+    assert quadro_da_integra(pagina) is pagina.frames[1]
+
+
+def test_pagina_sem_o_quadro_devolve_nada():
+    from justica_mcp.portal import quadro_da_integra
+
+    assert quadro_da_integra(_PaginaDeQuadrosEmbutidos(["https://exemplo/outra"])) is None
+
+
+def test_quadro_embutido_nao_quebra_a_leitura_da_estrutura():
+    """Quadro nao tem `viewport_size`: so a pagina tem. Ler de dentro dele
+    quebrava com AttributeError."""
+    from justica_mcp.portal import janela_de
+
+    class _SoQuadro:
+        pass
+
+    assert janela_de(_SoQuadro()) == {"width": 1280, "height": 720}
+
+    class _Pagina:
+        viewport_size = {"width": 800, "height": 600}
+
+    assert janela_de(_Pagina()) == {"width": 800, "height": 600}
+
+
+def test_o_download_de_dentro_do_quadro_usa_a_pagina():
+    """Quadro nao tem contexto nem espera de download: quem tem e a pagina que
+    o contem."""
+    from justica_mcp.portal import pagina_de
+
+    class _Pagina:
+        nome = "pagina"
+
+    pagina = _Pagina()
+
+    class _Frame:
+        page = pagina
+
+    assert pagina_de(_Frame()) is pagina
+    assert pagina_de(pagina) is pagina

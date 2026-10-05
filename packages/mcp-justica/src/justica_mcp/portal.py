@@ -331,9 +331,22 @@ def _na_tela(elemento: Any, largura: int, altura: int) -> bool:
     )
 
 
+def janela_de(pagina: Any) -> dict:
+    """Tamanho da janela, tolerando QUADRO EMBUTIDO.
+
+    Quadro embutido nao tem `viewport_size`: so a pagina tem. Ler a estrutura
+    de dentro de um quadro quebrava com AttributeError, e o eproc do Rio abre a
+    integra do processo justamente dentro de um quadro.
+    """
+    try:
+        return pagina.viewport_size or {"width": 1280, "height": 720}
+    except AttributeError:
+        return {"width": 1280, "height": 720}
+
+
 def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
     """Le a estrutura do formulario. Somente leitura do DOM."""
-    janela = pagina.viewport_size or {"width": 1280, "height": 720}
+    janela = janela_de(pagina)
     largura, altura = janela["width"], janela["height"]
     campos: list[Campo] = []
     for elemento in pagina.query_selector_all("input, select, textarea"):
@@ -1137,7 +1150,7 @@ def elemento_visivel(pagina: Any, seletor: str) -> Optional[Any]:
     primeira do documento, que pode ser a oculta, e preencher a oculta falha
     em silencio: nao levanta erro, so nao acontece nada.
     """
-    janela = pagina.viewport_size or {"width": 1280, "height": 720}
+    janela = janela_de(pagina)
     for elemento in pagina.query_selector_all(seletor):
         try:
             if elemento.is_visible() and _na_tela(elemento, janela["width"], janela["height"]):
@@ -3166,7 +3179,7 @@ def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
     ))
     guarda.pode_executar(Acao.CLICAR, BOTAO_GERAR_INTEGRA, url=pagina.url)
     try:
-        with pagina.expect_download(timeout=segundos * 1000) as info:
+        with pagina_de(pagina).expect_download(timeout=segundos * 1000) as info:
             botao.click()
     except Exception as exc:
         print(f"    A geracao foi pedida e o arquivo nao veio em {segundos}s "
@@ -3186,6 +3199,43 @@ def _gerar_integra_do_eproc(pagina, guarda, segundos: int):
                 print(f"      {item}")
         return None
     return info.value
+
+
+# O eproc do Rio abre a integra DENTRO DA PROPRIA PAGINA, num quadro embutido,
+# e nao em aba nova. Lido da tela real em 05/10/2026, depois do clique:
+#
+#     src=controlador.php?acao=processo_vista_sem_procuracao&txtNumProcesso=...
+#
+# O link, alias, e `javascript:void(0)`: nao ha endereco para seguir, so o
+# efeito do script. Procurar o segundo fator e os arquivos no documento de cima
+# nao acha nada, porque tudo esta dentro do quadro.
+MARCA_DO_QUADRO_DA_INTEGRA = "processo_vista"
+
+
+def pagina_de(janela):
+    """A pagina a que a janela pertence, ou ela propria se ja for pagina.
+
+    Quadro embutido nao tem contexto nem espera de download: quem tem e a
+    pagina que o contem. Sem isto, operar dentro do quadro quebra com
+    AttributeError no primeiro download.
+    """
+    return getattr(janela, "page", None) or janela
+
+
+def quadro_da_integra(pagina):
+    """O quadro embutido onde a integra do processo foi aberta, se houver."""
+    try:
+        quadros = list(pagina.frames)
+    except Exception:
+        return None
+    for quadro in quadros:
+        try:
+            endereco = quadro.url or ""
+        except Exception:
+            continue
+        if MARCA_DO_QUADRO_DA_INTEGRA in endereco:
+            return quadro
+    return None
 
 
 def _acesso_a_integra(pagina):
@@ -3357,7 +3407,7 @@ def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
         rotulo = f"parte {ordem} de {len(links)}"
         aba = None
         try:
-            with pagina.context.expect_page(timeout=segundos * 1000) as info:
+            with pagina_de(pagina).context.expect_page(timeout=segundos * 1000) as info:
                 link.click()
             aba = info.value
             try:
@@ -3381,7 +3431,7 @@ def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
         nome = _nome_do_endereco(endereco) or f"{chave}-parte{ordem}.pdf"
         arquivo = Path(destino) / f"integra-parte{ordem}-{nome}"
         try:
-            _gravar_pela_sessao(pagina.context, endereco, arquivo)
+            _gravar_pela_sessao(pagina_de(pagina).context, endereco, arquivo)
         except Exception as exc:
             print(f"      {rotulo}: nao gravou ({type(exc).__name__}: {exc}).")
             _fechar(aba)
@@ -3458,7 +3508,7 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
 
     abertas: list = []
     try:
-        pagina.context.on("page", lambda p: abertas.append(p))
+        pagina_de(pagina).context.on("page", lambda p: abertas.append(p))
     except Exception:
         pass
     acesso.click()
@@ -3475,6 +3525,12 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
             pass
         _assentar(janela, segundos)
         print("    Os autos abriram em aba nova.")
+    else:
+        # Caminho do Rio: nao ha aba nova, ha quadro embutido na mesma pagina.
+        quadro = quadro_da_integra(pagina)
+        if quadro is not None:
+            janela = quadro
+            print("    Os autos abriram num quadro embutido na propria pagina.")
 
     try:
         _responder_segundo_fator(janela, guarda, identidade, segundos)
