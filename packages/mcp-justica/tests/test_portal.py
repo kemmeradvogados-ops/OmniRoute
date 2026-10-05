@@ -4165,3 +4165,83 @@ def test_a_parada_do_login_le_o_aviso_antes_de_aconselhar():
     fonte = inspect.getsource(portal.autenticar)
     trecho = fonte.split("A tela do segundo fator nao apareceu")[1]
     assert "avisos_na_tela(pagina)" in trecho.split("pagina_de_erro_do_navegador")[0]
+
+
+# ==========================================================================
+# Campo que nao aceita o preenchimento direto
+#
+# Central do Processo Eletronico do Superior Tribunal de Justica, 05/10/2026. O
+# `fill` nao levantou erro, o botao foi clicado, a tentativa foi gasta, e o
+# portal respondeu "O campo CPF deve ser preenchido". O campo chegou VAZIO do
+# outro lado: e aplicacao de pagina unica, e campo controlado por framework as
+# vezes so reconhece o que veio de teclado de verdade.
+# ==========================================================================
+
+class _CampoDeFormulario:
+    def __init__(self, aceita_fill=True, aceita_type=True):
+        self.aceita_fill, self.aceita_type = aceita_fill, aceita_type
+        self.valor = ""
+        self.digitado = False
+
+    def click(self):
+        pass
+
+    def fill(self, valor):
+        if valor == "" or self.aceita_fill:
+            self.valor = valor
+
+    def type(self, valor, delay=None):
+        if not self.aceita_type:
+            raise RuntimeError("campo nao aceita digitacao")
+        self.digitado = True
+        self.valor = valor
+
+    def evaluate(self, _):
+        return self.valor
+
+
+def test_campo_comum_aceita_o_preenchimento_direto():
+    from justica_mcp.portal import preencher_conferindo
+
+    campo = _CampoDeFormulario()
+    assert preencher_conferindo(campo, "12345678901", "cpf") is True
+    assert campo.valor == "12345678901"
+    assert campo.digitado is False, "digitar tecla a tecla so quando preciso"
+
+
+def test_campo_de_pagina_unica_cai_para_a_digitacao(capsys):
+    from justica_mcp.portal import preencher_conferindo
+
+    campo = _CampoDeFormulario(aceita_fill=False)
+    assert preencher_conferindo(campo, "12345678901", "cpf") is True
+    assert campo.digitado is True
+    assert "tecla a tecla" in capsys.readouterr().out
+
+
+def test_campo_que_nao_aceita_nada_devolve_falso():
+    """E essa diferenca que decide se repetir o comando e util ou se so queima
+    mais uma tentativa da conta."""
+    from justica_mcp.portal import preencher_conferindo
+
+    campo = _CampoDeFormulario(aceita_fill=False, aceita_type=False)
+    assert preencher_conferindo(campo, "12345678901", "cpf") is False
+
+
+def test_campo_vazio_aborta_antes_de_gastar_a_tentativa():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    etapa = fonte.split("etapa 1: credencial")[1].split("etapa 2")[0]
+    assert "preencher_conferindo(elemento, valor, rotulo)" in etapa
+    assert "nenhuma tentativa foi gasta" in etapa
+    # O aborto vem ANTES do clique em Entrar.
+    assert etapa.index("[ABORTADO]") < etapa.index("Etapa 1: credencial enviada")
+
+
+def test_caixa_que_so_tem_o_x_nao_vira_aviso():
+    from justica_mcp.portal import avisos_na_tela
+
+    tela = _TelaComAviso(fechaveis=[_AlvoDeAviso("✕", pai="✕")])
+    assert avisos_na_tela(tela) == []

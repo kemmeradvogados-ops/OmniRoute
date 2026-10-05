@@ -898,6 +898,10 @@ def avisos_na_tela(pagina, teto: int = 400) -> list[str]:
 
     def guardar(texto: str) -> None:
         limpo = " ".join((texto or "").split())[:teto]
+        # Caixa cujo unico conteudo e o proprio botao de fechar nao tem recado
+        # nenhum, e imprimi-la como "AVISO NA TELA: x" so atrapalha a leitura.
+        if sem_acento(limpo) in MARCAS_DE_FECHAR:
+            return
         if limpo and limpo not in vistos:
             vistos.add(limpo)
             saida.append(limpo)
@@ -923,6 +927,47 @@ def avisos_na_tela(pagina, teto: int = 400) -> list[str]:
     except Exception:
         pass
     return saida
+
+
+def _valor_de(elemento) -> str:
+    try:
+        return elemento.evaluate("e => e.value || ''")
+    except Exception:
+        return ""
+
+
+def preencher_conferindo(elemento, valor: str, rotulo: str) -> bool:
+    """Preenche e CONFERE que o valor ficou no campo. Devolve se ficou.
+
+    Nasceu da Central do Processo Eletronico do Superior Tribunal de Justica,
+    em 05/10/2026. O `fill` nao levantou erro nenhum, o botao foi clicado, a
+    tentativa foi gasta, e o portal respondeu "O campo CPF deve ser preenchido".
+    O campo chegou vazio do outro lado.
+
+    Dois jeitos de escrever, nesta ordem. O `fill` resolve a maioria dos portais
+    e e instantaneo. Quando ele nao pega, a digitacao tecla a tecla resolve o
+    resto: campo controlado por framework de pagina unica, ou com mascara, as
+    vezes so reconhece o que veio de teclado de verdade, porque e a sequencia de
+    eventos de tecla que dispara a atualizacao interna.
+
+    A conferencia importa mais que os dois: ela separa "nao consegui escrever"
+    de "escrevi e o portal recusou", e essa diferenca decide se repetir o
+    comando e util ou se so queima mais uma tentativa da conta.
+    """
+    elemento.click()
+    elemento.fill(valor)
+    if _valor_de(elemento) == valor:
+        return True
+
+    print(f"    O campo de {rotulo} nao aceitou o preenchimento direto; "
+          "digitando tecla a tecla.")
+    try:
+        elemento.fill("")
+        elemento.type(valor, delay=30)
+    except Exception as exc:
+        print(f"    A digitacao falhou ({type(exc).__name__}).")
+        return False
+    return _valor_de(elemento) == valor
 
 
 def pagina_de_erro_do_navegador(endereco: str) -> bool:
@@ -2148,8 +2193,16 @@ def autenticar(
                         _relatar_tela(pagina, "TELA DE LOGIN")
                         return 1
                     guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
-                    elemento.click()
-                    elemento.fill(valor)
+                    if not preencher_conferindo(elemento, valor, rotulo):
+                        # Parar AQUI poupa a tentativa. Clicar em Entrar com o
+                        # campo vazio gasta uma tentativa da conta para receber
+                        # de volta "o campo deve ser preenchido", que e um
+                        # problema nosso e nao do portal.
+                        print(f"  [ABORTADO] O campo de {rotulo} ({seletor}) nao "
+                              "ficou com o valor digitado.")
+                        print("  Nada foi enviado, e nenhuma tentativa foi gasta.")
+                        _relatar_tela(pagina, "TELA DE LOGIN")
+                        return 1
 
                 alvo = pagina.query_selector(campo_senha_oculto)
                 if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
