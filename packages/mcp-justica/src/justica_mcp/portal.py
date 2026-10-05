@@ -3593,6 +3593,16 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
     for recado in recados:
         print(f"    O portal disse: {recado}")
 
+    # O ACHADO de 05/10/2026: liberado o acesso, a PAGINA DE CIMA ganha
+    # `#btnDownloadCompletoRS`, que antes nao existia nela. E o mesmo botao do
+    # Tribunal Regional Federal da 2a Regiao. Daqui em diante os dois tribunais
+    # sao o mesmo portal, e seria desperdicio escrever um caminho so para o Rio.
+    botao = elemento_visivel(pagina, BOTAO_INTEGRA)
+    if botao is not None:
+        print("    Liberado o acesso, o botao de Download Completo apareceu.")
+        return _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave,
+                                        segundos)
+
     # Daqui para a frente a janela pode ser um quadro que o portal troca sob os
     # pes. Qualquer erro vira relato, e nao traceback: a consulta ja terminou, e
     # o que falta e descobrir como e a tela dos autos no Rio.
@@ -3636,7 +3646,7 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
     antes de virar codigo. Adivinhar aqui e o erro que este projeto existe para
     evitar: um clique errado no portal custa caro.
     """
-    from pathlib import Path
+    from pathlib import Path  # noqa: F401  (usado no fluxo do botao)
 
     botao = elemento_visivel(pagina, BOTAO_INTEGRA)
     if botao is None:
@@ -3663,6 +3673,21 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
             for item in itens:
                 print(f"      {item}")
         return []
+    return _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave, segundos)
+
+
+def _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave: str,
+                             segundos: int) -> list:
+    """Do botao `#btnDownloadCompletoRS` em diante: gerar e baixar as partes.
+
+    Separado de `_baixar_integra` porque o Rio chega a este mesmo botao por
+    outro caminho. Conferido em campo em 05/10/2026: no eproc do Rio o botao NAO
+    existe na tela do processo e PASSA A EXISTIR depois que o acesso a integra e
+    liberado pelo segundo fator. Daquele ponto em diante, os dois tribunais sao
+    o mesmo portal.
+    """
+    from pathlib import Path
+
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,
         descricao="copia integral pelo botao do portal",

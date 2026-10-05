@@ -3191,7 +3191,7 @@ def test_o_pronto_vem_antes_de_pedir_geracao_nova():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal._baixar_integra)
+    fonte = inspect.getsource(portal._fluxo_do_botao_de_copia)
     assert fonte.index("_baixar_partes_do_eproc") < fonte.index("_gerar_integra_do_eproc")
 
 
@@ -3204,7 +3204,7 @@ def test_a_espera_do_primeiro_clique_e_curta():
     from justica_mcp import portal
 
     assert portal.TETO_DO_DOWNLOAD_DIRETO <= 10
-    fonte = inspect.getsource(portal._baixar_integra)
+    fonte = inspect.getsource(portal._fluxo_do_botao_de_copia)
     assert "expect_download(timeout=TETO_DO_DOWNLOAD_DIRETO * 1000)" in fonte
 
 
@@ -3215,7 +3215,7 @@ def test_o_caminho_normal_nao_se_anuncia_como_erro():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal._baixar_integra)
+    fonte = inspect.getsource(portal._fluxo_do_botao_de_copia)
     assert "O clique nao devolveu arquivo" not in fonte
     assert "leva a tela de geracao" in fonte
 
@@ -3934,3 +3934,22 @@ def test_a_falha_da_copia_diz_mais_que_o_nome_da_classe():
     fonte = inspect.getsource(portal.consultar_processo)
     trecho = fonte.split("Copia integral nao concluida")[1][:200]
     assert "{detalhe}" in trecho
+
+
+def test_depois_do_aceite_o_botao_de_download_e_procurado_de_novo():
+    """O achado de 05/10/2026: liberado o acesso a integra, a PAGINA DE CIMA
+    ganha `#btnDownloadCompletoRS`, que antes nao existia nela. E o mesmo botao
+    do Tribunal Regional Federal da 2a Regiao, e daqui em diante os dois
+    tribunais sao o mesmo portal."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._integra_pelo_acesso)
+    depois = fonte.split("_responder_segundo_fator(")[1]
+    assert "elemento_visivel(pagina, BOTAO_INTEGRA)" in depois
+    assert "_fluxo_do_botao_de_copia(" in depois
+    # E tem de vir ANTES de procurar partes soltas no quadro, que e o caminho
+    # de excecao.
+    assert depois.index("_fluxo_do_botao_de_copia(") < depois.index(
+        "_baixar_partes_do_eproc(")
