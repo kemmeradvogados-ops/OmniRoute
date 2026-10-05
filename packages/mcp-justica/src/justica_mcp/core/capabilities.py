@@ -118,6 +118,7 @@ MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
         ),
     },
     "pje": {c: _fase2() for c in Capacidade},
+    "cpe": {c: _fase2() for c in Capacidade},
     "dcp": {
         **{c: _fase2() for c in Capacidade},
         Capacidade.BAIXAR_INTEGRA: _nao_suportado(

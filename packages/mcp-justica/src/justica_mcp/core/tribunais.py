@@ -30,6 +30,9 @@ class Sistema(str, Enum):
     EPROC = "eproc"
     ESAJ = "esaj"
     DCP = "dcp"
+    # Central do Processo Eletronico do Superior Tribunal de Justica. Sistema
+    # proprio daquele tribunal, sem parentesco com os outros quatro.
+    CPE = "cpe"
     INDETERMINADO = "indeterminado"
 
 
@@ -84,6 +87,27 @@ TRIBUNAIS: dict[str, Tribunal] = {
         sistemas_candidatos=(Sistema.PJE,),
         observacao="Justica do Trabalho opera integralmente em PJe.",
         credencial_disponivel=(Sistema.PJE,),
+    ),
+    "3.00": Tribunal(
+        codigo="STJ",
+        nome="Superior Tribunal de Justica",
+        chave_segmento_tribunal="3.00",
+        # [NAO CONFERIDO] O alias do DataJud e a sigla do Diario Eletronico
+        # Nacional para o Superior Tribunal de Justica ainda nao foram testados
+        # em producao. Estao escritos no padrao dos demais, e e PRECISO conferi-los
+        # antes de confiar numa consulta que os use: um alias errado devolve
+        # "nada encontrado", que se confunde com processo inexistente.
+        alias_datajud="api_publica_stj",
+        sigla_djen="STJ",
+        sistemas_candidatos=(Sistema.CPE,),
+        observacao=(
+            "Central do Processo Eletronico, em cpe.web.stj.jus.br. Tela de "
+            "entrada lida em 05/10/2026: aplicacao de pagina unica, com "
+            "`input#cpf`, `input[name=password]` e botao 'Entrar' SEM "
+            "identificador. Ha tambem entrada por gov.br e por certificado "
+            "digital, nenhuma das duas escrita aqui."
+        ),
+        credencial_disponivel=(Sistema.CPE,),
     ),
     "4.02": Tribunal(
         codigo="TRF2",

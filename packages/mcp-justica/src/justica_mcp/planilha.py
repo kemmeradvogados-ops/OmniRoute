@@ -32,7 +32,8 @@ _TRIBUNAIS = {
     "trtrj": "TRT1",
     "trt1": "TRT1",
 }
-_SISTEMAS = {"pje": "pje", "eproc": "eproc", "esaj": "esaj", "e-saj": "esaj", "dcp": "dcp"}
+_SISTEMAS = {"pje": "pje", "eproc": "eproc", "esaj": "esaj", "e-saj": "esaj",
+             "dcp": "dcp", "cpe": "cpe"}
 
 COLUNAS = {
     "tribunal": ("tribunal",),

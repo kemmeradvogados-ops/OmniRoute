@@ -60,6 +60,7 @@ _NOMES_SISTEMA: dict[str, Sistema] = {
     "esaj": Sistema.ESAJ,
     "saj": Sistema.ESAJ,
     "dcp": Sistema.DCP,
+    "cpe": Sistema.CPE,
 }
 
 # Janela em que a ficha da base nacional ainda e considerada recente.

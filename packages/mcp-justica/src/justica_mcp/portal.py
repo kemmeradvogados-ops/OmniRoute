@@ -1142,6 +1142,37 @@ def entrar(
 
 
 
+# Prefixo que faz o alvo ser procurado pelo TEXTO, e nao por seletor de CSS.
+# Dois portais ja exigiram isso: a tela "Acesso a Integra do Processo" do eproc
+# do Rio, cujos botoes sao "Confirmar" e "Cancelar" sem identificador nenhum, e
+# a Central do Processo Eletronico do Superior Tribunal de Justica, cujo botao
+# "Entrar" tambem nao tem identificador.
+#
+# A comparacao e por IGUALDADE, sem acento e sem caixa, e nunca por inicio de
+# palavra. Na tela do Superior Tribunal de Justica convivem "Entrar" e "Entrar
+# com gov.br": casar por inicio escolheria qualquer um dos dois, e entrar pelo
+# gov.br e outro caminho de autenticacao, que ninguem pediu.
+PREFIXO_DE_TEXTO = "texto="
+ALVOS_CLICAVEIS = "button, input[type=submit], input[type=button], a"
+
+
+def _por_texto_exato(pagina: Any, texto: str) -> Optional[Any]:
+    alvo = sem_acento(texto).strip()
+    janela = janela_de(pagina)
+    for elemento in pagina.query_selector_all(ALVOS_CLICAVEIS):
+        try:
+            escrito = sem_acento(
+                elemento.inner_text() or elemento.get_attribute("value") or "").strip()
+            if escrito != alvo:
+                continue
+            if elemento.is_visible() and _na_tela(
+                    elemento, janela["width"], janela["height"]):
+                return elemento
+        except Exception:
+            continue
+    return None
+
+
 def elemento_visivel(pagina: Any, seletor: str) -> Optional[Any]:
     """Devolve a primeira ocorrencia do seletor que esteja de fato na tela.
 
@@ -1150,6 +1181,8 @@ def elemento_visivel(pagina: Any, seletor: str) -> Optional[Any]:
     primeira do documento, que pode ser a oculta, e preencher a oculta falha
     em silencio: nao levanta erro, so nao acontece nada.
     """
+    if seletor.startswith(PREFIXO_DE_TEXTO):
+        return _por_texto_exato(pagina, seletor[len(PREFIXO_DE_TEXTO):])
     janela = janela_de(pagina)
     for elemento in pagina.query_selector_all(seletor):
         try:
@@ -1404,6 +1437,29 @@ SELETORES_POR_SISTEMA = {
         "campo_codigo": "#txtAcessoCodigo",
         "botao_validar": "#btnValidar",
     },
+    # Central do Processo Eletronico do Superior Tribunal de Justica, lida do
+    # mapa de 05/10/2026 (cpe.web.stj.jus.br). Aplicacao de pagina unica: a
+    # pagina inteira tem TRES identificadores, `div#app`, `input#cpf` e um
+    # quadro de telemetria. O campo da senha so se identifica pelo nome, e o
+    # botao de entrar nao se identifica de jeito nenhum, dai o alvo por texto.
+    #
+    # O usuario e o CPF, e nao um nome de usuario. Ha tambem entrada por gov.br
+    # e por certificado digital; nenhuma das duas esta escrita aqui, e a de
+    # gov.br e a razao de o alvo por texto comparar por igualdade: "Entrar" e
+    # "Entrar com gov.br" convivem na mesma tela.
+    #
+    # Segundo fator: NAO SE SABE. A tela de entrada nao o mostra, como nao
+    # mostrava no eproc nem no PJe. Fica vazio, e `achar_opcional` trata vazio
+    # como "esta tela nao tem este campo neste portal", em vez de procurar por
+    # nada e levantar erro depois de a credencial ja ter sido enviada.
+    "cpe": {
+        "campo_usuario": "#cpf",
+        "campo_senha": "input[name=password]",
+        "campo_senha_oculto": "input[name=password]",
+        "botao_entrar": "texto=Entrar",
+        "campo_codigo": "",
+        "botao_validar": "",
+    },
     # Lido do mapa de 22/09/2026 (sso.cloud.pje.jus.br, Keycloak do PJe):
     # form#loginForm com input#username, input#password e input#kc-login.
     # O segundo fator nao aparece na tela de entrada.
@@ -1447,6 +1503,15 @@ FAMILIAS_DE_LOGIN = (
         "botao_entrar": "#sbmEntrar",
         "campo_codigo": "#txtAcessoCodigo",
         "botao_validar": "#btnValidar",
+    },
+    {
+        "nome": "stj-cpe",
+        "campo_usuario": "#cpf",
+        "campo_senha": "input[name=password]",
+        "campo_senha_oculto": "input[name=password]",
+        "botao_entrar": "texto=Entrar",
+        "campo_codigo": "",
+        "botao_validar": "",
     },
     {
         "nome": "keycloak",

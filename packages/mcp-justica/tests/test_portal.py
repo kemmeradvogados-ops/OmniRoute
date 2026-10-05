@@ -3989,3 +3989,90 @@ def test_depois_do_aceite_o_botao_de_download_e_procurado_de_novo():
     # de excecao.
     assert depois.index("_fluxo_do_botao_de_copia(") < depois.index(
         "_baixar_partes_do_eproc(")
+
+
+# ==========================================================================
+# Botao sem identificador: alvo pelo TEXTO EXATO
+#
+# Dois portais exigiram isso. A tela "Acesso à Íntegra do Processo" do eproc do
+# Rio, com "Confirmar" e "Cancelar" sem id nenhum, e a Central do Processo
+# Eletronico do Superior Tribunal de Justica, cujo mapa de 05/10/2026 trouxe:
+#
+#     CAMPOS NA TELA (2 de 2):
+#       #cpf                 tipo=input
+#       [name=password]      tipo=password SENHA
+#     BOTOES NA TELA (3 de 3):
+#       (sem id)  'Cadastrar com certificado digital'
+#       (sem id)  'Entrar'
+#       (sem id)  'Entrar com gov.br'
+# ==========================================================================
+
+class _TelaDeTextos:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, textos):
+        self.alvos = [_AlvoComTexto(x) for x in textos]
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.portal import ALVOS_CLICAVEIS
+
+        return list(self.alvos) if seletor == ALVOS_CLICAVEIS else []
+
+
+def test_alvo_por_texto_exato():
+    from justica_mcp.portal import elemento_visivel
+
+    tela = _TelaDeTextos(["Cadastrar com certificado digital", "Entrar",
+                          "Entrar com gov.br"])
+    assert elemento_visivel(tela, "texto=Entrar") is tela.alvos[1]
+
+
+def test_entrar_com_govbr_nunca_e_confundido_com_entrar():
+    """Casar por inicio de palavra escolheria qualquer um dos dois, e entrar
+    pelo gov.br e outro caminho de autenticacao, que ninguem pediu."""
+    from justica_mcp.portal import elemento_visivel
+
+    tela = _TelaDeTextos(["Entrar com gov.br"])
+    assert elemento_visivel(tela, "texto=Entrar") is None
+
+
+def test_o_texto_exato_ignora_acento_e_caixa():
+    from justica_mcp.portal import elemento_visivel
+
+    tela = _TelaDeTextos(["CONFIRMAR"])
+    assert elemento_visivel(tela, "texto=confirmar") is tela.alvos[0]
+
+
+def test_seletor_comum_continua_funcionando():
+    from justica_mcp.portal import elemento_visivel
+
+    tela = _TelaDeSessao(com_busca=True)
+    assert elemento_visivel(tela, "#txtNumProcessoPesquisaRapida") is not None
+
+
+def test_os_seletores_do_stj_vieram_do_mapa_de_05_10():
+    """Mapa de cpe.web.stj.jus.br em 05/10/2026: `input#cpf`,
+    `input[name=password]` e botao 'Entrar' sem identificador."""
+    from justica_mcp.portal import seletores_do_sistema
+
+    stj = seletores_do_sistema("cpe")
+    assert stj["campo_usuario"] == "#cpf"
+    assert stj["campo_senha"] == "input[name=password]"
+    assert stj["botao_entrar"] == "texto=Entrar"
+
+
+def test_o_stj_nao_finge_saber_o_segundo_fator():
+    """A tela de entrada nao o mostra. Seletor vazio quer dizer 'esta tela nao
+    tem este campo neste portal', e nao 'procure por nada'."""
+    from justica_mcp.portal import seletores_do_sistema
+
+    stj = seletores_do_sistema("cpe")
+    assert stj["campo_codigo"] == ""
+    assert stj["botao_validar"] == ""
+
+
+def test_a_tela_do_stj_e_reconhecida_entre_as_familias():
+    from justica_mcp.portal import familia_da_tela
+
+    familia = familia_da_tela(_TelaDeLogin({"#cpf"}))
+    assert familia["nome"] == "stj-cpe"
