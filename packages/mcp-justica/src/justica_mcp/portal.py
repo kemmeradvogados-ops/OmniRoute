@@ -1362,6 +1362,57 @@ SELETORES_POR_SISTEMA = {
 }
 
 
+# Familias de TELA DE LOGIN, que nao sao a mesma coisa que sistema.
+#
+# A tabela por sistema acima presumia que eproc tem a tela do eproc e PJe tem a
+# do PJe. O eproc do Rio desmentiu isso em 05/10/2026: ele nao mostra a propria
+# tela de login, redireciona para um Keycloak em `eproc-sso.tjrj.jus.br`, com
+# `#username`, `#password` e `#kc-login`, os MESMOS identificadores do PJe. O
+# endereco de retorno aponta para `sso.cloud.pje.jus.br`, o que explica a
+# coincidencia: e a mesma infraestrutura de autenticacao do Conselho Nacional
+# de Justica.
+#
+# Por isso a escolha final dos seletores nao pode sair so do nome do sistema.
+# Ela sai da TELA, quando a tela desmente a configuracao.
+FAMILIAS_DE_LOGIN = (
+    {
+        "nome": "eproc",
+        "campo_usuario": "#txtUsuario",
+        "campo_senha": "#pwdSenha",
+        "campo_senha_oculto": "input[name=pwdSenha]",
+        "botao_entrar": "#sbmEntrar",
+        "campo_codigo": "#txtAcessoCodigo",
+        "botao_validar": "#btnValidar",
+    },
+    {
+        "nome": "keycloak",
+        "campo_usuario": "#username",
+        "campo_senha": "#password",
+        # Aqui NAO ha campo espelho: o campo visivel e o que vai ser enviado.
+        # E ele nao pode ser procurado por `input[type=password]`, porque a tela
+        # traz o olhinho de mostrar a senha, que troca o tipo para `text`. Lido
+        # assim na tela real do eproc do Rio em 05/10/2026.
+        "campo_senha_oculto": "#password",
+        "botao_entrar": "#kc-login",
+        "campo_codigo": "#otp",
+        "botao_validar": "#kc-login",
+    },
+)
+
+
+def familia_da_tela(pagina) -> Optional[dict]:
+    """Qual familia de tela de login esta na tela agora, se alguma.
+
+    Decide pelo campo de usuario VISIVEL, e nao pela presenca no documento: a
+    tela de um portal pode conter restos da outra, e e o que esta na frente da
+    pessoa que vale.
+    """
+    for familia in FAMILIAS_DE_LOGIN:
+        if elemento_visivel(pagina, familia["campo_usuario"]) is not None:
+            return familia
+    return None
+
+
 def seletores_do_sistema(sistema: str) -> dict:
     """Seletores de entrada do sistema, ou os do eproc quando nao ha tabela.
 
@@ -1854,6 +1905,38 @@ def autenticar(
                 final = pagina.url
 
             if not sessao_aberta:
+                # A tela manda mais que a configuracao. O eproc do Rio redireciona
+                # para um Keycloak, e os seletores do eproc nao existem la: a
+                # execucao anterior gastou trinta segundos clicando num campo
+                # invisivel e parou antes de digitar. Trocar so quando o campo
+                # configurado NAO esta visivel preserva o que o operador tenha
+                # passado na linha de comando, que continua tendo a ultima palavra
+                # quando funciona.
+                if elemento_visivel(pagina, campo_usuario) is None:
+                    familia = familia_da_tela(pagina)
+                    if familia is not None:
+                        print(f"  A tela de login e do tipo {familia['nome']!r}, e nao "
+                              "a esperada para este sistema.")
+                        print("  Os seletores desta execucao vem da tela, e nao da "
+                              "configuracao.")
+                        campo_usuario = familia["campo_usuario"]
+                        campo_senha = familia["campo_senha"]
+                        campo_senha_oculto = familia["campo_senha_oculto"]
+                        botao_entrar = familia["botao_entrar"]
+                        campo_codigo = familia["campo_codigo"]
+                        botao_validar = familia["botao_validar"]
+                        permissao = Permissao(
+                            padrao_url=permissao_efemera(pagina.url).padrao_url,
+                            descricao=f"tela de login {familia['nome']}, "
+                                      "reconhecida na execucao atual",
+                            conferido_em="execucao atual",
+                            seletores_clicaveis=(botao_entrar, botao_validar),
+                            seletores_preenchiveis=(campo_usuario, campo_senha,
+                                                    campo_codigo),
+                        )
+                        guarda.permissoes.append(permissao)
+                        url = pagina.url
+
                 # ---------- etapa 1: credencial ----------
                 for seletor, valor, rotulo in (
                     (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),

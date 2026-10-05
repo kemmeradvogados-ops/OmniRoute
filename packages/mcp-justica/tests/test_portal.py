@@ -3268,3 +3268,92 @@ def test_o_botao_de_entrar_tambem_tem_de_estar_visivel():
     fonte = inspect.getsource(portal.autenticar)
     assert "entrar_visivel = elemento_visivel(pagina, botao_entrar)" in fonte
     assert "pagina.query_selector(botao_entrar).click()" not in fonte
+
+
+# ==========================================================================
+# A tela de login manda mais que a configuracao
+#
+# A tabela por sistema presumia que eproc tem a tela do eproc. O eproc do Rio
+# desmentiu isso em 05/10/2026: ele nao mostra a propria tela, redireciona para
+# um Keycloak em `eproc-sso.tjrj.jus.br`, com `#username`, `#password` e
+# `#kc-login`, os MESMOS identificadores do PJe.
+# ==========================================================================
+
+class _TelaDeLogin:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, visiveis):
+        self.visiveis = set(visiveis)
+
+    def query_selector_all(self, seletor):
+        if seletor not in self.visiveis:
+            return []
+
+        class _Campo:
+            def is_visible(self):
+                return True
+
+            def bounding_box(self):
+                return {"x": 1, "y": 1, "width": 9, "height": 9}
+
+        return [_Campo()]
+
+
+def test_a_tela_do_eproc_e_reconhecida():
+    from justica_mcp.portal import familia_da_tela
+
+    familia = familia_da_tela(_TelaDeLogin({"#txtUsuario"}))
+    assert familia["nome"] == "eproc"
+    assert familia["botao_entrar"] == "#sbmEntrar"
+
+
+def test_a_tela_de_keycloak_e_reconhecida():
+    from justica_mcp.portal import familia_da_tela
+
+    familia = familia_da_tela(_TelaDeLogin({"#username"}))
+    assert familia["nome"] == "keycloak"
+    assert familia["botao_entrar"] == "#kc-login"
+    assert familia["campo_codigo"] == "#otp"
+
+
+def test_o_campo_de_senha_do_keycloak_nao_e_procurado_pelo_tipo():
+    """A tela traz o olhinho de mostrar a senha, que troca o tipo do campo para
+    `text`: procurar por `input[type=password]` nao acharia nada."""
+    from justica_mcp.portal import FAMILIAS_DE_LOGIN
+
+    keycloak = [f for f in FAMILIAS_DE_LOGIN if f["nome"] == "keycloak"][0]
+    assert "type=password" not in keycloak["campo_senha_oculto"]
+    assert keycloak["campo_senha_oculto"] == "#password"
+
+
+def test_tela_desconhecida_nao_vira_palpite():
+    from justica_mcp.portal import familia_da_tela
+
+    assert familia_da_tela(_TelaDeLogin({"#campoQualquer"})) is None
+
+
+def test_a_troca_so_acontece_quando_o_configurado_nao_aparece():
+    """O que o operador passou na linha de comando continua tendo a ultima
+    palavra quando funciona."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("A tela manda mais que a configuracao")[1]
+    assert "if elemento_visivel(pagina, campo_usuario) is None:" in trecho.split(
+        "etapa 1: credencial")[0]
+
+
+def test_a_tela_reconhecida_entra_na_trava_nominalmente():
+    """Trocar os seletores sem autorizar os novos deixaria a trava barrar o
+    proprio login que ela deveria permitir."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("A tela manda mais que a configuracao")[1].split(
+        "etapa 1: credencial")[0]
+    assert "guarda.permissoes.append(permissao)" in trecho
+    assert "seletores_preenchiveis=(campo_usuario, campo_senha," in trecho
