@@ -3614,3 +3614,42 @@ def test_campo_sem_botao_nao_digita_o_codigo(monkeypatch):
     with pytest.raises(portal.ConteudoInesperado, match="botao"):
         portal._responder_segundo_fator(tela, _guarda_simples(), _Identidade(), 5)
     assert tela.digitado == {}
+
+
+# ==========================================================================
+# Pagina de erro do navegador nao e recusa de credencial
+#
+# Visto em campo em 05/10/2026: depois da credencial enviada ao eproc do Rio, a
+# tela era `chrome-error://chromewebdata/`, com titulo `eproc-sso.tjrj.jus.br`.
+# O servidor de autenticacao nao respondeu. O comando disse "a tela do segundo
+# fator nao apareceu" e mandou NAO repetir, por poder ser recusa de credencial.
+# Era o pior conselho possivel: nao houve resposta, nao ha o que tenha sido
+# recusado, e repetir e justamente o certo.
+# ==========================================================================
+
+def test_pagina_de_erro_do_navegador_e_reconhecida():
+    from justica_mcp.portal import pagina_de_erro_do_navegador
+
+    assert pagina_de_erro_do_navegador("chrome-error://chromewebdata/")
+    assert pagina_de_erro_do_navegador("about:neterror?e=dnsNotFound")
+
+
+def test_tela_de_portal_nao_e_confundida_com_erro_do_navegador():
+    from justica_mcp.portal import pagina_de_erro_do_navegador
+
+    assert not pagina_de_erro_do_navegador(
+        "https://eproc1g.tjrj.jus.br/eproc/controlador.php?acao=principal")
+    assert not pagina_de_erro_do_navegador("")
+
+
+def test_o_conselho_muda_quando_o_portal_nao_respondeu():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("A tela do segundo fator nao apareceu")[1]
+    assert "pagina_de_erro_do_navegador(pagina.url)" in trecho
+    # O conselho oposto ao padrao: aqui repetir e o certo.
+    assert "Repita o comando" in trecho
+    assert "Nao ha nada a conferir no cofre" in trecho

@@ -822,6 +822,17 @@ def sem_acento(texto: str) -> str:
     return "".join(c for c in decomposto if unicodedata.category(c) != "Mn")
 
 
+# Enderecos que o proprio navegador usa quando NAO conseguiu carregar a pagina.
+# Nao sao telas do portal: sao a ausencia de tela.
+MARCAS_DE_PAGINA_DE_ERRO = ("chrome-error://", "about:neterror", "edge-error://")
+
+
+def pagina_de_erro_do_navegador(endereco: str) -> bool:
+    """Se o endereco atual e pagina de erro do navegador, e nao do portal."""
+    baixo = (endereco or "").lower()
+    return any(marca in baixo for marca in MARCAS_DE_PAGINA_DE_ERRO)
+
+
 def senha_vencida(recados) -> bool:
     """Diz se algum recado da tela e de senha vencida.
 
@@ -2073,6 +2084,28 @@ def autenticar(
                     # orientacao errada custa tentativas de uma conta que bloqueia.
                     if not _ja_autenticado(pagina):
                         print("\n  [PARADO] A tela do segundo fator nao apareceu.")
+                        if pagina_de_erro_do_navegador(pagina.url):
+                            # Distincao que muda o conselho por inteiro. O aviso
+                            # padrao ("nao repita, pode ser recusa de credencial")
+                            # existe para nao queimar tentativa de uma conta que
+                            # bloqueia. Aqui ele seria o pior conselho possivel:
+                            # nao houve resposta do portal, nao ha o que o portal
+                            # tenha recusado, e repetir e justamente o certo.
+                            # Visto em campo em 05/10/2026, com o servidor de
+                            # autenticacao do Rio sem responder.
+                            print("\n  ISTO NAO E RECUSA DE CREDENCIAL: o navegador "
+                                  "mostrou pagina de erro.")
+                            print("  O portal nao respondeu. Pode ser a rede daqui ou o "
+                                  "proprio portal fora do ar.")
+                            print("  Nao ha nada a conferir no cofre. Repita o comando "
+                                  "daqui a pouco.")
+                            estado.registrar(
+                                acao="login_resultado_credencial",
+                                tribunal=identidade.tribunal,
+                                sistema=identidade.sistema,
+                                resultado="portal_sem_resposta")
+                            _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
+                            return 1
                         if erros:
                             print("  Mensagens na tela:")
                             for e in erros:
