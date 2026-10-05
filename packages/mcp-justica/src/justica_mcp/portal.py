@@ -936,6 +936,29 @@ def _valor_de(elemento) -> str:
         return ""
 
 
+def mesmo_conteudo(escrito: str, pretendido: str) -> bool:
+    """Se o que esta no campo e o mesmo valor, ainda que com outra aparencia.
+
+    Mascara muda a APARENCIA, nao o conteudo: digita-se 13169898795 e o campo
+    mostra 131.698.987-95. Comparar os dois textos letra a letra conclui que
+    nada foi escrito, quando o campo esta certo.
+
+    Foi o que aconteceu na Central do Processo Eletronico do Superior Tribunal
+    de Justica em 05/10/2026: o comando abortou dizendo que o campo nao ficou
+    com o valor, depois de duas tentativas de escrita que podem ter funcionado.
+
+    A comparacao por digitos vale SO para valor que e todo digito, como CPF ou
+    numero de processo. Para senha, onde nao ha mascara, a igualdade continua
+    sendo exata, e tem de ser: afrouxar ali seria aceitar senha errada.
+    """
+    if escrito == pretendido:
+        return True
+    so_digitos = re.sub(r"\D", "", pretendido)
+    if len(so_digitos) >= 5 and so_digitos == pretendido:
+        return re.sub(r"\D", "", escrito or "") == so_digitos
+    return False
+
+
 def preencher_conferindo(elemento, valor: str, rotulo: str) -> bool:
     """Preenche e CONFERE que o valor ficou no campo. Devolve se ficou.
 
@@ -956,7 +979,7 @@ def preencher_conferindo(elemento, valor: str, rotulo: str) -> bool:
     """
     elemento.click()
     elemento.fill(valor)
-    if _valor_de(elemento) == valor:
+    if mesmo_conteudo(_valor_de(elemento), valor):
         return True
 
     print(f"    O campo de {rotulo} nao aceitou o preenchimento direto; "
@@ -967,7 +990,15 @@ def preencher_conferindo(elemento, valor: str, rotulo: str) -> bool:
     except Exception as exc:
         print(f"    A digitacao falhou ({type(exc).__name__}).")
         return False
-    return _valor_de(elemento) == valor
+    final = _valor_de(elemento)
+    if mesmo_conteudo(final, valor):
+        return True
+    # A FORMA do que sobrou, nunca o conteudo: o valor e dado pessoal. Saber se
+    # o campo ficou vazio ou pela metade separa duas causas diferentes, e sem
+    # isso a proxima tentativa seria no escuro.
+    print(f"    O campo ficou com {len(final)} caractere(s) e esperava "
+          f"{len(valor)}.")
+    return False
 
 
 def pagina_de_erro_do_navegador(endereco: str) -> bool:

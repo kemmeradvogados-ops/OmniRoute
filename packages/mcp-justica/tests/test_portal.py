@@ -4227,6 +4227,79 @@ def test_campo_que_nao_aceita_nada_devolve_falso():
     assert preencher_conferindo(campo, "12345678901", "cpf") is False
 
 
+# ==========================================================================
+# Mascara muda a APARENCIA, nao o conteudo
+#
+# Mesma tela do Superior Tribunal de Justica, no dia seguinte. Digita-se
+# 13169898795 e o campo passa a mostrar 131.698.987-95. A conferencia letra a
+# letra via dois textos diferentes e concluia que nada tinha sido escrito,
+# quando o campo estava certo. O comando abortava sozinho, com o campo cheio.
+# ==========================================================================
+
+class _CampoComMascara(_CampoDeFormulario):
+    """Guarda o que recebeu ja pontuado, como faz a mascara de CPF."""
+
+    def _mascarar(self, valor):
+        d = valor
+        if len(d) == 11 and d.isdigit():
+            return f"{d[:3]}.{d[3:6]}.{d[6:9]}-{d[9:]}"
+        return d
+
+    def fill(self, valor):
+        if valor == "" or self.aceita_fill:
+            self.valor = self._mascarar(valor)
+
+    def type(self, valor, delay=None):
+        super().type(valor, delay=delay)
+        self.valor = self._mascarar(valor)
+
+
+def test_campo_com_mascara_conta_como_preenchido():
+    from justica_mcp.portal import preencher_conferindo
+
+    campo = _CampoComMascara()
+    assert preencher_conferindo(campo, "13169898795", "cpf") is True
+    assert campo.valor == "131.698.987-95"
+    assert campo.digitado is False, "a mascara nao e motivo para digitar de novo"
+
+
+def test_mascara_tambem_vale_quando_so_a_digitacao_pega():
+    from justica_mcp.portal import preencher_conferindo
+
+    campo = _CampoComMascara(aceita_fill=False)
+    assert preencher_conferindo(campo, "13169898795", "cpf") is True
+    assert campo.digitado is True
+
+
+def test_senha_continua_conferida_letra_a_letra():
+    """Afrouxar a conferencia na senha seria aceitar senha errada como certa."""
+    from justica_mcp.portal import mesmo_conteudo
+
+    assert mesmo_conteudo("ab.cd", "abcd") is False
+    assert mesmo_conteudo("abcd", "abcd") is True
+
+
+def test_campo_vazio_nao_passa_por_mascara():
+    from justica_mcp.portal import mesmo_conteudo
+
+    assert mesmo_conteudo("", "13169898795") is False
+
+
+def test_valor_curto_de_digitos_continua_exato():
+    """Codigo de quatro digitos e curto demais: 1234 e 12.34 sao a mesma coisa
+    por digito, mas nenhum portal do escopo mascara campo tao pequeno, e aceitar
+    a diferenca so esconderia erro."""
+    from justica_mcp.portal import mesmo_conteudo
+
+    assert mesmo_conteudo("12.34", "1234") is False
+
+
+def test_valor_errado_nao_passa_por_ser_do_mesmo_tamanho():
+    from justica_mcp.portal import mesmo_conteudo
+
+    assert mesmo_conteudo("131.698.987-96", "13169898795") is False
+
+
 def test_campo_vazio_aborta_antes_de_gastar_a_tentativa():
     import inspect
 
