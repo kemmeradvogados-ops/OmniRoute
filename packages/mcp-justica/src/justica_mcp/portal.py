@@ -381,12 +381,22 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
         "button, input[type=submit], input[type=button], a[role=button]"
     ):
         texto = (elemento.inner_text() or elemento.get_attribute("value") or "").strip()
+        # Botao de icone nao tem texto. Sem o rotulo acessivel, ele aparece no
+        # relato como `(sem id)  ''` e nao serve para nada. Foi assim que a tela
+        # do processo do eproc do Rio, em 05/10/2026, mostrou quatro botoes
+        # mudos: podiam ser qualquer coisa, inclusive o de copiar os autos.
+        rotulo_acessivel = None
+        for atributo in ("aria-label", "title", "alt"):
+            valor = (elemento.get_attribute(atributo) or "").strip()
+            if valor:
+                rotulo_acessivel = valor[:60]
+                break
         botoes.append(Campo(
             marcador=elemento.evaluate("e => e.tagName.toLowerCase()"),
             tipo=(elemento.get_attribute("type") or "").lower(),
             nome=elemento.get_attribute("name"),
             identificador=elemento.get_attribute("id"),
-            rotulo=None,
+            rotulo=rotulo_acessivel,
             texto_visivel=texto[:50] or None,
             e_senha=False,
             visivel=elemento.is_visible(),
@@ -2962,7 +2972,8 @@ def _relatar_tela(pagina, titulo: str) -> None:
     print(f"    BOTOES NA TELA ({len(visiveis)} de {len(botoes)}):")
     for b in visiveis:
         alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
-        print(f"      {alvo:40s} {(b.texto_visivel or '')[:50]!r}")
+        marca = f" rotulo={b.rotulo!r}" if b.rotulo else ""
+        print(f"      {alvo:40s} {(b.texto_visivel or '')[:50]!r}{marca}")
     if not visiveis:
         for b in botoes[:20]:
             alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
@@ -3280,6 +3291,12 @@ def _baixar_integra(pagina, guarda, destino, chave: str, segundos: int) -> list:
         print(f"    O botao {BOTAO_INTEGRA} nao esta nesta tela. Ele e o do eproc")
         print("    do Tribunal Regional Federal da 2a Regiao, e nem todo eproc o tem.")
         _relatar_tela(pagina, "TELA DO PROCESSO")
+        itens = _itens_do_menu(pagina)
+        if itens:
+            print(f"\n    MENU DO PORTAL ({len(itens)} item(ns)), caso a copia dos")
+            print("    autos more no menu e nao na tela do processo:")
+            for item in itens:
+                print(f"      {item}")
         return []
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,

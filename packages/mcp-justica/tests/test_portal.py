@@ -3371,3 +3371,32 @@ def test_sem_botao_de_copia_o_comando_relata_a_tela():
     trecho = fonte.split("botao = elemento_visivel(pagina, BOTAO_INTEGRA)")[1]
     cabeca = trecho.split("return []")[0]
     assert '_relatar_tela(pagina, "TELA DO PROCESSO")' in cabeca
+
+
+def test_botao_de_icone_mostra_o_rotulo_acessivel():
+    """Botao de icone nao tem texto. Sem o rotulo acessivel ele aparece no
+    relato como `(sem id)  ''`, e podia ser qualquer coisa, inclusive o de
+    copiar os autos. Quatro deles apareceram assim na tela do processo do eproc
+    do Rio em 05/10/2026."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._coletar)
+    trecho = fonte.split("botoes: list[Campo] = []")[1]
+    assert '"aria-label", "title", "alt"' in trecho
+    assert "rotulo=rotulo_acessivel," in trecho
+
+    relato = inspect.getsource(portal._relatar_tela)
+    assert "rotulo={b.rotulo!r}" in relato
+
+
+def test_sem_botao_de_copia_o_menu_tambem_e_listado():
+    """A copia pode morar no menu, e nao na tela do processo."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_integra)
+    cabeca = fonte.split("return []")[0]
+    assert "_itens_do_menu(pagina)" in cabeca
