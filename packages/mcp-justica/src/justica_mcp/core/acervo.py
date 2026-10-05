@@ -37,6 +37,50 @@ def pasta_de_copias() -> Path:
     return Path(bruto).expanduser() if bruto else diretorio_estado() / "processos"
 
 
+class AcervoIndisponivel(RuntimeError):
+    """A pasta de copias nao pode ser lida ou escrita agora."""
+
+
+# A pasta de copias mora no Google Drive montado como unidade (G:\Meu Drive).
+# Isso nao e um disco comum: e um sistema de arquivos virtual que fala com a
+# rede, e ele falha de formas que disco local nao falha. Visto em campo em
+# 05/10/2026, ao ler o indice de um processo:
+#
+#     OSError: [WinError 1450] Nao existem recursos de sistema suficientes
+#     para concluir o servico solicitado
+#
+# Esse erro e tipicamente passageiro. Tentar de novo depois de um instante
+# costuma bastar, e e muito melhor que derrubar uma consulta que ja terminou.
+TENTATIVAS_NO_ACERVO = 4
+ESPERA_ENTRE_TENTATIVAS = 0.4
+
+
+def _insistir(descricao: str, operacao):
+    """Executa a operacao, repetindo enquanto o sistema de arquivos recusar.
+
+    Esgotadas as tentativas, levanta `AcervoIndisponivel` com o motivo real.
+    NUNCA devolve um valor de consolo: quem chama precisa saber a diferenca
+    entre "nao existe" e "nao consegui olhar", e essa diferenca vale folha de
+    processo.
+    """
+    import time
+
+    ultimo = None
+    for tentativa in range(TENTATIVAS_NO_ACERVO):
+        try:
+            return operacao()
+        except OSError as exc:
+            ultimo = exc
+            if tentativa + 1 < TENTATIVAS_NO_ACERVO:
+                time.sleep(ESPERA_ENTRE_TENTATIVAS * (tentativa + 1))
+    raise AcervoIndisponivel(
+        f"Nao consegui {descricao} na pasta de copias apos "
+        f"{TENTATIVAS_NO_ACERVO} tentativas: {ultimo}. A pasta fica no Google "
+        "Drive, que responde pela rede e as vezes recusa por instantes. A "
+        "consulta em si nao foi perdida; so a parte de copia nao rodou."
+    ) from None
+
+
 def pasta_do_processo(numero_digitos: str) -> Path:
     return pasta_de_copias() / numero_digitos
 
@@ -51,7 +95,7 @@ def garantir_pasta(numero_digitos: str) -> Path:
     um efeito colateral do download.
     """
     pasta = pasta_do_processo(numero_digitos)
-    pasta.mkdir(parents=True, exist_ok=True)
+    _insistir("criar a pasta do processo", lambda: pasta.mkdir(parents=True, exist_ok=True))
     return pasta
 
 
@@ -238,13 +282,21 @@ class Indice:
 def carregar_indice(numero_digitos: str, numero_formatado: str) -> Indice:
     pasta = pasta_do_processo(numero_digitos)
     arquivo = pasta / NOME_INDICE
-    if not arquivo.is_file():
+    # Falha do sistema de arquivos NAO pode virar "nao existe indice". Seria o
+    # pior desfecho possivel: o acervo recomecaria a numeracao do zero e a
+    # proxima copia entraria como fls. 1, por cima de um historico que esta la.
+    # Numerar folha errada e pior que nao numerar, e citar folha errada numa
+    # peca e pior ainda. Por isso aqui se insiste e, no limite, se recusa.
+    if not _insistir("olhar o indice", arquivo.is_file):
         return Indice(numero=numero_formatado, pasta=pasta)
+    bruto_texto = _insistir("ler o indice", lambda: arquivo.read_text(encoding="utf-8"))
     try:
-        bruto = json.loads(arquivo.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        # Indice corrompido nao pode apagar o historico nem travar a copia:
-        # segue como se estivesse vazio, e a gravacao o refaz.
+        bruto = json.loads(bruto_texto)
+    except json.JSONDecodeError:
+        # Indice CORROMPIDO e outra coisa, e aqui a decisao antiga continua
+        # valendo: conteudo ilegivel nao pode travar a copia, e a gravacao o
+        # refaz. O que mudou e que erro de leitura deixou de ser confundido
+        # com conteudo quebrado.
         return Indice(numero=numero_formatado, pasta=pasta)
     return Indice(
         numero=bruto.get("numero", numero_formatado),

@@ -428,3 +428,79 @@ def test_pasta_inexistente_nao_explode(tmp_path):
 
     plano = planejar_reindexacao(Indice(numero="1", pasta=tmp_path / "nao-existe"))
     assert plano == {"manter": [], "apagar": [], "total": 0}
+
+
+# ==========================================================================
+# A pasta de copias mora no Google Drive, e o Drive falha diferente de disco
+#
+# Visto em campo em 05/10/2026, ao ler o indice de um processo:
+#
+#     OSError: [WinError 1450] Nao existem recursos de sistema suficientes
+#
+# A consulta ja tinha terminado e ja estava gravada. Mesmo assim o comando
+# morreu com traceback, por causa de uma leitura em `G:\Meu Drive`.
+# ==========================================================================
+
+from justica_mcp.core import acervo as _acervo  # noqa: E402
+from justica_mcp.core.acervo import AcervoIndisponivel, _insistir  # noqa: E402
+
+
+class _Recusa:
+    """Falha nas N primeiras chamadas e depois devolve o valor."""
+
+    def __init__(self, falhas, valor=True):
+        self.restantes, self.valor = falhas, valor
+        self.chamadas = 0
+
+    def __call__(self):
+        self.chamadas += 1
+        if self.restantes > 0:
+            self.restantes -= 1
+            raise OSError(1450, "Nao existem recursos de sistema suficientes")
+        return self.valor
+
+
+def test_falha_passageira_do_drive_e_vencida_insistindo(monkeypatch):
+    monkeypatch.setattr(_acervo, "ESPERA_ENTRE_TENTATIVAS", 0)
+    operacao = _Recusa(falhas=2)
+    assert _insistir("olhar o indice", operacao) is True
+    assert operacao.chamadas == 3
+
+
+def test_falha_persistente_vira_erro_com_motivo_legivel(monkeypatch):
+    monkeypatch.setattr(_acervo, "ESPERA_ENTRE_TENTATIVAS", 0)
+    operacao = _Recusa(falhas=99)
+    with pytest.raises(AcervoIndisponivel) as erro:
+        _insistir("olhar o indice", operacao)
+    texto = str(erro.value)
+    assert "Google Drive" in texto
+    # A frase que impede o operador de achar que perdeu a consulta.
+    assert "nao foi perdida" in texto
+
+
+def test_erro_de_leitura_nunca_vira_indice_vazio(monkeypatch, tmp_path):
+    """Este e o ponto. Tratar falha do sistema de arquivos como 'nao existe
+    indice' faria o acervo recomecar a numeracao do zero: a proxima copia
+    entraria como fls. 1 por cima de um historico que esta la. Citar folha
+    errada numa peca e o pior defeito que este indice pode ter."""
+    monkeypatch.setattr(_acervo, "ESPERA_ENTRE_TENTATIVAS", 0)
+    monkeypatch.setattr(_acervo, "pasta_de_copias", lambda: tmp_path)
+
+    def recusa_sempre(self, *a, **kw):
+        raise OSError(1450, "Nao existem recursos de sistema suficientes")
+
+    monkeypatch.setattr(Path, "is_file", recusa_sempre)
+    with pytest.raises(AcervoIndisponivel):
+        _acervo.carregar_indice("50684566820254025101", "5068456-68.2025.4.02.5101")
+
+
+def test_indice_corrompido_continua_seguindo_como_vazio(monkeypatch, tmp_path):
+    """Conteudo ilegivel e outra coisa, e a decisao antiga continua valendo: o
+    JSON quebrado nao pode travar a copia, e a gravacao o refaz."""
+    monkeypatch.setattr(_acervo, "pasta_de_copias", lambda: tmp_path)
+    pasta = tmp_path / "50684566820254025101"
+    pasta.mkdir()
+    (pasta / _acervo.NOME_INDICE).write_text("{isso nao e json", encoding="utf-8")
+
+    indice = _acervo.carregar_indice("50684566820254025101", "5068456-68.2025.4.02.5101")
+    assert indice.vazio

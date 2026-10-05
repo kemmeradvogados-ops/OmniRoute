@@ -3208,96 +3208,108 @@ def consultar_processo(
                 print(f"      {m['data']}  {m['descricao'][:70]}")
 
             if documentos and documentos != "nenhum":
-                from .core.acervo import carregar_indice, garantir_pasta
+                from .core.acervo import (
+                    AcervoIndisponivel, carregar_indice, garantir_pasta,
+                )
                 from .esaj import copiar_pasta_digital
 
-                indice = carregar_indice(numero.apenas_digitos, numero.formatado)
-                pasta = garantir_pasta(numero.apenas_digitos)
-                print(f"\n  Pasta do processo: {pasta}")
-                guarda.permitir_download = True
-                # O caminho que funciona e o que o operador descreveu e
-                # fotografou: clicar em "Visualizar autos", marcar "Todas",
-                # "Baixar PDF", "Arquivo unico" e "Continuar". Buscar pelo
-                # endereco falhou por tres caminhos conferidos em campo, porque
-                # o ticket da Pasta Digital so e montado no instante do clique.
-                from .esaj import copiar_autos_pelo_visualizador
+                try:
+                    indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+                    pasta = garantir_pasta(numero.apenas_digitos)
+                    print(f"\n  Pasta do processo: {pasta}")
+                    guarda.permitir_download = True
+                    # O caminho que funciona e o que o operador descreveu e
+                    # fotografou: clicar em "Visualizar autos", marcar "Todas",
+                    # "Baixar PDF", "Arquivo unico" e "Continuar". Buscar pelo
+                    # endereco falhou por tres caminhos conferidos em campo, porque
+                    # o ticket da Pasta Digital so e montado no instante do clique.
+                    from .esaj import copiar_autos_pelo_visualizador
 
-                resultado = copiar_autos_pelo_visualizador(
-                    pagina, guarda, pasta, numero.apenas_digitos, segundos
-                )
-                janela = resultado.pop("janela", None)
-                if resultado["situacao"] != "gravada" and janela is not None:
-                    # Parou no meio: relatar a tela e o que permite escrever o
-                    # passo que faltou, sem adivinhar seletor.
-                    if resultado["situacao"] == "download_perdido":
-                        print(f"    O arquivo foi baixado mas nao pode ser gravado: "
+                    resultado = copiar_autos_pelo_visualizador(
+                        pagina, guarda, pasta, numero.apenas_digitos, segundos
+                    )
+                    janela = resultado.pop("janela", None)
+                    if resultado["situacao"] != "gravada" and janela is not None:
+                        # Parou no meio: relatar a tela e o que permite escrever o
+                        # passo que faltou, sem adivinhar seletor.
+                        if resultado["situacao"] == "download_perdido":
+                            print(f"    O arquivo foi baixado mas nao pode ser gravado: "
+                                  f"{resultado.get('detalhe', '')}")
+                        else:
+                            print(f"    Nao concluiu no passo {resultado.get('passo', '?')}.")
+                        _relatar_tela(janela, "PASTA DIGITAL")
+                        _relatar_estrutura_de_dados(janela)
+                    if janela is not None:
+                        try:
+                            janela.close()
+                        except Exception:
+                            pass
+                    guarda.permitir_download = False
+                    if resultado["situacao"] == "gravada":
+                        from pathlib import Path as _P
+
+                        from .core.acervo import REPETIDA_IGUAL, REPETIDA_SUSPEITA
+
+                        baixado = _P(resultado["arquivo"])
+                        veredicto, gemeo = indice.avaliar_repeticao(baixado)
+                        if veredicto == REPETIDA_IGUAL:
+                            # Indexar de novo diria que o processo tem o dobro de
+                            # folhas que tem. Folha errada em citacao e o pior
+                            # defeito possivel neste indice.
+                            print(f"    COPIA REPETIDA: identica a "
+                                  f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), ja no acervo.")
+                            print("    O indice NAO foi alterado, para nao renumerar folhas.")
+                            if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
+                                try:
+                                    baixado.unlink()
+                                    print("    O arquivo repetido foi removido da pasta.")
+                                except OSError as exc:
+                                    print(f"    Nao consegui remover o repetido: {exc}")
+                            estado_local.registrar(
+                                acao="copia_repetida", tribunal=identidade.tribunal,
+                                sistema=identidade.sistema, numero=numero.formatado,
+                                documento=str(baixado), resultado=gemeo.faixa(),
+                            )
+                        elif veredicto == REPETIDA_SUSPEITA:
+                            print(f"    ATENCAO: esta copia tem o mesmo numero de paginas de "
+                                  f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), mas o "
+                                  "conteudo difere.")
+                            print("    Pode ser a MESMA copia com data de geracao diferente,")
+                            print("    que o proprio portal escreve dentro do PDF. NAO indexei:")
+                            print("    numerar folha errada e pior que nao numerar. O arquivo")
+                            print(f"    esta em {baixado}. Confira e me diga o que fazer.")
+                            estado_local.registrar(
+                                acao="copia_suspeita_de_repeticao",
+                                tribunal=identidade.tribunal, sistema=identidade.sistema,
+                                numero=numero.formatado, documento=str(baixado),
+                                resultado=gemeo.faixa(),
+                            )
+                        else:
+                            item = indice.acrescentar(baixado, "integra")
+                            indice.gravar()
+                            print(f"    COPIA INTEGRAL gravada: {baixado.name} "
+                                  f"({item.faixa()})")
+                            estado_local.registrar(
+                                acao="copia_integral", tribunal=identidade.tribunal,
+                                sistema=identidade.sistema, numero=numero.formatado,
+                                documento=resultado["arquivo"], resultado=item.faixa(),
+                            )
+                    else:
+                        print(f"    COPIA NAO CONCLUIDA ({resultado['situacao']}): "
                               f"{resultado.get('detalhe', '')}")
-                    else:
-                        print(f"    Nao concluiu no passo {resultado.get('passo', '?')}.")
-                    _relatar_tela(janela, "PASTA DIGITAL")
-                    _relatar_estrutura_de_dados(janela)
-                if janela is not None:
-                    try:
-                        janela.close()
-                    except Exception:
-                        pass
-                guarda.permitir_download = False
-                if resultado["situacao"] == "gravada":
-                    from pathlib import Path as _P
-
-                    from .core.acervo import REPETIDA_IGUAL, REPETIDA_SUSPEITA
-
-                    baixado = _P(resultado["arquivo"])
-                    veredicto, gemeo = indice.avaliar_repeticao(baixado)
-                    if veredicto == REPETIDA_IGUAL:
-                        # Indexar de novo diria que o processo tem o dobro de
-                        # folhas que tem. Folha errada em citacao e o pior
-                        # defeito possivel neste indice.
-                        print(f"    COPIA REPETIDA: identica a "
-                              f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), ja no acervo.")
-                        print("    O indice NAO foi alterado, para nao renumerar folhas.")
-                        if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
-                            try:
-                                baixado.unlink()
-                                print("    O arquivo repetido foi removido da pasta.")
-                            except OSError as exc:
-                                print(f"    Nao consegui remover o repetido: {exc}")
-                        estado_local.registrar(
-                            acao="copia_repetida", tribunal=identidade.tribunal,
-                            sistema=identidade.sistema, numero=numero.formatado,
-                            documento=str(baixado), resultado=gemeo.faixa(),
-                        )
-                    elif veredicto == REPETIDA_SUSPEITA:
-                        print(f"    ATENCAO: esta copia tem o mesmo numero de paginas de "
-                              f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), mas o "
-                              "conteudo difere.")
-                        print("    Pode ser a MESMA copia com data de geracao diferente,")
-                        print("    que o proprio portal escreve dentro do PDF. NAO indexei:")
-                        print("    numerar folha errada e pior que nao numerar. O arquivo")
-                        print(f"    esta em {baixado}. Confira e me diga o que fazer.")
-                        estado_local.registrar(
-                            acao="copia_suspeita_de_repeticao",
-                            tribunal=identidade.tribunal, sistema=identidade.sistema,
-                            numero=numero.formatado, documento=str(baixado),
-                            resultado=gemeo.faixa(),
-                        )
-                    else:
-                        item = indice.acrescentar(baixado, "integra")
-                        indice.gravar()
-                        print(f"    COPIA INTEGRAL gravada: {baixado.name} "
-                              f"({item.faixa()})")
-                        estado_local.registrar(
-                            acao="copia_integral", tribunal=identidade.tribunal,
-                            sistema=identidade.sistema, numero=numero.formatado,
-                            documento=resultado["arquivo"], resultado=item.faixa(),
-                        )
-                else:
-                    print(f"    COPIA NAO CONCLUIDA ({resultado['situacao']}): "
-                          f"{resultado.get('detalhe', '')}")
-                    for pista in resultado.get("pistas") or []:
-                        print(f"      {pista}")
-                    print("    Nada foi inventado: o download real sera escrito depois")
-                    print("    de conferido o que a pasta digital devolve.")
+                        for pista in resultado.get("pistas") or []:
+                            print(f"      {pista}")
+                        print("    Nada foi inventado: o download real sera escrito depois")
+                        print("    de conferido o que a pasta digital devolve.")
+                except AcervoIndisponivel as exc:
+                    # A consulta ja terminou e ja foi gravada. Derrubar tudo por causa da
+                    # pasta de copias seria jogar fora o trabalho que deu certo por causa
+                    # do que deu errado depois.
+                    guarda.permitir_download = False
+                    print(f"\n  [ACERVO] {exc}")
+                    print("  A consulta acima vale e ja esta no arquivo indicado abaixo.")
+                    print("  Repita o comando mais tarde para a parte de copia, ou confira")
+                    print("  se o Google Drive esta sincronizando.")
 
             dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
             # Alimenta a comparacao de novidades, igual ao eproc. Sem isto, Sao
@@ -3517,127 +3529,137 @@ def consultar_processo(
         # ---------- copias dos documentos ----------
         if documentos and documentos != "nenhum":
             from .core.acervo import (
-                carregar_indice, decidir_estrategia, garantir_pasta,
-                pdfs_fora_do_indice,
+                AcervoIndisponivel, carregar_indice, decidir_estrategia,
+                garantir_pasta, pdfs_fora_do_indice,
             )
             from .documentos import baixar_documentos_dos_eventos
 
-            indice = carregar_indice(numero.apenas_digitos, numero.formatado)
-            # A pasta nasce aqui, e nao no instante de gravar o primeiro
-            # arquivo: ela e o endereco do processo no acervo, e precisa
-            # existir mesmo que a consulta nao copie nada.
-            pasta = garantir_pasta(numero.apenas_digitos)
-            print(f"  Pasta do processo: {pasta}")
-            avulsos = pdfs_fora_do_indice(indice)
-            if avulsos:
-                print(f"  ATENCAO: {len(avulsos)} arquivo(s) na pasta fora do indice, "
-                      f"por exemplo {avulsos[0]}.")
-                print("  Nao da para saber o que eles cobrem, entao nao contam como copia.")
-            guarda.permissoes.insert(0, permissao_de_origem(
-                pagina.url, "documentos do processo, mesma origem do portal"
-            ))
-            guarda.permitir_download = True
-            print()
+            try:
+                indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+                # A pasta nasce aqui, e nao no instante de gravar o primeiro
+                # arquivo: ela e o endereco do processo no acervo, e precisa
+                # existir mesmo que a consulta nao copie nada.
+                pasta = garantir_pasta(numero.apenas_digitos)
+                print(f"  Pasta do processo: {pasta}")
+                avulsos = pdfs_fora_do_indice(indice)
+                if avulsos:
+                    print(f"  ATENCAO: {len(avulsos)} arquivo(s) na pasta fora do indice, "
+                          f"por exemplo {avulsos[0]}.")
+                    print("  Nao da para saber o que eles cobrem, entao nao contam como copia.")
+                guarda.permissoes.insert(0, permissao_de_origem(
+                    pagina.url, "documentos do processo, mesma origem do portal"
+                ))
+                guarda.permitir_download = True
+                print()
 
-            if documentos == "auto":
-                estrategia = decidir_estrategia(indice, dados["eventos"])
-                print(f"  ACERVO: {estrategia['motivo']}")
-            elif documentos == "integra":
-                estrategia = {"acao": "integra", "motivo": "Integra pedida no comando."}
-            else:
-                quantos = 5
-                if documentos.startswith("ultimos:"):
-                    try:
-                        quantos = max(int(documentos.split(":", 1)[1]), 1)
-                    except ValueError:
-                        quantos = 5
-                estrategia = {"acao": "ultimos", "quantos": quantos}
-
-            if estrategia["acao"] == "integra":
-                print("  COPIA INTEGRAL (pelo botao do portal)...")
-                falhou = False
-                try:
-                    arquivo = _baixar_integra(
-                        pagina, guarda, pasta, numero.apenas_digitos, segundos
-                    )
-                except Exception as exc:
-                    arquivo, falhou = None, True
-                    # So o nome do erro: o relato da tela, impresso acima, e o
-                    # que serve para decidir o proximo passo. O despejo do log
-                    # do Playwright sepultava esse relato.
-                    print(f"    Copia integral nao concluida ({type(exc).__name__}).")
-                if arquivo:
-                    from pathlib import Path as _P
-
-                    from .core.acervo import maior_evento
-
-                    item = indice.acrescentar(
-                        _P(arquivo), "integra",
-                        evento_ate=maior_evento(dados["eventos"]),
-                    )
-                    print(f"    gravada: {_P(arquivo).name}  ({item.faixa()}), "
-                          f"cobrindo ate o evento {item.evento_ate}")
-                    estado_local.registrar(
-                        acao="copia_integral", tribunal=identidade.tribunal,
-                        sistema=identidade.sistema, numero=numero.formatado,
-                        documento=arquivo, resultado=item.faixa(),
-                    )
-                elif not falhou:
-                    print("    botao de copia integral nao encontrado nesta tela.")
-
-            elif estrategia["acao"] == "complemento":
-                faltantes = estrategia["faltantes"]
-                if not faltantes:
-                    print("    Nada a complementar.")
+                if documentos == "auto":
+                    estrategia = decidir_estrategia(indice, dados["eventos"])
+                    print(f"  ACERVO: {estrategia['motivo']}")
+                elif documentos == "integra":
+                    estrategia = {"acao": "integra", "motivo": "Integra pedida no comando."}
                 else:
-                    # Um evento sintetico por documento faltante preserva o
-                    # vinculo com o evento de origem no nome do arquivo.
-                    pendentes = [
-                        {**f["evento"], "documentos": [f["documento"]]} for f in faltantes
-                    ]
+                    quantos = 5
+                    if documentos.startswith("ultimos:"):
+                        try:
+                            quantos = max(int(documentos.split(":", 1)[1]), 1)
+                        except ValueError:
+                            quantos = 5
+                    estrategia = {"acao": "ultimos", "quantos": quantos}
+
+                if estrategia["acao"] == "integra":
+                    print("  COPIA INTEGRAL (pelo botao do portal)...")
+                    falhou = False
+                    try:
+                        arquivo = _baixar_integra(
+                            pagina, guarda, pasta, numero.apenas_digitos, segundos
+                        )
+                    except Exception as exc:
+                        arquivo, falhou = None, True
+                        # So o nome do erro: o relato da tela, impresso acima, e o
+                        # que serve para decidir o proximo passo. O despejo do log
+                        # do Playwright sepultava esse relato.
+                        print(f"    Copia integral nao concluida ({type(exc).__name__}).")
+                    if arquivo:
+                        from pathlib import Path as _P
+
+                        from .core.acervo import maior_evento
+
+                        item = indice.acrescentar(
+                            _P(arquivo), "integra",
+                            evento_ate=maior_evento(dados["eventos"]),
+                        )
+                        print(f"    gravada: {_P(arquivo).name}  ({item.faixa()}), "
+                              f"cobrindo ate o evento {item.evento_ate}")
+                        estado_local.registrar(
+                            acao="copia_integral", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, numero=numero.formatado,
+                            documento=arquivo, resultado=item.faixa(),
+                        )
+                    elif not falhou:
+                        print("    botao de copia integral nao encontrado nesta tela.")
+
+                elif estrategia["acao"] == "complemento":
+                    faltantes = estrategia["faltantes"]
+                    if not faltantes:
+                        print("    Nada a complementar.")
+                    else:
+                        # Um evento sintetico por documento faltante preserva o
+                        # vinculo com o evento de origem no nome do arquivo.
+                        pendentes = [
+                            {**f["evento"], "documentos": [f["documento"]]} for f in faltantes
+                        ]
+                        copia = baixar_documentos_dos_eventos(
+                            pagina, guarda, pendentes, pasta, quantos_eventos=len(pendentes)
+                        )
+                        print(f"  COMPLEMENTO: {len(copia.gravadas)} documento(s)")
+                        from pathlib import Path as _P
+
+                        for c in copia.gravadas:
+                            item = indice.acrescentar(
+                                _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
+                            )
+                            print(f"    ev{c.evento} {c.rotulo}  ->  {item.faixa()}")
+                            estado_local.registrar(
+                                acao="copia_documento", tribunal=identidade.tribunal,
+                                sistema=identidade.sistema, numero=numero.formatado,
+                                documento=c.arquivo, resultado=item.faixa(),
+                            )
+                        for c in copia.falhas:
+                            print(f"    falhou ev{c.evento} {c.rotulo}: {c.erro}")
+
+                else:
+                    quantos = estrategia["quantos"]
+                    print(f"  COPIAS DOS {quantos} EVENTO(S) MAIS RECENTES...")
                     copia = baixar_documentos_dos_eventos(
-                        pagina, guarda, pendentes, pasta, quantos_eventos=len(pendentes)
+                        pagina, guarda, dados["eventos"], pasta, quantos_eventos=quantos
                     )
-                    print(f"  COMPLEMENTO: {len(copia.gravadas)} documento(s)")
                     from pathlib import Path as _P
 
+                    for linha in copia.resumo():
+                        print(f"    {linha}")
                     for c in copia.gravadas:
                         item = indice.acrescentar(
                             _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
                         )
-                        print(f"    ev{c.evento} {c.rotulo}  ->  {item.faixa()}")
                         estado_local.registrar(
                             acao="copia_documento", tribunal=identidade.tribunal,
                             sistema=identidade.sistema, numero=numero.formatado,
                             documento=c.arquivo, resultado=item.faixa(),
                         )
-                    for c in copia.falhas:
-                        print(f"    falhou ev{c.evento} {c.rotulo}: {c.erro}")
 
-            else:
-                quantos = estrategia["quantos"]
-                print(f"  COPIAS DOS {quantos} EVENTO(S) MAIS RECENTES...")
-                copia = baixar_documentos_dos_eventos(
-                    pagina, guarda, dados["eventos"], pasta, quantos_eventos=quantos
-                )
-                from pathlib import Path as _P
-
-                for linha in copia.resumo():
-                    print(f"    {linha}")
-                for c in copia.gravadas:
-                    item = indice.acrescentar(
-                        _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
-                    )
-                    estado_local.registrar(
-                        acao="copia_documento", tribunal=identidade.tribunal,
-                        sistema=identidade.sistema, numero=numero.formatado,
-                        documento=c.arquivo, resultado=item.faixa(),
-                    )
-
-            guarda.permitir_download = False
-            if not indice.vazio:
-                indice.gravar()
-                print(f"\n  Acervo: {indice.ultima_folha} folha(s) em {indice.pasta}")
+                guarda.permitir_download = False
+                if not indice.vazio:
+                    indice.gravar()
+                    print(f"\n  Acervo: {indice.ultima_folha} folha(s) em {indice.pasta}")
+            except AcervoIndisponivel as exc:
+                # A consulta ja terminou e ja foi gravada. Derrubar tudo por causa da
+                # pasta de copias seria jogar fora o trabalho que deu certo por causa
+                # do que deu errado depois.
+                guarda.permitir_download = False
+                print(f"\n  [ACERVO] {exc}")
+                print("  A consulta acima vale e ja esta no arquivo indicado abaixo.")
+                print("  Repita o comando mais tarde para a parte de copia, ou confira")
+                print("  se o Google Drive esta sincronizando.")
 
         print(f"\n  Conteudo completo em: {destino}")
         print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")

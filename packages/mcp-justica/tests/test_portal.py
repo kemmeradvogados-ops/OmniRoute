@@ -2883,3 +2883,19 @@ def test_a_credencial_so_e_enviada_quando_a_sessao_nao_vale():
     assert "etapa 1: credencial" not in antes
     assert "etapa 1: credencial" in depois
     assert "etapa 2: segundo fator" in depois
+
+
+def test_falha_do_acervo_nao_derruba_a_consulta_ja_concluida():
+    """A consulta termina e e gravada ANTES da copia. Em 05/10/2026 um
+    WinError 1450 do Google Drive matou o comando com traceback depois de a
+    extracao ja ter dado certo: o trabalho que funcionou foi jogado fora por
+    causa do que falhou depois."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert fonte.count("except AcervoIndisponivel as exc:") == 2, (
+        "os dois ramos, e-SAJ e eproc, precisam sobreviver a falha do acervo")
+    # A gravacao da consulta acontece antes, e o aviso aponta para ela.
+    assert "A consulta acima vale e ja esta no arquivo indicado abaixo." in fonte
