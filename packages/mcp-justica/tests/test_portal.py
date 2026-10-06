@@ -3278,10 +3278,12 @@ def test_a_credencial_procura_o_campo_visivel():
     etapa = fonte.split("etapa 1: credencial")[1].split("etapa 2")[0]
     assert "elemento_visivel(pagina, seletor)" in etapa
     assert "elemento = pagina.query_selector(seletor)" not in etapa
-    # O campo espelho continua sendo procurado pelo caminho antigo, de
+    # O campo espelho continua sendo procurado SEM filtro de visibilidade, de
     # proposito: ele existe justamente para conferir se a senha chegou ao campo
-    # que vai ser enviado, e esse e oculto por natureza.
-    assert "pagina.query_selector(campo_senha_oculto)" in etapa
+    # que vai ser enviado, e esse e oculto por natureza. `achar_opcional` com
+    # seletor CSS faz exatamente isso; o que ela acrescenta e entender o
+    # prefixo `texto=`, que o navegador nao conhece.
+    assert "achar_opcional(pagina, campo_senha_oculto)" in etapa
 
 
 def test_campo_que_existe_mas_nao_aparece_e_dito_com_todas_as_letras():
@@ -4728,3 +4730,93 @@ def test_o_mapa_e_gravado_com_marca_de_ordem_de_byte():
 
     fonte = inspect.getsource(portal.mapear)
     assert 'encoding="utf-8-sig"' in fonte
+
+
+# ==========================================================================
+# `texto=` e invencao deste projeto, e o navegador nao a conhece
+#
+# Primeiro ensaio do DCP do Tribunal de Justica do Rio de Janeiro, 06/10/2026.
+# O botao "Entrar" do IdServerJus nao tem identificador, entao o seletor dele
+# e `texto=Entrar`. So `elemento_visivel` sabia ler o prefixo, e varios pontos
+# chamavam o navegador sem passar por ela: o Playwright respondeu
+# 'Unknown engine "texto"' e o comando terminou em traceback.
+# ==========================================================================
+
+class _NavegadorExigente:
+    """Recusa seletor que nao seja CSS, como o Playwright de verdade recusa."""
+
+    def __init__(self, textos=()):
+        self.textos = list(textos)
+
+    def query_selector(self, seletor):
+        if seletor.startswith("texto="):
+            raise RuntimeError('Unknown engine "texto" while parsing selector')
+        return None
+
+    def query_selector_all(self, _):
+        return list(self.textos)
+
+    # Atributo, nao metodo: e assim que o Playwright o expoe, e e assim que
+    # `janela_de` o le.
+    viewport_size = {"width": 1280, "height": 800}
+
+
+class _BotaoEscrito:
+    def __init__(self, rotulo):
+        self.rotulo = rotulo
+
+    def inner_text(self):
+        return self.rotulo
+
+    def get_attribute(self, _):
+        return None
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 10, "y": 10, "width": 90, "height": 30}
+
+
+def test_achar_opcional_le_o_prefixo_de_texto():
+    from justica_mcp.portal import achar_opcional
+
+    tela = _NavegadorExigente([_BotaoEscrito("Entrar")])
+    assert achar_opcional(tela, "texto=Entrar") is not None
+
+
+def test_achar_opcional_nao_entrega_botao_de_outro_texto():
+    from justica_mcp.portal import achar_opcional
+
+    tela = _NavegadorExigente([_BotaoEscrito("Esqueci Minha Senha")])
+    assert achar_opcional(tela, "texto=Entrar") is None
+
+
+def test_seletor_css_continua_indo_ao_navegador():
+    from justica_mcp.portal import achar_opcional
+
+    assert achar_opcional(_NavegadorExigente(), "#usuario") is None
+
+
+def test_seletor_vazio_nao_chega_ao_navegador():
+    from justica_mcp.portal import achar_opcional
+
+    assert achar_opcional(_NavegadorExigente(), "") is None
+
+
+def test_nenhum_seletor_da_tabela_vai_cru_para_o_navegador():
+    """Guarda de regressao. Estes nomes guardam seletor vindo da tabela de
+    portais, e qualquer um deles pode trazer o prefixo `texto=`. Entregar um
+    desses ao `query_selector` derruba o comando com traceback de Playwright,
+    que parece defeito grave do navegador e e so a porta errada."""
+    import re
+    from pathlib import Path
+
+    fonte = Path("src/justica_mcp/portal.py").read_text(encoding="utf-8")
+    # Fora a porta, que e quem pode e deve chamar o navegador.
+    fonte = fonte.split("def achar_opcional(")[0] + \
+        fonte.split("def achar_opcional(")[1].split("\ndef ", 1)[1]
+    nomes = ("botao_entrar", "botao_validar", "campo_usuario", "campo_senha",
+             "campo_senha_oculto", "campo_codigo")
+    padrao = re.compile(r"\bquery_selector\(\s*(" + "|".join(nomes) + r")\s*\)")
+    assert padrao.search(fonte) is None, padrao.search(fonte).group(0)

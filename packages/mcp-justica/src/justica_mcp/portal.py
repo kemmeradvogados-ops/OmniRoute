@@ -691,7 +691,7 @@ def ensaiar_login(
             # Sem conferir isso, o operador gastaria uma tentativa num clique
             # que nao faz nada, ou o clique esperaria ate o tempo esgotar.
             def _estado_do_botao():
-                el = pagina.query_selector(botao_entrar)
+                el = achar_opcional(pagina, botao_entrar)
                 if el is None:
                     return None
                 return el.is_enabled()
@@ -702,7 +702,7 @@ def ensaiar_login(
                 (campo_usuario, login, "usuario"),
                 (campo_senha, senha, "senha"),
             ):
-                elemento = pagina.query_selector(seletor)
+                elemento = achar_opcional(pagina, seletor)
                 if elemento is None:
                     print(f"  [FALHA] Campo de {rotulo} nao encontrado: {seletor}")
                     print("          A pagina mudou. Rode `reconhecer` de novo.")
@@ -714,8 +714,8 @@ def ensaiar_login(
 
             print()
             # Conferencia: o campo oculto e o que viaja no envio.
-            oculto_el = pagina.query_selector(campo_senha_oculto)
-            visivel_el = pagina.query_selector(campo_senha)
+            oculto_el = achar_opcional(pagina, campo_senha_oculto)
+            visivel_el = achar_opcional(pagina, campo_senha)
             tam_oculto = oculto_el.evaluate("e => (e.value || '').length") if oculto_el else None
             tam_visivel = visivel_el.evaluate("e => (e.value || '').length") if visivel_el else None
             esperado = len(senha)
@@ -1267,7 +1267,7 @@ def entrar(
             for seletor, valor, rotulo in (
                 (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
             ):
-                elemento = pagina.query_selector(seletor)
+                elemento = achar_opcional(pagina, seletor)
                 if elemento is None:
                     print(f"  [FALHA] Campo de {rotulo} nao encontrado: {seletor}.")
                     print("          Nada foi enviado. Rode `reconhecer` de novo.")
@@ -1278,14 +1278,14 @@ def entrar(
 
             # Conferencia ANTES de enviar: sem isso o clique viraria tentativa
             # falha por campo vazio, que e justamente o que bloqueia a conta.
-            alvo = pagina.query_selector(campo_senha_oculto)
+            alvo = achar_opcional(pagina, campo_senha_oculto)
             if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
                 print("  [ABORTADO] A senha nao chegou ao campo enviado.")
                 print("             NADA foi enviado, para nao gerar tentativa falha.")
                 return 1
             print("  Campos preenchidos e conferidos.")
 
-            botao = pagina.query_selector(botao_entrar)
+            botao = achar_opcional(pagina, botao_entrar)
             if botao is None:
                 print(f"  [FALHA] Botao {botao_entrar} nao encontrado. Nada enviado.")
                 return 1
@@ -2392,7 +2392,7 @@ def autenticar(
                     # terminou em traceback de Playwright.
                     elemento = elemento_visivel(pagina, seletor)
                     if elemento is None:
-                        existe = pagina.query_selector(seletor) is not None
+                        existe = achar_opcional(pagina, seletor) is not None
                         if existe:
                             print(f"  [FALHA] O campo de {rotulo} ({seletor}) existe na "
                                   "pagina, mas nenhuma copia dele esta visivel.")
@@ -2430,7 +2430,7 @@ def autenticar(
                         _relatar_tela(pagina, "TELA DE LOGIN")
                         return 1
 
-                alvo = pagina.query_selector(campo_senha_oculto)
+                alvo = achar_opcional(pagina, campo_senha_oculto)
                 if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
                     print("  [ABORTADO] A senha nao chegou ao campo enviado. Nada enviado.")
                     return 1
@@ -2470,7 +2470,7 @@ def autenticar(
                             return True          # foi direto a selecao de perfil
                         if _ha_desafio_humano(p):
                             return False         # ainda no desafio
-                        usuario = p.query_selector(campo_usuario)
+                        usuario = achar_opcional(p, campo_usuario)
                         return usuario is not None and usuario.is_visible()
 
                     _aguardar_desafio_humano(
@@ -2481,7 +2481,7 @@ def autenticar(
                     # credencial recusada tambem devolve o formulario, e reenviar as
                     # cegas e como se bloqueia uma conta. O relato abaixo diz o que
                     # apareceu, e a decisao de repetir fica com o operador.
-                    voltou = pagina.query_selector(campo_usuario)
+                    voltou = achar_opcional(pagina, campo_usuario)
                     if (achar_opcional(pagina, campo_codigo) is None
                             and not _ha_desafio_humano(pagina)
                             and voltou is not None and voltou.is_visible()):
@@ -2719,7 +2719,7 @@ def autenticar(
                     estado.registrar(acao="login_etapa_segundo_fator", tribunal=identidade.tribunal,
                                      sistema=identidade.sistema, resultado="enviado")
                     validar_visivel = (elemento_visivel(pagina, botao_validar)
-                                       or pagina.query_selector(botao_validar))
+                                       or achar_opcional(pagina, botao_validar))
                     if validar_visivel is None:
                         print(f"  [FALHA] O botao {botao_validar} nao esta na tela. "
                               "O codigo foi digitado e NAO foi enviado.")
@@ -3138,7 +3138,14 @@ def seletor_de_codigo_a_vista(pagina) -> Optional[str]:
 
 
 def achar_opcional(pagina, seletor):
-    """`query_selector` que aceita seletor ausente, devolvendo None.
+    """`query_selector` que entende seletor vazio e seletor por TEXTO.
+
+    Porta unica para procurar seletor que veio da tabela de portais. O prefixo
+    `texto=` e invencao deste projeto, para botao sem identificador, e o
+    navegador nao o conhece: passar `texto=Entrar` direto ao `query_selector`
+    levanta "Unknown engine". Aconteceu no primeiro ensaio do DCP do Tribunal
+    de Justica do Rio de Janeiro, em 06/10/2026, porque so `elemento_visivel`
+    sabia ler o prefixo e varios pontos chamavam o navegador sem passar por ela.
 
     Seletor vazio quer dizer "esta tela nao tem este campo NESTE portal", e nao
     "procure por nada". A diferenca importa porque passar vazio ao navegador
@@ -3149,6 +3156,8 @@ def achar_opcional(pagina, seletor):
     """
     if not seletor:
         return None
+    if seletor.startswith(PREFIXO_DE_TEXTO):
+        return _por_texto_exato(pagina, seletor[len(PREFIXO_DE_TEXTO):])
     try:
         return pagina.query_selector(seletor)
     except Exception:
@@ -3463,7 +3472,7 @@ def _reenviar_credencial(
     for seletor, valor, rotulo in (
         (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
     ):
-        elemento = pagina.query_selector(seletor)
+        elemento = achar_opcional(pagina, seletor)
         if elemento is None:
             print(f"    [FALHA] Campo de {rotulo} sumiu. Nada reenviado.")
             return False
@@ -3471,13 +3480,13 @@ def _reenviar_credencial(
         elemento.click()
         elemento.fill(valor)
 
-    alvo = pagina.query_selector(campo_senha_oculto)
+    alvo = achar_opcional(pagina, campo_senha_oculto)
     if not alvo or alvo.evaluate("e => (e.value || '').length") != len(senha):
         print("    [ABORTADO] A senha nao chegou ao campo enviado. Nada reenviado.")
         return False
 
     guarda.pode_executar(Acao.CLICAR, botao_entrar, url=pagina.url)
-    botao = pagina.query_selector(botao_entrar)
+    botao = achar_opcional(pagina, botao_entrar)
     if botao is None:
         print("    [FALHA] Botao de entrar sumiu. Nada reenviado.")
         return False
