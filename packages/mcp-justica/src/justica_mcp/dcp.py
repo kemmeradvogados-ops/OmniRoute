@@ -428,6 +428,46 @@ def escolher_opcao_do_portal(lista: Any) -> Optional[str]:
     return por_nome[0] if len(por_nome) == 1 else None
 
 
+def achar_aba_do_portal(pagina: Any, segundos: int = 20) -> Optional[Any]:
+    """A aba ou janela onde o Portal de Servicos abriu, se houver.
+
+    A entrada no portal abre uma JANELA PROPRIA, e a aba de origem volta para a
+    pagina publica do tribunal. Conferido em campo em 06/10/2026: o comando
+    anunciava "a lista nao esta nela" com o endereco em `www.tjrj.jus.br`,
+    enquanto o portal estava aberto e pedindo o tipo de usuario em outra
+    janela, que o advogado estava vendo na tela.
+
+    Procura em TODAS as abas do mesmo navegador, e espera, porque a janela leva
+    um instante para aparecer e outro para assumir o endereco.
+    """
+    import time as _tempo
+
+    from .portal import pagina_de
+
+    try:
+        contexto = pagina_de(pagina).context
+    except Exception:
+        return None
+    limite = _tempo.monotonic() + max(1, segundos)
+    while True:
+        try:
+            abas = [a for a in (contexto.pages or []) if not a.is_closed()]
+        except Exception:
+            abas = []
+        for aba in abas:
+            try:
+                if MARCA_DO_PORTAL in (aba.url or ""):
+                    return aba
+            except Exception:
+                continue
+        if _tempo.monotonic() >= limite:
+            return None
+        try:
+            pagina.wait_for_timeout(400)
+        except Exception:
+            _tempo.sleep(0.4)
+
+
 def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -> Any:
     """Da tela de selecao de sistemas ate o Portal de Servicos aberto.
 
@@ -448,11 +488,23 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
     if MARCA_DO_PORTAL in (pagina.url or ""):
         return pagina
 
+    # O portal abre em JANELA PROPRIA, e a aba de origem volta para a pagina
+    # publica do tribunal. Procurar so na aba de origem fazia o comando
+    # anunciar "a lista nao esta nela" com o portal aberto do lado, pedindo o
+    # tipo de usuario, visivel na tela do operador.
+    ja_aberta = achar_aba_do_portal(pagina, min(segundos, 10))
+    if ja_aberta is not None:
+        return ja_aberta
+
     lista = esperar_elemento(pagina, LISTA_DE_SISTEMAS, segundos)
     if lista is None and MARCA_DO_PORTAL in (pagina.url or ""):
         # Entrou enquanto se esperava.
         return pagina
     if lista is None:
+        # Ultima chance: a janela pode ter aparecido durante a espera.
+        tardia = achar_aba_do_portal(pagina, min(segundos, 5))
+        if tardia is not None:
+            return tardia
         montou = esperar_tela_montar(pagina, min(segundos, 5))
         raise ConsultaIndisponivel(
             f"A tela de selecao de sistemas nao tem {LISTA_DE_SISTEMAS}. "
@@ -501,8 +553,13 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
             enviar.click()
         janela = nova.value
     except Exception:
-        # Sem janela nova NAO e falha: pode ter aberto na propria aba. Quem
-        # julga e a conferencia do formulario da consulta, que diz o que achou.
+        # Sem janela nova pelo evento, procura entre as abas: o portal pode ter
+        # aberto numa janela que o evento nao entregou a tempo.
+        tardia = achar_aba_do_portal(pagina, min(segundos, 10))
+        if tardia is not None:
+            return tardia
+        # Pode ter aberto na propria aba. Quem julga e a conferencia do
+        # formulario da consulta, que diz o que achou.
         return pagina
     try:
         janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)

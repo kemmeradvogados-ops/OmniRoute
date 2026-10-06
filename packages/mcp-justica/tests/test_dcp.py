@@ -558,6 +558,9 @@ class _AbaNova:
     def wait_for_load_state(self, *a, **kw):
         pass
 
+    def is_closed(self):
+        return False
+
 
 class _EsperaDeAba:
     def __init__(self, tela):
@@ -577,8 +580,9 @@ class _EsperaDeAba:
 
 
 class _Contexto:
-    def __init__(self, tela):
+    def __init__(self, tela, abas=None):
         self.tela = tela
+        self.pages = list(abas or [tela])
 
     def expect_page(self, timeout=None):
         if not self.tela.abre_aba:
@@ -591,10 +595,10 @@ class _TelaDeSelecao:
     viewport_size = {"width": 1280, "height": 800}
 
     def __init__(self, opcoes=None, tem_lista=True, tem_enviar=True,
-                 abre_aba=True):
+                 abre_aba=True, outras_abas=None):
         self.cliques = []
         self.abre_aba = abre_aba
-        self.context = _Contexto(self)
+        self.context = _Contexto(self, [self] + list(outras_abas or []))
         padrao = [("", "Selecione"), (SIGLA_DO_PORTAL, "Portal de Serviços"),
                   ("PORTALSEGURO", "Portal Seguro")]
         self.lista = (_ListaDeSistemas(self, opcoes if opcoes is not None else padrao)
@@ -617,6 +621,9 @@ class _TelaDeSelecao:
 
     def wait_for_timeout(self, _):
         pass
+
+    def is_closed(self):
+        return False
 
 
 def test_a_opcao_do_portal_e_achada_pela_sigla():
@@ -814,3 +821,45 @@ def test_a_consulta_pergunta_o_perfil_antes_de_buscar():
         'identidade.sistema == "pje"')[0]
     assert trecho.index("na_tela_de_perfil(pagina)") < trecho.index("buscar_dcp(")
     assert "escolher_perfil(pagina, guarda, perfil, segundos)" in trecho
+
+
+# ==========================================================================
+# O portal abre em JANELA PROPRIA
+#
+# Conferido em campo em 06/10/2026: o comando anunciava "a lista nao esta
+# nela" com o endereco em `www.tjrj.jus.br`, enquanto o Portal de Servicos
+# estava aberto e pedindo o tipo de usuario em outra janela, que o advogado
+# estava vendo na tela. A aba de origem volta para a pagina publica do
+# tribunal, e olhar so nela nunca acha o portal.
+# ==========================================================================
+
+from justica_mcp.dcp import MARCA_DO_PORTAL, achar_aba_do_portal  # noqa: E402
+
+
+def test_o_portal_e_achado_em_outra_aba():
+    portal_aberto = _AbaNova()
+    tela = _TelaDeSelecao(outras_abas=[portal_aberto])
+    assert achar_aba_do_portal(tela, 2) is portal_aberto
+
+
+def test_sem_aba_do_portal_devolve_nada():
+    assert achar_aba_do_portal(_TelaDeSelecao(), 1) is None
+
+
+def test_a_entrada_usa_a_janela_ja_aberta_sem_selecionar_nada():
+    """Se o portal ja esta aberto noutra janela, selecionar de novo seria
+    mexer numa tela que ja cumpriu o papel dela."""
+    portal_aberto = _AbaNova()
+    tela, guarda = _TelaDeSelecao(outras_abas=[portal_aberto]), _Guarda()
+    assert entrar_no_portal_de_servicos(tela, guarda, 5) is portal_aberto
+    assert tela.cliques == []
+    assert tela.lista.escolhido is None
+
+
+def test_a_aba_de_origem_na_pagina_publica_nao_vira_recusa():
+    """O endereco da aba de origem nao diz nada sobre onde o portal esta."""
+    publica = _TelaDeSelecao(tem_lista=False,
+                             outras_abas=[_AbaNova()])
+    publica.url = "https://www.tjrj.jus.br/"
+    janela = entrar_no_portal_de_servicos(publica, _Guarda(), 5)
+    assert MARCA_DO_PORTAL in janela.url
