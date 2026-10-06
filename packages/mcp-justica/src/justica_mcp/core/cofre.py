@@ -287,6 +287,57 @@ class Cofre:
             for passo in range(-janelas, janelas + 1)
         ]
 
+    def onde_mais_esta_esta_semente(
+        self, identidade: Identidade, candidatas: "list[Identidade]"
+    ) -> list[str]:
+        """Outros pares que guardam EXATAMENTE a mesma semente.
+
+        Duas contas diferentes nunca tem a mesma semente: cada cadastro de
+        autenticador gera a sua. Semente repetida no cofre quer dizer que a de
+        um portal foi gravada no lugar da de outro, e o sintoma e cruel: o
+        comando que confere a semente diz que ela bate com o aplicativo, porque
+        ela bate mesmo, so que com a entrada do OUTRO tribunal. Quem compara
+        aceita como certa, e o portal continua recusando.
+
+        Compara por resumo criptografico, nunca pelo valor. O resumo tambem nao
+        sai desta funcao: o que volta e a lista de pares, que e a conclusao.
+        """
+        import hashlib
+        import hmac
+
+        minha = self._ler(SERVICO_SEMENTE, identidade.chave)
+        if minha is None:
+            return []
+        alvo = hashlib.sha256(minha.encode("utf-8")).digest()
+        iguais = []
+        for outra in candidatas:
+            if outra.chave == identidade.chave:
+                continue
+            valor = self._ler(SERVICO_SEMENTE, outra.chave)
+            if valor is None:
+                continue
+            if hmac.compare_digest(
+                    alvo, hashlib.sha256(valor.encode("utf-8")).digest()):
+                iguais.append(outra.rotulo)
+        return iguais
+
+    def janela_do_codigo(self) -> int:
+        """Numero da janela de 30s a que o codigo atual pertence.
+
+        Serve para nao reenviar um codigo ja gasto. O segundo fator e de uso
+        unico: o portal marca como consumido o codigo que recebeu, e o mesmo
+        codigo mandado de novo e recusado com a mesma mensagem de codigo
+        errado. Quem repete o comando dentro da mesma janela de 30s manda
+        exatamente o mesmo numero, e le "codigo invalido" sobre uma semente
+        que esta certa.
+
+        E o numero da janela, nunca o codigo: guardar o codigo seria guardar
+        credencial de uso unico num banco que nao e cofre.
+        """
+        import time
+
+        return int(time.time()) // 30
+
     def segundos_restantes_do_codigo(self) -> int:
         """Quanto tempo o codigo atual ainda vale."""
         import time

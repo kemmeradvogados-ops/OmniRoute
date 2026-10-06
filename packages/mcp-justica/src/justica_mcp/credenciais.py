@@ -296,6 +296,18 @@ def cmd_testar(cofre: Cofre, tribunal: str, sistema: str) -> int:
         return 1
     from datetime import datetime, timezone
 
+    # Antes do codigo, porque esta e a causa que o proprio codigo esconde: ele
+    # vai bater com o aplicativo de qualquer jeito, so que com a entrada errada.
+    repetida = cofre.onde_mais_esta_esta_semente(identidade, _pares_esperados())
+    if repetida:
+        print("\n  ATENCAO: esta semente e a MESMA de " + ", ".join(repetida) + ".")
+        print("  Cada cadastro de autenticador gera a sua, entao duas contas nunca")
+        print("  tem a mesma. Uma das duas foi gravada no lugar da outra, e o")
+        print("  codigo abaixo vai bater com o aplicativo de um dos dois portais")
+        print("  e ser recusado pelo outro.")
+        print("  Confira no aplicativo QUAL das entradas mostra o codigo abaixo,")
+        print("  e regrave a do outro portal com a semente que falta.")
+
     print(f"\n  Codigo agora: {codigo}  (vale por mais "
           f"{cofre.segundos_restantes_do_codigo()}s)")
     print(f"  Relogio desta maquina, em UTC: "

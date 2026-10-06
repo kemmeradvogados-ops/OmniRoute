@@ -4486,3 +4486,39 @@ def test_campo_descoberto_e_relatado_e_nao_preenchido():
     # Relata e PARA. Nenhum preenchimento nem clique no caminho.
     assert "return 1" in trecho
     assert "pode_executar" not in trecho
+
+
+# ==========================================================================
+# Codigo de uso unico nao se manda duas vezes
+#
+# O portal marca como consumido o codigo que recebeu. O mesmo numero mandado
+# de novo volta recusado com a MESMA mensagem de codigo errado, e quem repete
+# o comando dentro dos mesmos 30 segundos manda exatamente o mesmo numero. O
+# operador le "codigo invalido" sobre uma semente que esta certa, e vai
+# procurar defeito no cofre.
+# ==========================================================================
+
+def test_janela_ja_gasta_espera_a_proxima_antes_de_gerar():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("etapa 2: segundo fator")[1]
+    assert 'chave_janela = f"segundo_fator:{identidade.chave}"' in trecho
+    assert "gasta == cofre.janela_do_codigo()" in trecho
+    # Espera ANTES de gerar: gerar e so depois esperar devolveria o mesmo numero.
+    assert trecho.index("time.sleep(espera)") < trecho.index("_codigo_segundo_fator")
+
+
+def test_o_que_fica_guardado_e_a_janela_e_nunca_o_codigo():
+    """Guardar o codigo seria guardar credencial de uso unico num banco que
+    nao e cofre."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("etapa 2: segundo fator")[1]
+    assert "gravar_cache(chave_janela, cofre.janela_do_codigo()" in trecho
+    assert "gravar_cache(chave_janela, codigo" not in trecho

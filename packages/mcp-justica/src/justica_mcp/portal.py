@@ -23,6 +23,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -2516,6 +2517,20 @@ def autenticar(
                         print("  NAO foi usada: ela geraria um numero que esta tela nao")
                         print("  espera, e a tentativa seria perdida.")
                     if cofre.tem_semente(identidade) and origem != "enviado":
+                        # O segundo fator e de uso unico. O portal marca como
+                        # consumido o codigo que recebeu, e o mesmo numero
+                        # mandado de novo volta recusado com a mesma mensagem de
+                        # codigo errado. Repetir o comando dentro dos mesmos 30s
+                        # manda exatamente o mesmo numero, e o operador le
+                        # "codigo invalido" sobre uma semente que esta certa.
+                        chave_janela = f"segundo_fator:{identidade.chave}"
+                        gasta = (estado.obter_cache(chave_janela) or {}).get("valor")
+                        if gasta == cofre.janela_do_codigo():
+                            espera = cofre.segundos_restantes_do_codigo() + 1
+                            print(f"  O codigo desta janela de 30s ja foi enviado antes. "
+                                  f"Aguardando {espera}s pelo proximo, porque reenviar o")
+                            print("  mesmo seria recusado mesmo com a semente certa.")
+                            time.sleep(espera)
                         # Exige janela util: codigo gerado no fim da validade expira
                         # entre o preenchimento e o envio, e o portal registra falha
                         # por um motivo que nao e culpa da credencial.
@@ -2523,6 +2538,10 @@ def autenticar(
                         if restante < 8:
                             print(f"  Codigo atual expira em {restante}s; aguardando a proxima janela.")
                         codigo = cofre._codigo_segundo_fator(identidade, minimo_segundos=8)
+                        # A janela, nunca o codigo: guardar o codigo seria guardar
+                        # credencial de uso unico num banco que nao e cofre.
+                        estado.gravar_cache(chave_janela, cofre.janela_do_codigo(),
+                                            timedelta(minutes=5))
                         validade = f", valido por mais {cofre.segundos_restantes_do_codigo()}s"
                     else:
                         tamanho = None
