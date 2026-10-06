@@ -1675,3 +1675,144 @@ def test_o_caminho_reencontra_o_portal_a_cada_fronteira():
     # A primeira vem antes de a tela de perfil ser olhada.
     assert fonte.index("reencontrar_o_portal(pagina") < fonte.index(
         "if na_tela_de_perfil(pagina):")
+
+
+# ==========================================================================
+# "e possivel listar as opcoes que aparecem?"
+#
+# Pergunta do advogado em 06/10/2026, depois de a escolha do perfil falhar
+# duas vezes. As buscas desta familia exigem elemento VISIVEL e DENTRO da
+# janela; quando nao acham nada, as duas exigencias ficam indistinguiveis de
+# "nao existe". Sao tres respostas diferentes, com tres consertos
+# diferentes, e ate aqui saiam todas com a mesma frase.
+# ==========================================================================
+
+class _ElementoDeTela:
+    def __init__(self, texto, visivel=True, caixa=None):
+        self.texto, self._visivel = texto, visivel
+        self._caixa = caixa if caixa is not None else {
+            "x": 10, "y": 100, "width": 200, "height": 28}
+
+    def inner_text(self):
+        return self.texto
+
+    def is_visible(self):
+        return self._visivel
+
+    def bounding_box(self):
+        return self._caixa
+
+
+class _TelaCrua:
+    """Tela que devolve exatamente o que lhe for registrado, por seletor."""
+
+    viewport_size = {"width": 1280, "height": 800}
+    url = "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil"
+
+    def __init__(self, por_seletor):
+        self.por_seletor = por_seletor
+
+    def query_selector_all(self, seletor):
+        return list(self.por_seletor.get(seletor, []))
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def evaluate(self, _s):
+        return self.viewport_size
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_o_relato_diz_o_que_nao_esta_no_documento():
+    from justica_mcp.dcp import LISTA_DE_RESULTADOS, relatar_a_lista_de_perfil
+
+    linhas = relatar_a_lista_de_perfil(_TelaCrua({}))
+    texto = "\n".join(linhas)
+    assert f"{LISTA_DE_RESULTADOS}): nao esta no documento" in texto
+
+
+def test_o_relato_separa_fora_da_janela_de_oculto():
+    """As duas coisas pedem consertos diferentes e saiam com a mesma frase."""
+    from justica_mcp.dcp import ITEM_DA_LISTA, relatar_a_lista_de_perfil
+
+    abaixo_da_dobra = _ElementoDeTela(
+        "Advogado", caixa={"x": 10, "y": 2400, "width": 200, "height": 28})
+    escondido = _ElementoDeTela("Usuário Comum", visivel=False)
+
+    linhas = relatar_a_lista_de_perfil(
+        _TelaCrua({ITEM_DA_LISTA: [abaixo_da_dobra, escondido]}))
+    texto = "\n".join(linhas)
+
+    assert "'Advogado': visivel" in texto
+    assert "FORA da janela" in texto
+    assert "'Usuário Comum': oculto" in texto
+
+
+def test_o_relato_corta_texto_longo():
+    """A mesma forma de lista serve para escolher processo, e ali o texto seria
+    dado de cliente."""
+    from justica_mcp.dcp import ITEM_DA_LISTA, relatar_a_lista_de_perfil
+
+    linhas = relatar_a_lista_de_perfil(
+        _TelaCrua({ITEM_DA_LISTA: [_ElementoDeTela("x" * 80)]}))
+    assert not any("xxxx" in l for l in linhas)
+    # E ainda assim DIZ que ha um elemento ali, com o estado dele.
+    assert any("1 no documento" in l for l in linhas)
+
+
+def test_a_opcao_abaixo_da_dobra_e_achada_so_com_a_regra_afrouxada():
+    from justica_mcp.dcp import ITEM_DA_LISTA, achar_opcao_na_lista
+
+    abaixo = _ElementoDeTela(
+        "Advogado", caixa={"x": 10, "y": 2400, "width": 200, "height": 28})
+    tela = _TelaCrua({ITEM_DA_LISTA: [abaixo]})
+
+    assert achar_opcao_na_lista(tela, "Advogado") is None
+    assert achar_opcao_na_lista(tela, "Advogado", exigir_posicao=False) is abaixo
+
+
+def test_o_campo_espelho_continua_recusado_mesmo_com_a_regra_afrouxada():
+    """A regra de posicao existe por um motivo real e nao foi dispensada: o
+    campo empurrado para `left:-9999px` e OCULTO, e a visibilidade continua
+    sendo exigida nos dois modos."""
+    from justica_mcp.dcp import ITEM_DA_LISTA, achar_opcao_na_lista
+
+    espelho = _ElementoDeTela(
+        "Advogado", visivel=False,
+        caixa={"x": -9999, "y": 10, "width": 200, "height": 28})
+    tela = _TelaCrua({ITEM_DA_LISTA: [espelho]})
+
+    assert achar_opcao_na_lista(tela, "Advogado") is None
+    assert achar_opcao_na_lista(tela, "Advogado", exigir_posicao=False) is None
+
+
+def test_a_recusa_carrega_o_estado_da_tela():
+    from justica_mcp.dcp import PerfilNaoInformado, escolher_perfil
+
+    tela = _TelaPerfilSemLista()
+    try:
+        escolher_perfil(tela, _Guarda(), "Advogado", 2)
+    except PerfilNaoInformado as erro:
+        recado = str(erro)
+        assert "O QUE EXISTE NA TELA DO TIPO DE USUARIO" in recado
+        assert "nao esta no documento" in recado
+    else:
+        raise AssertionError("nao recusou")
+
+
+class _TelaPerfilSemLista(_TelaDePerfil):
+    """Caixa que existe e lista que nunca abre, em lugar nenhum."""
+
+    def __init__(self):
+        super().__init__(com_select=False, abre_no_clique=False)
+        self.caixa.type = lambda texto, delay=None: None
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.dcp import ITEM_DA_LISTA, LISTA_DE_RESULTADOS
+
+        if seletor in (ITEM_DA_LISTA, LISTA_DE_RESULTADOS, "li", "[role=option]"):
+            return []
+        return super().query_selector_all(seletor)

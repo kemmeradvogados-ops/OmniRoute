@@ -871,7 +871,8 @@ def lista_de_opcoes_aberta(pagina: Any) -> bool:
     return elemento_visivel(pagina, LISTA_DE_RESULTADOS) is not None
 
 
-def achar_opcao_na_lista(pagina: Any, texto: str) -> Optional[Any]:
+def achar_opcao_na_lista(pagina: Any, texto: str,
+                        exigir_posicao: bool = True) -> Optional[Any]:
     """A opcao da lista cujo texto e EXATAMENTE este, onde quer que ela esteja.
 
     `_por_texto_exato` procura so em elemento clicavel, porque foi escrito para
@@ -884,6 +885,12 @@ def achar_opcao_na_lista(pagina: Any, texto: str) -> Optional[Any]:
 
     Comparacao exata e sem acento. Exata porque "Advogado" e "Advogado
     (suspenso)" sao escolhas diferentes, e aceitar prefixo escolheria a errada.
+
+    `exigir_posicao` controla a conferencia de que o elemento esta DENTRO da
+    janela. Ela existe por um motivo real, o campo espelho empurrado para
+    `left:-9999px`, e nao e dispensada de leve: sem ela, lista aberta abaixo da
+    dobra tambem conta, e a diferenca entre as duas coisas e justamente o que o
+    relato da recusa precisa dizer. Quem a desliga, diz que desligou.
     """
     from .portal import _na_tela, janela_de, sem_acento
 
@@ -898,12 +905,85 @@ def achar_opcao_na_lista(pagina: Any, texto: str) -> Optional[Any]:
             try:
                 if sem_acento(elemento.inner_text() or "").strip() != alvo:
                     continue
-                if elemento.is_visible() and _na_tela(
+                if not elemento.is_visible():
+                    continue
+                if exigir_posicao and not _na_tela(
                         elemento, janela["width"], janela["height"]):
-                    return elemento
+                    continue
+                return elemento
             except Exception:
                 continue
     return None
+
+
+# Onde a lista do tipo de usuario pode estar, com o nome que o relato usa.
+PECAS_DA_LISTA = (
+    (CAIXA_DO_PERFIL, "a caixa do perfil"),
+    (LISTA_DE_RESULTADOS, "a lista"),
+    (ITEM_DA_LISTA, "os itens da lista"),
+    ("[role=option]", "as opcoes por papel"),
+)
+
+
+def _estado_do_elemento(elemento: Any, janela: dict) -> str:
+    """Como este elemento esta: visivel, onde, e dentro ou fora da janela."""
+    from .portal import _na_tela
+
+    try:
+        visivel = bool(elemento.is_visible())
+    except Exception:
+        return "ilegivel"
+    try:
+        caixa = elemento.bounding_box()
+    except Exception:
+        caixa = None
+    if caixa is None:
+        return "visivel, sem caixa" if visivel else "oculto, sem caixa"
+    onde = (f"x={int(caixa['x'])} y={int(caixa['y'])} "
+            f"l={int(caixa['width'])} a={int(caixa['height'])}")
+    dentro = _na_tela(elemento, janela["width"], janela["height"])
+    return (f"{'visivel' if visivel else 'oculto'}, {onde}, "
+            f"{'dentro' if dentro else 'FORA'} da janela")
+
+
+def relatar_a_lista_de_perfil(pagina: Any, teto: int = 12) -> list[str]:
+    """O que existe na tela do tipo de usuario, esteja a vista ou nao.
+
+    O advogado perguntou em 06/10/2026, depois de a escolha falhar duas vezes:
+    "e possivel listar as opcoes que aparecem?". E, e era o que faltava. As
+    buscas desta familia exigem elemento VISIVEL e DENTRO da janela, e quando
+    nao acham nada as duas exigencias ficam indistinguiveis de "nao existe".
+    Sao tres respostas diferentes, com tres consertos diferentes, e ate aqui
+    saiam todas com a mesma frase.
+
+    Aqui nada e exigido: conta o que esta no documento e diz de cada um como
+    esta. O teto e o corte por tamanho ficam, porque a mesma forma de lista
+    serve para escolher processo, e ali o texto seria dado de cliente.
+    """
+    from .portal import janela_de
+
+    janela = janela_de(pagina)
+    linhas = []
+    for seletor, nome in PECAS_DA_LISTA:
+        try:
+            achados = pagina.query_selector_all(seletor) or []
+        except Exception:
+            linhas.append(f"{nome} ({seletor}): ilegivel")
+            continue
+        if not achados:
+            linhas.append(f"{nome} ({seletor}): nao esta no documento")
+            continue
+        linhas.append(f"{nome} ({seletor}): {len(achados)} no documento")
+        for elemento in achados[:teto]:
+            estado = _estado_do_elemento(elemento, janela)
+            try:
+                texto = " ".join((elemento.inner_text() or "").split())
+            except Exception:
+                texto = ""
+            if len(texto) > 60:
+                texto = ""
+            linhas.append(f"  {texto!r}: {estado}" if texto else f"  {estado}")
+    return linhas
 
 
 # Quanto esperar a lista de opcoes aparecer depois do clique na caixa.
@@ -911,7 +991,8 @@ ESPERA_DA_LISTA = 8
 
 
 def esperar_opcao_na_lista(pagina: Any, texto: str,
-                           segundos: int = ESPERA_DA_LISTA) -> Optional[Any]:
+                           segundos: int = ESPERA_DA_LISTA,
+                           exigir_posicao: bool = True) -> Optional[Any]:
     """Espera a opcao aparecer depois de a caixa ser aberta.
 
     Olhar meio segundo depois do clique nao basta: a lista e montada por
@@ -923,7 +1004,7 @@ def esperar_opcao_na_lista(pagina: Any, texto: str,
 
     limite = _tempo.monotonic() + max(1, segundos)
     while True:
-        achada = achar_opcao_na_lista(pagina, texto)
+        achada = achar_opcao_na_lista(pagina, texto, exigir_posicao)
         if achada is not None:
             return achada
         if _tempo.monotonic() >= limite:
@@ -1069,6 +1150,14 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                 f"{ROTULO_DA_LISTA_DE_PERFIL!r}. Nada foi escolhido.")
         guarda.pode_executar(Acao.CLICAR, SELETOR_DA_CAIXA_DE_PERFIL,
                              url=pagina.url)
+        # A caixa pode estar abaixo da dobra: o clique do Playwright rola ate
+        # ela sozinho, mas a lista que ela abre fica onde a caixa estiver, e e
+        # a posicao da LISTA que decide se as buscas a enxergam. Rolar antes
+        # deixa as duas na janela, em vez de so a caixa.
+        try:
+            caixa.scroll_into_view_if_needed()
+        except Exception:
+            pass
         caixa.click()
         opcao = esperar_opcao_na_lista(pagina, perfil.strip(),
                                        min(segundos, ESPERA_DA_LISTA))
@@ -1091,6 +1180,21 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                                            min(segundos, ESPERA_DA_LISTA))
 
         if opcao is None:
+            # Ultima tentativa antes de desistir: a MESMA busca, sem exigir que
+            # o elemento esteja dentro da janela. Lista que abre abaixo da
+            # dobra e indistinguivel de lista que nao abriu para quem exige
+            # posicao, e as duas pedem consertos diferentes. Quando e isto, o
+            # comando segue E DIZ que seguiu assim: achado que depende de uma
+            # regra afrouxada nao pode passar por achado comum.
+            opcao = achar_opcao_na_lista(pagina, perfil.strip(),
+                                         exigir_posicao=False)
+            if opcao is not None:
+                print(f"    [FORA DA JANELA] A opcao {perfil.strip()!r} estava "
+                      "na lista, porem fora da area visivel da janela.")
+                print("    O comando seguiu. Avise-me: a regra de posicao e que "
+                      "precisa ser corrigida, e nao a escolha do perfil.")
+
+        if opcao is None:
             a_vista = opcoes_a_vista(pagina)
             abriu = lista_de_opcoes_aberta(pagina)
             recado = (f"A opcao {perfil!r} nao apareceu na lista de tipos de "
@@ -1102,10 +1206,16 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                 recado += (f" A lista ({LISTA_DE_RESULTADOS}) ESTA aberta e "
                            "vazia: o portal nao ofereceu nenhum tipo de usuario.")
             else:
-                recado += (f" A lista ({LISTA_DE_RESULTADOS}) nao chegou a abrir: "
-                           "o problema esta no clique ou na espera, e nao no "
-                           "nome do perfil.")
-            raise PerfilNaoInformado(recado + " Nada foi escolhido.")
+                recado += (f" A lista ({LISTA_DE_RESULTADOS}) nao chegou a abrir.")
+            # O que existe no documento, visivel ou nao, dentro da janela ou
+            # nao. Sem isto, "nao achei" cobre tres defeitos diferentes e nao
+            # distingue nenhum, e cada rodada as cegas custa uma tentativa de
+            # login ao advogado.
+            estado = relatar_a_lista_de_perfil(pagina)
+            if estado:
+                recado += ("\n    O QUE EXISTE NA TELA DO TIPO DE USUARIO:\n    "
+                           + "\n    ".join(estado))
+            raise PerfilNaoInformado(recado + "\n    Nada foi escolhido.")
         guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
         opcao.click()
 
