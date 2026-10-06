@@ -669,6 +669,139 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
 
 
 
+def _aba_em_foco(navegador, inicial):
+    """A aba que o operador esta vendo, que nem sempre e a que o programa abriu.
+
+    O IdServerJus do Tribunal de Justica do Rio de Janeiro abre o sistema
+    escolhido em JANELA NOVA. Ler a aba inicial depois disso descreveria a tela
+    de selecao, que o operador ja deixou para tras, e o relato diria que nada
+    mudou enquanto ele olha para outra coisa.
+
+    Prefere a ultima aba aberta e viva; se nao houver nenhuma, volta para a
+    inicial, porque relatar a tela errada e melhor que nao relatar nada e
+    sumir com um erro de atributo.
+    """
+    try:
+        abas = [a for a in (getattr(navegador, "pages", None) or []) if not a.is_closed()]
+    except Exception:
+        abas = []
+    return abas[-1] if abas else inicial
+
+
+def acompanhar(url: str, *, segundos: int = 30, teto: int = 20) -> int:
+    """O OPERADOR navega e o programa so le a tela onde ele parar.
+
+    Nasceu de uma pergunta do advogado em 06/10/2026: "eu posso mostrar o
+    caminho clicando?". Pode, e e mais rapido que qualquer outra coisa. Ate
+    aqui, descobrir um caminho de portal custava uma rodada inteira por tela:
+    eu pedia um relato, ele colava, eu escrevia o passo seguinte as cegas, e
+    quando o passo errava o preco as vezes era uma tentativa de login.
+
+    A inversao e o ponto. Quem conhece o portal e quem clica; quem precisa dos
+    identificadores e quem le. O programa nao navega, nao preenche e nao
+    clica, e a trava fica em modo ensaio para que isso nao dependa da minha
+    boa memoria: qualquer acao do programa seria barrada por ela.
+
+    O que SAI no relato: endereco, titulo, campos, botoes, caminhos sem texto
+    e sem parametro, e a estrutura das tabelas. O que NAO sai: texto de celula.
+    Mesmo assim a escolha de qual tela registrar e do advogado, tela por tela,
+    porque e ele quem sabe o que ha em cada uma.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(INSTRUCAO_INSTALACAO, file=sys.stderr)
+        return 2
+
+    if not sys.stdin or not sys.stdin.isatty():
+        print("  [PARADO] Este comando precisa de terminal: quem conduz e voce.",
+              file=sys.stderr)
+        return 1
+
+    guarda = GuardaNavegacao(
+        modo=Modo.ENSAIO,
+        permissoes=[permissao_de_origem(url, "acompanhamento conduzido pelo operador")],
+    )
+
+    print("=" * LARGURA)
+    print("ACOMPANHAR O CAMINHO".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Endereco de partida: {url}")
+    print("Quem navega e VOCE. O programa nao clica, nao preenche e nao navega.")
+    print("A sessao ja aberta neste perfil continua valendo, entao nenhuma")
+    print("tentativa de login e gasta aqui.\n")
+    print("  Como funciona:")
+    print("    1. a janela abre no endereco acima;")
+    print("    2. voce clica ate a tela que quer me mostrar;")
+    print("    3. volta aqui e aperta Enter: eu leio e descrevo aquela tela;")
+    print("    4. repete quantas vezes quiser, e escreve 'fim' para encerrar.\n")
+    print("  O relato traz endereco, titulo, campos, botoes, caminhos sem texto")
+    print("  nem parametro, e a forma das tabelas. NAO traz texto de celula.")
+    print("  Ainda assim, quem decide qual tela registrar e voce.\n")
+
+    executavel = os.environ.get("JUSTICA_CHROMIUM") or None
+    registradas = 0
+    with sync_playwright() as p:
+        navegador, pagina = abrir_navegador(p, False, executavel)
+        try:
+            guarda.avaliar(Acao.NAVEGAR, url).exigir()
+            _ir_para(pagina, url, segundos)
+            _assentar(pagina, segundos)
+
+            while registradas < teto:
+                _esvaziar_teclado()
+                try:
+                    resposta = input(
+                        f"  Enter para registrar a tela ({registradas}/{teto} ja "
+                        "registradas), ou 'fim': ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Encerrado por voce.")
+                    break
+                if resposta in ("fim", "sair", "parar", "f"):
+                    break
+
+                alvo = _aba_em_foco(navegador, pagina)
+                try:
+                    _assentar(alvo, segundos)
+                except Exception:
+                    pass
+                registradas += 1
+                print()
+                try:
+                    _relatar_tela(alvo, f"TELA {registradas}")
+                    _relatar_estrutura_de_dados(alvo)
+                except Exception as exc:
+                    # Janela fechada no meio da leitura e o caso comum, e nao
+                    # pode derrubar o que ja foi registrado.
+                    print(f"    Nao consegui ler esta tela: {type(exc).__name__}.")
+                    print("    Se a janela fechou, abra de novo e aperte Enter.")
+                print()
+            if registradas >= teto:
+                print(f"  Teto de {teto} telas atingido.")
+        finally:
+            try:
+                for _aba in list(getattr(navegador, "pages", []) or []):
+                    try:
+                        _aba.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                navegador.close()
+            except Exception:
+                pass
+
+    print("\n" + "=" * LARGURA)
+    print(f"  {registradas} tela(s) registrada(s).")
+    print("  O programa nao clicou, nao preencheu e nao navegou: tudo o que")
+    print("  aconteceu na janela foi voce quem fez.")
+    print("  RELATO DA TRAVA:")
+    for linha in guarda.relato():
+        print(f"    {linha}")
+    return 0
+
+
 def ensaiar_login(
     url: str,
     tribunal: str,
@@ -5270,6 +5403,18 @@ def main(argv: list[str] | None = None) -> int:
                    help="nao mostra a janela do navegador (o padrao e mostrar)")
     r.add_argument("--segundos", type=int, default=30, help="tempo limite de carregamento")
 
+    ac = sub.add_parser(
+        "acompanhar",
+        help="VOCE navega e o programa le a tela onde voce parar",
+    )
+    ac.add_argument("--url", default=None,
+                    help="endereco de partida; sem isto, o do portal no .env")
+    ac.add_argument("--tribunal", default=None, help="por exemplo TJRJ")
+    ac.add_argument("--sistema", default=None, help="por exemplo dcp")
+    ac.add_argument("--segundos", type=int, default=30)
+    ac.add_argument("--teto", type=int, default=20,
+                    help="quantas telas, no maximo, podem ser registradas")
+
     cpu = sub.add_parser(
         "consulta-publica",
         help="consulta o processo na tela publica do portal, sem login",
@@ -5420,6 +5565,14 @@ def main(argv: list[str] | None = None) -> int:
             completar_seletores(args)
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
+        if args.comando == "acompanhar":
+            if not args.url:
+                if not (args.tribunal and args.sistema):
+                    print("Informe --url, ou --tribunal e --sistema para usar o "
+                          "endereco do .env.", file=sys.stderr)
+                    return 1
+                _do_ambiente(args)
+            return acompanhar(args.url, segundos=args.segundos, teto=args.teto)
         if args.comando == "consulta-publica":
             if not args.processo:
                 print("Nenhum processo informado. Passe --processo, ou defina "

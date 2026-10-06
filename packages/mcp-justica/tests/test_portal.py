@@ -5065,3 +5065,97 @@ def test_so_select_ganha_a_linha_de_opcoes(monkeypatch):
     fonte = inspect.getsource(portal._coletar)
     assert 'if marcador == "select":' in fonte
     assert 'extras["opcoes"] = resumo' in fonte
+
+
+# ==========================================================================
+# O operador mostra o caminho clicando
+#
+# Pergunta do advogado em 06/10/2026: "eu posso mostrar o caminho clicando?".
+# Ate aqui, descobrir um caminho de portal custava uma rodada inteira por
+# tela: eu pedia um relato, ele colava, eu escrevia o passo seguinte as cegas,
+# e quando o passo errava o preco as vezes era uma tentativa de login.
+# ==========================================================================
+
+class _AbaDeAcompanhamento:
+    def __init__(self, fechada=False):
+        self.fechada = fechada
+
+    def is_closed(self):
+        return self.fechada
+
+
+class _NavegadorComAbas:
+    def __init__(self, abas):
+        self.pages = abas
+
+
+def test_a_tela_lida_e_a_ultima_aba_aberta():
+    """O IdServerJus abre o sistema escolhido em JANELA NOVA. Ler a aba
+    inicial descreveria a tela de selecao, que o operador ja deixou para tras."""
+    from justica_mcp.portal import _aba_em_foco
+
+    primeira, nova = _AbaDeAcompanhamento(), _AbaDeAcompanhamento()
+    assert _aba_em_foco(_NavegadorComAbas([primeira, nova]), primeira) is nova
+
+
+def test_aba_fechada_nao_conta():
+    from justica_mcp.portal import _aba_em_foco
+
+    viva, morta = _AbaDeAcompanhamento(), _AbaDeAcompanhamento(fechada=True)
+    assert _aba_em_foco(_NavegadorComAbas([viva, morta]), morta) is viva
+
+
+def test_sem_aba_viva_volta_para_a_inicial():
+    """Relatar a tela errada e melhor que sumir com erro de atributo."""
+    from justica_mcp.portal import _aba_em_foco
+
+    inicial = _AbaDeAcompanhamento()
+    assert _aba_em_foco(_NavegadorComAbas([]), inicial) is inicial
+    assert _aba_em_foco(object(), inicial) is inicial
+
+
+def test_o_programa_nao_age_no_acompanhamento():
+    """A trava fica em modo ensaio para que isso nao dependa de memoria:
+    qualquer acao do programa seria barrada por ela."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    assert "modo=Modo.ENSAIO" in fonte
+    for proibido in (".click()", ".fill(", ".type(", "preencher_conferindo"):
+        assert proibido not in fonte, proibido
+
+
+def test_o_acompanhamento_exige_terminal():
+    """Quem conduz e a pessoa: sem terminal nao ha a quem perguntar."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    assert "isatty()" in fonte
+    assert fonte.index("isatty()") < fonte.index("sync_playwright()")
+
+
+def test_o_acompanhamento_tem_teto_de_telas():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    assert "registradas < teto" in fonte
+
+
+def test_o_acompanhamento_promete_o_que_o_relato_cumpre():
+    """Nao pode prometer menos do que imprime. `_relatar_tela` traz campos e
+    botoes; `_relatar_estrutura_de_dados` traz tabela e identificador, e os
+    dois ja omitem texto de celula."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    assert "_relatar_tela(" in fonte and "_relatar_estrutura_de_dados(" in fonte
+    assert "NAO traz texto de celula" in fonte
+    assert "quem decide qual tela registrar e voce" in fonte
