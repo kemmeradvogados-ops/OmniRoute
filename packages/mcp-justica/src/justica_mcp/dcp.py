@@ -276,9 +276,15 @@ def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> No
 
     menu = esperar_elemento(pagina, MENU_DE_CONSULTAS, min(segundos, 20))
     if menu is None:
+        # Conferido no acompanhamento de 06/10/2026: este menu so existe no
+        # painel, DEPOIS de o tipo de usuario ser escolhido. Na tela que pede o
+        # perfil ele nao esta, e procurar mais nao o faria aparecer. Dizer isso
+        # aqui poupa a rodada inteira que custaria descobri-lo de novo.
         raise ConsultaIndisponivel(
             f"O menu {MENU_DE_CONSULTAS} nao esta na tela ({pagina.url[:80]}). "
-            "Nada foi clicado.")
+            "Ele so existe no painel, depois de o TIPO DE USUARIO ser escolhido: "
+            f"se o endereco ainda for {TELA_DE_PERFIL}, a escolha do perfil e "
+            "que nao chegou ao fim. Nada foi clicado.")
     guarda.pode_executar(Acao.CLICAR, MENU_DE_CONSULTAS, url=pagina.url)
     menu.click()
 
@@ -541,6 +547,57 @@ def achar_aba_do_portal(pagina: Any, segundos: int = 20) -> Optional[Any]:
             _tempo.sleep(0.4)
 
 
+def abas_do_navegador(pagina: Any, teto: int = 10) -> list[str]:
+    """Endereco de cada aba viva, sem parametros, para a recusa dizer onde esta.
+
+    Sem parametros, pela regra de sempre: e neles que viajam identificador de
+    cliente e numero de processo.
+    """
+    from .portal import enderecos_das_abas, pagina_de
+
+    try:
+        contexto = pagina_de(pagina).context
+        abas = [a for a in (contexto.pages or []) if not a.is_closed()]
+    except Exception:
+        return []
+    return enderecos_das_abas(abas, teto)
+
+
+def conferir_janela_do_portal(candidata: Any, pagina: Any, segundos: int = 20) -> Any:
+    """Devolve a janela que E o Portal de Servicos, ou recusa dizendo onde esta.
+
+    Ate 06/10/2026 o caminho terminava em `return pagina` quando a janela nova
+    nao vinha: devolvia a aba de ORIGEM, que o acompanhamento conduzido pelo
+    advogado mostrou voltar para `www.tjrj.jus.br`. O comando entao procurava o
+    menu do portal na pagina publica do tribunal e parava anunciando que o menu
+    nao existe, que e verdade e nao ajuda em nada.
+
+    Devolver a aba errada e pior que parar: a consulta seguiria em cima de uma
+    tela que nao e a do processo. Entao, quando o portal nao esta em aba
+    nenhuma, isto recusa e diz quais abas existem.
+    """
+    for alvo in (candidata, pagina):
+        try:
+            if alvo is not None and MARCA_DO_PORTAL in (alvo.url or ""):
+                return alvo
+        except Exception:
+            continue
+
+    achada = achar_aba_do_portal(pagina, segundos)
+    if achada is not None:
+        return achada
+
+    abertas = abas_do_navegador(pagina)
+    raise ConsultaIndisponivel(
+        f"O Portal de Servicos ({MARCA_DO_PORTAL}) nao esta em nenhuma aba "
+        "aberta. Ele abre em janela propria, e a aba de origem volta para a "
+        "pagina publica do tribunal: seguir pela aba de origem procuraria o "
+        "processo numa tela que nao e a do portal. "
+        + ("Abas abertas, sem parametros: " + "; ".join(abertas) + ". "
+           if abertas else "Nenhuma aba pode ser lida. ")
+        + "Nada foi consultado.")
+
+
 def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -> Any:
     """Da tela de selecao de sistemas ate o Portal de Servicos aberto.
 
@@ -627,18 +684,17 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
         janela = nova.value
     except Exception:
         # Sem janela nova pelo evento, procura entre as abas: o portal pode ter
-        # aberto numa janela que o evento nao entregou a tempo.
-        tardia = achar_aba_do_portal(pagina, min(segundos, 10))
-        if tardia is not None:
-            return tardia
-        # Pode ter aberto na propria aba. Quem julga e a conferencia do
-        # formulario da consulta, que diz o que achou.
-        return pagina
+        # aberto numa janela que o evento nao entregou a tempo, ou na propria
+        # aba. A conferencia recusa se nao estiver em nenhuma delas.
+        return conferir_janela_do_portal(None, pagina, min(segundos, 10))
     try:
         janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
     except Exception:
         pass
-    return janela
+    # `expect_page` entrega QUALQUER janela nova, e nao necessariamente o
+    # portal. Conferir o endereco custa nada e evita seguir numa janela de
+    # aviso ou de propaganda como se fosse a do processo.
+    return conferir_janela_do_portal(janela, pagina, min(segundos, 10))
 
 
 # ---------------------------------------------------------------------------
@@ -706,10 +762,22 @@ def perfis_oferecidos(pagina: Any) -> list[str]:
     return [" ".join((t or "").split()) for t in (textos or []) if (t or "").strip()]
 
 
+# Identificadores reais da tela do tipo de usuario, lidos no acompanhamento
+# conduzido pelo advogado em 06/10/2026. Ate aqui eu so alcancava esta lista
+# por texto, o que e adivinhacao com outro nome: o texto prova que ACHEI algo
+# com aquele nome, nunca que a lista chegou a abrir. Com o identificador da
+# lista eu separo as duas perguntas, e a recusa passa a dizer qual das duas
+# falhou em vez de deixar o operador tentar de novo as cegas.
+CAIXA_DO_PERFIL = "app-dropdown#dropdownPerfil"
+LISTA_DE_RESULTADOS = "ul#resultados"
+ITEM_DA_LISTA = "li[id^=itemAutocomplete]"
+
+
 # Onde uma opcao de lista pode morar, da forma mais especifica para a mais
 # frouxa. Lista montada por script nem sempre usa `option`: usa `li`, `div` com
 # papel de opcao, ou `div` puro e sem nada que a identifique alem do texto.
 LUGARES_DE_OPCAO = (
+    ITEM_DA_LISTA,
     "[role=option]",
     "li",
     "option",
@@ -717,6 +785,19 @@ LUGARES_DE_OPCAO = (
     "span",
     "div",
 )
+
+
+def lista_de_opcoes_aberta(pagina: Any) -> bool:
+    """Se a lista do tipo de usuario chegou a ABRIR, independente do que tem.
+
+    Separa as duas recusas que ate aqui saiam com a mesma frase: a lista nao
+    abriu, e a lista abriu sem a opcao pedida. A primeira e defeito meu, de
+    clique ou de espera; a segunda e informacao sobre o portal, e o operador
+    so pode agir sobre a segunda.
+    """
+    from .portal import elemento_visivel
+
+    return elemento_visivel(pagina, LISTA_DE_RESULTADOS) is not None
 
 
 def achar_opcao_na_lista(pagina: Any, texto: str) -> Optional[Any]:
@@ -790,7 +871,7 @@ def opcoes_a_vista(pagina: Any, teto: int = 12) -> list[str]:
     escolher processo, e ali o texto seria dado de cliente.
     """
     vistos, saida = set(), []
-    for lugar in ("[role=option]", "li", "option"):
+    for lugar in (ITEM_DA_LISTA, "[role=option]", "li", "option"):
         try:
             achados = pagina.query_selector_all(lugar)
         except Exception:
@@ -940,14 +1021,19 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
 
         if opcao is None:
             a_vista = opcoes_a_vista(pagina)
+            abriu = lista_de_opcoes_aberta(pagina)
             recado = (f"A opcao {perfil!r} nao apareceu na lista de tipos de "
                       "usuario, nem depois de a caixa ser clicada e o nome ser "
                       "digitado nela.")
             if a_vista:
                 recado += " A lista mostra: " + "; ".join(a_vista) + "."
+            elif abriu:
+                recado += (f" A lista ({LISTA_DE_RESULTADOS}) ESTA aberta e "
+                           "vazia: o portal nao ofereceu nenhum tipo de usuario.")
             else:
-                recado += (" Nenhuma opcao visivel na tela: a lista nao chegou a "
-                           "abrir.")
+                recado += (f" A lista ({LISTA_DE_RESULTADOS}) nao chegou a abrir: "
+                           "o problema esta no clique ou na espera, e nao no "
+                           "nome do perfil.")
             raise PerfilNaoInformado(recado + " Nada foi escolhido.")
         guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
         opcao.click()

@@ -707,10 +707,24 @@ def test_a_abertura_pedida_e_em_aba_nunca_em_janela_destacada():
     assert ABRIR_EM_JANELA not in tela.cliques
 
 
-def test_sem_aba_nova_devolve_a_propria_tela():
-    """Pode ter aberto na propria aba. Quem julga e a conferencia do formulario
-    da consulta, que diz o que achou."""
+def test_sem_aba_nova_e_sem_portal_o_comando_recusa():
+    """Este teste guardava o contrario ate 06/10/2026.
+
+    Ele exigia `is tela`: sem janela nova, devolver a propria aba de selecao e
+    deixar a conferencia do formulario julgar. O acompanhamento conduzido pelo
+    advogado mostrou que a aba de origem volta para `www.tjrj.jus.br`, e a
+    consulta seguia procurando o processo na pagina publica do tribunal. Parar
+    aqui, dizendo onde o programa esta, e melhor que seguir na tela errada.
+    """
     tela, guarda = _TelaDeSelecao(abre_aba=False), _Guarda()
+    with pytest.raises(ConsultaIndisponivel, match="janela propria"):
+        entrar_no_portal_de_servicos(tela, guarda, 5)
+
+
+def test_sem_aba_nova_a_propria_tela_serve_quando_ELA_e_o_portal():
+    """O portal as vezes abre na propria aba, e ai nao ha nada a recusar."""
+    tela, guarda = _TelaDeSelecao(abre_aba=False), _Guarda()
+    tela.url = "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil"
     assert entrar_no_portal_de_servicos(tela, guarda, 5) is tela
 
 
@@ -831,6 +845,16 @@ class _ItemDaLista:
             self.tela.caixa.valor = self.texto
 
 
+class _ListaAberta:
+    """O `ul#resultados` da tela de perfil, presente so quando a lista abriu."""
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 10, "y": 120, "width": 240, "height": 90}
+
+
 class _TelaDePerfil:
     viewport_size = {"width": 1280, "height": 800}
 
@@ -851,13 +875,20 @@ class _TelaDePerfil:
                        _BotaoDoQuadro(self, "Cancelar")]
 
     def query_selector_all(self, seletor):
+        from justica_mcp.dcp import ITEM_DA_LISTA, LISTA_DE_RESULTADOS
+
         if seletor.startswith("select"):
             return [self.lista] if self.lista else []
         if seletor.startswith("[") and "placeholder" in seletor:
             return [self.caixa] if self.caixa else []
         if seletor.startswith("["):
             return []
-        if seletor == "li":
+        # O `ul` da lista, pelo identificador real lido na tela em 06/10/2026.
+        # So existe quando a lista esta aberta: e ele que separa "a lista nao
+        # abriu" de "a lista abriu e nao tem essa opcao".
+        if seletor == LISTA_DE_RESULTADOS:
+            return [_ListaAberta()] if self.aberta else []
+        if seletor in (ITEM_DA_LISTA, "li"):
             return ([_ItemDaLista(self, t) for t in self.textos]
                     if self.aberta else [])
         # `option` e lugar de opcao, nao de botao: devolver os botoes aqui
@@ -1051,7 +1082,14 @@ class _ListaLenta(_TelaDePerfil):
         self.aberta = True
 
     def query_selector_all(self, seletor):
-        if seletor == "li":
+        from justica_mcp.dcp import ITEM_DA_LISTA
+
+        # Os DOIS lugares, e nao so `li`: desde que o identificador real
+        # `li[id^=itemAutocomplete]` passou a ser a primeira tentativa, atrasar
+        # apenas `li` deixava a opcao aparecer de imediato pelo outro caminho,
+        # e a lista "lenta" deixava de ser lenta sem que o nome do teste
+        # mudasse.
+        if seletor in (ITEM_DA_LISTA, "li"):
             self.olhadas += 1
             if self.olhadas < self.ate_abrir:
                 return []
@@ -1095,8 +1133,29 @@ def test_a_recusa_diz_o_que_a_lista_mostrou():
     assert "digitado nela" in recado
 
 
-def test_a_recusa_distingue_lista_vazia_de_lista_sem_a_opcao():
+def test_a_recusa_diz_quando_a_lista_abriu_e_esta_vazia():
+    """Lista aberta e sem opcao nenhuma e informacao sobre o PORTAL.
+
+    Ate 06/10/2026 este caso saia com a mesma frase de "a lista nao abriu",
+    porque a unica prova era haver ou nao texto de opcao. Com `ul#resultados`,
+    lido na tela naquele dia, as duas perguntas se separam.
+    """
     tela = _TelaDePerfil(com_select=False, abre_no_clique=False, textos=())
+    with pytest.raises(PerfilNaoInformado, match="ESTA aberta e vazia"):
+        escolher_perfil(tela, _Guarda(), "Advogado", 2)
+
+
+def test_a_recusa_diz_quando_a_lista_nao_chegou_a_abrir():
+    """Lista que nao abre e defeito MEU, de clique ou de espera.
+
+    O operador nao pode fazer nada a respeito, e precisa saber disso: a frase
+    antiga o mandava conferir o nome do perfil, que estava certo o tempo todo.
+    """
+    tela = _TelaDePerfil(com_select=False, abre_no_clique=False, textos=())
+
+    # Nem o clique nem o que for digitado abrem esta lista.
+    tela.caixa.type = lambda texto, delay=None: None
+
     with pytest.raises(PerfilNaoInformado, match="nao chegou a abrir"):
         escolher_perfil(tela, _Guarda(), "Advogado", 2)
 
@@ -1259,3 +1318,221 @@ def test_a_janela_do_portal_e_a_mais_RECENTE():
     nova = _AbaNova()
     tela = _TelaDeSelecao(outras_abas=[origem, nova])
     assert achar_aba_do_portal(tela, 2) is nova
+
+
+# ==========================================================================
+# A janela do portal, conferida em vez de suposta
+#
+# O acompanhamento conduzido pelo advogado em 06/10/2026 provou tres coisas
+# que ate ali eram deducao: o portal abre em JANELA PROPRIA, a aba de origem
+# volta para `www.tjrj.jus.br`, e o menu `#CONSULTAS` so existe no painel,
+# depois de o tipo de usuario ser escolhido. O caminho terminava em
+# `return pagina`, devolvia a aba de origem, e a consulta seguia em cima da
+# pagina publica do tribunal.
+# ==========================================================================
+
+class _AbaComEndereco:
+    def __init__(self, url, contexto=None):
+        self.url = url
+        self.context = contexto
+
+    def is_closed(self):
+        return False
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+class _ContextoDeAbas:
+    def __init__(self, abas):
+        self.pages = abas
+
+
+def test_a_janela_que_e_o_portal_e_devolvida():
+    from justica_mcp.dcp import MARCA_DO_PORTAL, conferir_janela_do_portal
+
+    janela = _AbaComEndereco(f"https://www3.tjrj.jus.br{MARCA_DO_PORTAL}/#/dashboard")
+    origem = _AbaComEndereco("https://www.tjrj.jus.br/")
+    assert conferir_janela_do_portal(janela, origem) is janela
+
+
+def test_a_aba_de_origem_serve_quando_o_portal_abriu_nela_mesma():
+    from justica_mcp.dcp import MARCA_DO_PORTAL, conferir_janela_do_portal
+
+    origem = _AbaComEndereco(f"https://www3.tjrj.jus.br{MARCA_DO_PORTAL}/#/x")
+    assert conferir_janela_do_portal(None, origem) is origem
+
+
+def test_a_janela_que_nao_e_o_portal_cede_lugar_a_aba_certa():
+    """`expect_page` entrega qualquer janela nova, nao necessariamente o portal."""
+    from justica_mcp.dcp import MARCA_DO_PORTAL, conferir_janela_do_portal
+
+    certa = _AbaComEndereco(f"https://www3.tjrj.jus.br{MARCA_DO_PORTAL}/#/dashboard")
+    propaganda = _AbaComEndereco("https://aviso.example/promo")
+    origem = _AbaComEndereco("https://www.tjrj.jus.br/")
+    contexto = _ContextoDeAbas([origem, certa, propaganda])
+    for aba in (certa, propaganda, origem):
+        aba.context = contexto
+
+    assert conferir_janela_do_portal(propaganda, origem) is certa
+
+
+def test_sem_portal_em_aba_nenhuma_o_comando_recusa_em_vez_de_seguir():
+    """Devolver a aba errada e pior que parar: a consulta leria outra tela."""
+    from justica_mcp.dcp import ConsultaIndisponivel, conferir_janela_do_portal
+
+    origem = _AbaComEndereco("https://www.tjrj.jus.br/")
+    origem.context = _ContextoDeAbas([origem])
+
+    try:
+        conferir_janela_do_portal(None, origem, segundos=1)
+    except ConsultaIndisponivel as erro:
+        recado = str(erro)
+        assert "janela propria" in recado
+        assert "Nada foi consultado." in recado
+        # A recusa diz ONDE o programa esta, senao o operador tenta de novo as cegas.
+        assert "https://www.tjrj.jus.br/" in recado
+    else:
+        raise AssertionError("seguiu com a aba de origem")
+
+
+def test_a_recusa_nao_leva_parametro_de_aba():
+    """E no parametro que viajam identificador de cliente e numero de processo."""
+    from justica_mcp.dcp import ConsultaIndisponivel, conferir_janela_do_portal
+
+    origem = _AbaComEndereco("https://www.tjrj.jus.br/busca?processo=0045025&parte=Fulano")
+    origem.context = _ContextoDeAbas([origem])
+
+    try:
+        conferir_janela_do_portal(None, origem, segundos=1)
+    except ConsultaIndisponivel as erro:
+        assert "0045025" not in str(erro)
+        assert "Fulano" not in str(erro)
+    else:
+        raise AssertionError("seguiu com a aba de origem")
+
+
+def test_o_caminho_do_portal_nao_devolve_mais_a_aba_de_origem_as_cegas():
+    """O `return pagina` cego foi o que entregou a pagina publica a consulta."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.entrar_no_portal_de_servicos)
+    # Os dois finais passam pela conferencia.
+    assert fonte.count("conferir_janela_do_portal(") == 2
+    # Sobram dois `return pagina`, e CADA UM deles vem logo depois de conferir
+    # o endereco: devolvem a aba de origem porque O PORTAL ESTA NELA. O que foi
+    # removido era o do fim, que a devolvia sem olhar endereco nenhum.
+    linhas = fonte.splitlines()
+    devolucoes = [i for i, l in enumerate(linhas) if l.strip() == "return pagina"]
+    assert devolucoes, "o caminho deixou de poder devolver a propria aba"
+    for i in devolucoes:
+        anteriores = "\n".join(linhas[max(0, i - 3):i])
+        assert "MARCA_DO_PORTAL in (pagina.url" in anteriores, (
+            f"a linha {i + 1} devolve a aba de origem sem conferir o endereco")
+
+
+# ==========================================================================
+# O menu da consulta so existe DEPOIS do tipo de usuario
+# ==========================================================================
+
+def test_a_recusa_do_menu_diz_que_ele_so_existe_depois_do_perfil():
+    from justica_mcp.dcp import (ConsultaIndisponivel, MENU_DE_CONSULTAS,
+                                 TELA_DE_PERFIL, abrir_consulta_pelo_menu)
+
+    class _SemMenu:
+        url = "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil"
+
+        def query_selector(self, _s):
+            return None
+
+        def query_selector_all(self, _s):
+            return []
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    class _Guarda:
+        permissoes = []
+
+        def pode_executar(self, *a, **k):
+            pass
+
+    try:
+        abrir_consulta_pelo_menu(_SemMenu(), _Guarda(), segundos=1)
+    except ConsultaIndisponivel as erro:
+        recado = str(erro)
+        assert MENU_DE_CONSULTAS in recado
+        assert TELA_DE_PERFIL in recado
+        assert "TIPO DE USUARIO" in recado
+    else:
+        raise AssertionError("nao recusou")
+
+
+# ==========================================================================
+# Os identificadores reais da lista de perfil
+# ==========================================================================
+
+def test_a_opcao_do_perfil_e_achada_pelo_identificador_real():
+    """`li#itemAutocomplete0`, lido na tela em 06/10/2026."""
+    from justica_mcp.dcp import ITEM_DA_LISTA, achar_opcao_na_lista
+
+    class _Item:
+        def __init__(self, texto):
+            self.texto = texto
+
+        def inner_text(self):
+            return self.texto
+
+        def is_visible(self):
+            return True
+
+        def bounding_box(self):
+            return {"x": 10, "y": 10, "width": 180, "height": 30}
+
+    comum, advogado = _Item("Usuário Comum"), _Item("Advogado")
+
+    class _Tela:
+        url = "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil"
+        pedidos = []
+
+        def query_selector_all(self, seletor):
+            _Tela.pedidos.append(seletor)
+            return [comum, advogado] if seletor == ITEM_DA_LISTA else []
+
+        def evaluate(self, _s):
+            return {"width": 1280, "height": 800}
+
+    assert achar_opcao_na_lista(_Tela(), "Advogado") is advogado
+    # O identificador real e a PRIMEIRA tentativa, e nao a ultima.
+    assert _Tela.pedidos[0] == ITEM_DA_LISTA
+
+
+def test_a_recusa_separa_lista_que_nao_abriu_de_lista_sem_a_opcao():
+    """Sao duas falhas diferentes: uma e minha, a outra e do portal."""
+    from justica_mcp.dcp import LISTA_DE_RESULTADOS, lista_de_opcoes_aberta
+
+    class _Lista:
+        def is_visible(self):
+            return True
+
+        def bounding_box(self):
+            return {"x": 10, "y": 10, "width": 200, "height": 80}
+
+    class _Aberta:
+        def query_selector_all(self, seletor):
+            return [_Lista()] if seletor == LISTA_DE_RESULTADOS else []
+
+        def evaluate(self, _s):
+            return {"width": 1280, "height": 800}
+
+    class _Fechada:
+        def query_selector_all(self, _s):
+            return []
+
+        def evaluate(self, _s):
+            return {"width": 1280, "height": 800}
+
+    assert lista_de_opcoes_aberta(_Aberta()) is True
+    assert lista_de_opcoes_aberta(_Fechada()) is False

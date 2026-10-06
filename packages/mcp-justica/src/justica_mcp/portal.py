@@ -707,29 +707,49 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
 
 
 
-def abas_abertas(navegador, teto: int = 10) -> list[str]:
-    """Endereco de cada aba viva, sem parametros, para o relato.
+def paginas_vivas(navegador) -> list:
+    """UMA fotografia das abas abertas, para quem precisa listar E escolher.
 
-    Portal que abre janela propria e depois devolve a aba de origem para outro
-    lugar faz o programa e o operador olharem telas diferentes sem perceber.
-    Listar as abas mostra isso de uma vez, em vez de uma deducao por rodada.
+    Existe porque listar e escolher em duas leituras separadas de `pages`
+    produziu, em 06/10/2026, um relato que anunciava "Lendo a aba 2" e
+    descrevia a aba 1: entre as duas leituras a janela do portal abriu, e a
+    lista passou a ter uma aba que a escolha ja nao tinha. Quem anuncia e quem
+    le precisam olhar a MESMA lista.
+    """
+    try:
+        return [a for a in (getattr(navegador, "pages", None) or [])
+                if not a.is_closed()]
+    except Exception:
+        return []
+
+
+def enderecos_das_abas(abas, teto: int = 10) -> list[str]:
+    """Endereco de cada aba da lista recebida, sem parametros, para o relato.
+
+    Recebe a lista pronta em vez de ir buscar no navegador: assim o relato
+    descreve exatamente as abas de onde a aba lida foi tirada.
 
     Sem parametros, pela regra de sempre: e neles que viajam identificador de
     cliente e numero de processo.
     """
     saida = []
-    try:
-        abas = [a for a in (getattr(navegador, "pages", None) or [])
-                if not a.is_closed()]
-    except Exception:
-        return saida
-    for i, aba in enumerate(abas[:teto], 1):
+    for i, aba in enumerate(list(abas or [])[:teto], 1):
         try:
             endereco = (aba.url or "").split("?")[0]
         except Exception:
             endereco = "(ilegivel)"
         saida.append(f"{i}: {endereco[:100]}")
     return saida
+
+
+def abas_abertas(navegador, teto: int = 10) -> list[str]:
+    """Endereco de cada aba viva, sem parametros, para o relato.
+
+    Portal que abre janela propria e depois devolve a aba de origem para outro
+    lugar faz o programa e o operador olharem telas diferentes sem perceber.
+    Listar as abas mostra isso de uma vez, em vez de uma deducao por rodada.
+    """
+    return enderecos_das_abas(paginas_vivas(navegador), teto)
 
 
 def _aba_em_foco(navegador, inicial):
@@ -842,22 +862,28 @@ def acompanhar(url: str, *, segundos: int = 30, teto: int = 20) -> int:
                 if resposta in ("fim", "sair", "parar", "f"):
                     break
 
-                alvo = _aba_em_foco(navegador, pagina)
-                try:
-                    _assentar(alvo, segundos)
-                except Exception:
-                    pass
+                # UMA fotografia das abas serve para as duas coisas: dizer
+                # quais existem e escolher qual ler. Em 06/10/2026, com duas
+                # leituras separadas, o relato anunciou "Lendo a aba 2" e
+                # descreveu a aba 1, porque a janela do portal abriu entre uma
+                # leitura e a outra.
+                abas = paginas_vivas(navegador)
+                alvo = abas[-1] if abas else pagina
                 registradas += 1
                 print()
                 # Antes da tela: quais abas existem. Portal que abre janela
                 # propria e devolve a aba de origem para outro lugar faz o
                 # programa e o operador olharem telas diferentes sem perceber.
-                lista = abas_abertas(navegador)
+                lista = enderecos_das_abas(abas)
                 if lista:
                     print(f"    ABAS ABERTAS ({len(lista)}), sem parametros:")
                     for linha in lista:
                         print(f"      {linha}")
                     print(f"    Lendo a aba {len(lista)} (a ultima aberta e viva).")
+                try:
+                    _assentar(alvo, segundos)
+                except Exception:
+                    pass
                 try:
                     _relatar_tela(alvo, f"TELA {registradas}")
                     _relatar_estrutura_de_dados(alvo)

@@ -6001,5 +6001,62 @@ def test_o_acompanhamento_lista_as_abas_antes_da_tela():
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal.acompanhar)
-    assert "abas_abertas(navegador)" in fonte
-    assert fonte.index("abas_abertas(navegador)") < fonte.index("_relatar_tela(alvo")
+    assert "enderecos_das_abas(abas)" in fonte
+    assert fonte.index("enderecos_das_abas(abas)") < fonte.index("_relatar_tela(alvo")
+
+
+def test_a_aba_anunciada_e_a_mesma_que_e_lida():
+    """Anunciar uma aba e descrever outra foi o defeito de 06/10/2026.
+
+    A lista e a escolha saiam de duas leituras de `pages`; entre elas a janela
+    do portal abriu, e o relato disse "Lendo a aba 2" descrevendo a aba 1. A
+    fotografia tem de ser UMA so, e e o codigo que precisa provar isso: um
+    teste de saida nao distingue as duas formas quando nada abre no meio.
+    """
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    assert "abas = paginas_vivas(navegador)" in fonte
+    assert "alvo = abas[-1] if abas else pagina" in fonte
+    # A escolha sai da fotografia, e nao de uma segunda ida ao navegador.
+    assert "_aba_em_foco(navegador" not in fonte
+    assert "abas_abertas(navegador)" not in fonte
+    # E a fotografia vem ANTES de a aba ser escolhida e de a lista ser montada.
+    assert fonte.index("abas = paginas_vivas(navegador)") < fonte.index(
+        "alvo = abas[-1]")
+    assert fonte.index("alvo = abas[-1]") < fonte.index("enderecos_das_abas(abas)")
+
+
+def test_a_fotografia_das_abas_descarta_as_fechadas():
+    from justica_mcp.portal import paginas_vivas
+
+    class _Aba:
+        def __init__(self, fechada):
+            self.fechada = fechada
+
+        def is_closed(self):
+            return self.fechada
+
+    viva, morta = _Aba(False), _Aba(True)
+
+    class _Nav:
+        pages = [viva, morta]
+
+    assert paginas_vivas(_Nav()) == [viva]
+    assert paginas_vivas(object()) == []
+
+
+def test_os_enderecos_saem_da_lista_recebida_e_nao_do_navegador():
+    """Receber a lista pronta e o que mantem relato e leitura na mesma foto."""
+    from justica_mcp.portal import enderecos_das_abas
+
+    class _Aba:
+        def __init__(self, url):
+            self.url = url
+
+    assert enderecos_das_abas([]) == []
+    assert enderecos_das_abas(None) == []
+    assert enderecos_das_abas([_Aba("https://x/a?processo=1"), _Aba("https://x/b")]) == [
+        "1: https://x/a", "2: https://x/b"]
