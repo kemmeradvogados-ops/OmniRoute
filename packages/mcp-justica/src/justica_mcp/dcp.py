@@ -580,6 +580,7 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
 TELA_DE_PERFIL = "/usuarios/alterar-perfil"
 TITULO_DO_PERFIL = "Alterar Perfil"
 ROTULO_DA_LISTA_DE_PERFIL = "Selecione perfil do usuário"
+SELETOR_DA_CAIXA_DE_PERFIL = f'[placeholder="{ROTULO_DA_LISTA_DE_PERFIL}"]'
 BOTAO_ENTRAR_NO_PERFIL = "Entrar"
 
 
@@ -632,6 +633,54 @@ def perfis_oferecidos(pagina: Any) -> list[str]:
     return [" ".join((t or "").split()) for t in (textos or []) if (t or "").strip()]
 
 
+# Onde uma opcao de lista pode morar, da forma mais especifica para a mais
+# frouxa. Lista montada por script nem sempre usa `option`: usa `li`, `div` com
+# papel de opcao, ou `div` puro e sem nada que a identifique alem do texto.
+LUGARES_DE_OPCAO = (
+    "[role=option]",
+    "li",
+    "option",
+    "button, input[type=submit], input[type=button], a",
+    "span",
+    "div",
+)
+
+
+def achar_opcao_na_lista(pagina: Any, texto: str) -> Optional[Any]:
+    """A opcao da lista cujo texto e EXATAMENTE este, onde quer que ela esteja.
+
+    `_por_texto_exato` procura so em elemento clicavel, porque foi escrito para
+    botao. Lista montada por script costuma empilhar `li` ou `div`, que nao
+    entram naquela busca, e a opcao fica invisivel para ela.
+
+    A ordem dos lugares vai do mais especifico ao mais frouxo, e para no
+    primeiro que achar: comecar por `div` casaria com qualquer caixa que
+    contivesse so aquela opcao, e clicar na caixa nao e clicar na opcao.
+
+    Comparacao exata e sem acento. Exata porque "Advogado" e "Advogado
+    (suspenso)" sao escolhas diferentes, e aceitar prefixo escolheria a errada.
+    """
+    from .portal import _na_tela, janela_de, sem_acento
+
+    alvo = sem_acento(texto).strip()
+    janela = janela_de(pagina)
+    for lugar in LUGARES_DE_OPCAO:
+        try:
+            achados = pagina.query_selector_all(lugar)
+        except Exception:
+            continue
+        for elemento in achados:
+            try:
+                if sem_acento(elemento.inner_text() or "").strip() != alvo:
+                    continue
+                if elemento.is_visible() and _na_tela(
+                        elemento, janela["width"], janela["height"]):
+                    return elemento
+            except Exception:
+                continue
+    return None
+
+
 def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                     segundos: int = 45) -> None:
     """Escolhe o tipo de usuario que o OPERADOR nomeou e entra.
@@ -642,8 +691,8 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
     processo inexistente para quem le o resultado.
     """
     from .core.guarda_navegacao import Acao, Permissao
-    from .portal import (PREFIXO_DE_TEXTO, elemento_visivel, permissao_efemera,
-                         sem_acento)
+    from .portal import (PREFIXO_DE_TEXTO, elemento_por_rotulo, elemento_visivel,
+                         permissao_efemera, sem_acento)
 
     if not (perfil or "").strip():
         oferecidos = perfis_oferecidos(pagina)
@@ -664,7 +713,7 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         descricao=f"escolha do tipo de usuario {perfil.strip()!r}",
         conferido_em="execucao atual",
         seletores_clicaveis=(alvo_da_opcao, alvo_do_entrar,
-                             f"{PREFIXO_DE_TEXTO}{ROTULO_DA_LISTA_DE_PERFIL}"),
+                             SELETOR_DA_CAIXA_DE_PERFIL),
         seletores_preenchiveis=("select",),
     ))
 
@@ -685,20 +734,21 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
     else:
         # Lista montada por script, sem `select`. Abre pelo proprio rotulo que a
         # tela mostra e clica na opcao que o OPERADOR nomeou, por texto exato.
-        caixa = elemento_visivel(pagina, f"{PREFIXO_DE_TEXTO}{ROTULO_DA_LISTA_DE_PERFIL}")
+        # A caixa e `input[type=text]`, e nao botao: o unico rotulo dela e o
+        # texto cinza que mostra. Procurar por texto de botao nao acha nada.
+        caixa = elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL)
         if caixa is None:
             raise PerfilNaoInformado(
                 f"A tela do tipo de usuario nao tem lista nem "
                 f"{ROTULO_DA_LISTA_DE_PERFIL!r}. Nada foi escolhido.")
-        guarda.pode_executar(Acao.CLICAR,
-                             f"{PREFIXO_DE_TEXTO}{ROTULO_DA_LISTA_DE_PERFIL}",
+        guarda.pode_executar(Acao.CLICAR, SELETOR_DA_CAIXA_DE_PERFIL,
                              url=pagina.url)
         caixa.click()
         try:
             pagina.wait_for_timeout(500)
         except Exception:
             pass
-        opcao = elemento_visivel(pagina, alvo_da_opcao)
+        opcao = achar_opcao_na_lista(pagina, perfil.strip())
         if opcao is None:
             raise PerfilNaoInformado(
                 f"A opcao {perfil!r} nao apareceu na lista de tipos de usuario. "

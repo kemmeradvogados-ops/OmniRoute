@@ -1710,7 +1710,12 @@ def elemento_por_rotulo(pagina: Any, rotulo: str) -> Optional[Any]:
     """
     alvo = sem_acento(rotulo).strip()
     janela = janela_de(pagina)
-    for atributo in ("aria-label", "title", "alt"):
+    # `placeholder` entra porque nem toda caixa de escolha e botao. A do tipo
+    # de usuario do Portal de Servicos do Tribunal de Justica do Rio de
+    # Janeiro, lida em 06/10/2026, e `input[type=text]` cujo unico rotulo e o
+    # proprio texto cinza que ela mostra: procurar por texto de botao nao acha
+    # nada ali, porque texto de campo nao e texto de botao.
+    for atributo in ("aria-label", "title", "alt", "placeholder"):
         try:
             achados = pagina.query_selector_all(f"[{atributo}]")
         except Exception:

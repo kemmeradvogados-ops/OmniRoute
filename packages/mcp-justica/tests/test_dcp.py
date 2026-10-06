@@ -730,6 +730,52 @@ class _ListaDePerfil:
         return {"x": 5, "y": 5, "width": 200, "height": 30}
 
 
+class _CaixaComRotulo:
+    """A caixa do tipo de usuario e `input[type=text]`, nao botao: o unico
+    rotulo dela e o texto cinza que mostra."""
+
+    def __init__(self, tela, rotulo):
+        self.tela, self.rotulo = tela, rotulo
+
+    def get_attribute(self, nome):
+        return self.rotulo if nome == "placeholder" else None
+
+    def inner_text(self):
+        return ""
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 200, "height": 30}
+
+    def click(self):
+        self.tela.cliques.append(self.rotulo)
+        self.tela.aberta = True
+
+
+class _ItemDaLista:
+    """Opcao empilhada por script, que nao e botao nem `option`."""
+
+    def __init__(self, tela, texto):
+        self.tela, self.texto = tela, texto
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, _):
+        return None
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 180, "height": 24}
+
+    def click(self):
+        self.tela.cliques.append(self.texto)
+
+
 class _TelaDePerfil:
     viewport_size = {"width": 1280, "height": 800}
 
@@ -737,16 +783,24 @@ class _TelaDePerfil:
                  com_select=True, textos=("Usuário Comum", "Advogado")):
         self.url = url
         self.cliques = []
+        self.aberta = False
+        self.textos = list(textos)
         self.lista = _ListaDePerfil(self, textos) if com_select else None
+        self.caixa = (None if com_select
+                      else _CaixaComRotulo(self, "Selecione perfil do usuário"))
         self.botoes = [_BotaoDoQuadro(self, "Entrar"),
                        _BotaoDoQuadro(self, "Cancelar")]
-        if not com_select:
-            self.botoes.append(_BotaoDoQuadro(self, "Selecione perfil do usuário"))
-            self.botoes.extend(_BotaoDoQuadro(self, t) for t in textos)
 
     def query_selector_all(self, seletor):
         if seletor.startswith("select"):
             return [self.lista] if self.lista else []
+        if seletor.startswith("[") and "placeholder" in seletor:
+            return [self.caixa] if self.caixa else []
+        if seletor.startswith("["):
+            return []
+        if seletor == "li":
+            return ([_ItemDaLista(self, t) for t in self.textos]
+                    if self.aberta else [])
         return list(self.botoes)
 
     def query_selector(self, seletor):
@@ -863,3 +917,51 @@ def test_a_aba_de_origem_na_pagina_publica_nao_vira_recusa():
     publica.url = "https://www.tjrj.jus.br/"
     janela = entrar_no_portal_de_servicos(publica, _Guarda(), 5)
     assert MARCA_DO_PORTAL in janela.url
+
+
+# ==========================================================================
+# A caixa do tipo de usuario e CAMPO, e as opcoes nao sao botoes
+#
+# Relatorio da tela real, 06/10/2026:
+#   CAMPOS NA TELA: (sem id) tipo=text rotulo='Selecione perfil do usuário'
+#   BOTOES NA TELA: 'Entrar', 'Cancelar'
+# A caixa aparece entre os CAMPOS, nao entre os botoes. Procurar por texto de
+# botao nao acha nada ali, porque texto de campo nao e texto de botao.
+# ==========================================================================
+
+from justica_mcp.dcp import achar_opcao_na_lista  # noqa: E402
+
+
+def test_a_caixa_e_achada_pelo_texto_cinza_que_ela_mostra():
+    from justica_mcp.portal import elemento_por_rotulo
+
+    tela = _TelaDePerfil(com_select=False)
+    achada = elemento_por_rotulo(tela, "Selecione perfil do usuário")
+    assert achada is not None
+
+
+def test_a_opcao_e_achada_mesmo_sem_ser_botao():
+    """Lista montada por script empilha `li`, que nao entra na busca por
+    elemento clicavel."""
+    tela = _TelaDePerfil(com_select=False)
+    tela.aberta = True
+    assert achar_opcao_na_lista(tela, "Advogado") is not None
+
+
+def test_a_opcao_nao_casa_por_prefixo():
+    """"Advogado" e "Advogado (suspenso)" sao escolhas diferentes, e aceitar
+    prefixo escolheria a errada."""
+    tela = _TelaDePerfil(com_select=False, textos=("Advogado (suspenso)",))
+    tela.aberta = True
+    assert achar_opcao_na_lista(tela, "Advogado") is None
+
+
+def test_lista_fechada_nao_entrega_opcao():
+    tela = _TelaDePerfil(com_select=False)
+    assert achar_opcao_na_lista(tela, "Advogado") is None
+
+
+def test_o_caminho_sem_select_abre_a_caixa_escolhe_e_entra():
+    tela, guarda = _TelaDePerfil(com_select=False), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 5)
+    assert tela.cliques == ["Selecione perfil do usuário", "Advogado", "Entrar"]
