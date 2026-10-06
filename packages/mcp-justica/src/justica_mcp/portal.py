@@ -248,9 +248,9 @@ class Campo:
         if self.identificador:
             partes.append(f"id={self.identificador}")
         if self.rotulo:
-            partes.append(f"rotulo={self.rotulo!r}")
+            partes.append(f"rotulo={sem_dado_de_processo(self.rotulo)!r}")
         if self.texto_visivel:
-            partes.append(f"texto={self.texto_visivel!r}")
+            partes.append(f"texto={sem_dado_de_processo(self.texto_visivel)!r}")
         # Visibilidade e o que distingue campo real de campo espelho: dois
         # elementos com o mesmo nome, um visivel e outro nao, sao um par de
         # exibicao e armazenamento, e preencher o errado quebra em silencio.
@@ -3878,6 +3878,65 @@ def caminhos_de_navegacao(ligacoes) -> list[str]:
     return vistos
 
 
+# Quantos botoes com o MESMO texto ainda contam como controle. Acima disso sao
+# itens de uma lista, e o rotulo de cada um e conteudo, nao estrutura.
+TETO_DE_BOTOES_IGUAIS = 2
+
+_NUMERO_CNJ = re.compile(r"\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}")
+_DATA = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+_SEQUENCIA_LONGA = re.compile(r"\b\d{8,}\b")
+
+
+def sem_dado_de_processo(texto: str) -> str:
+    """Troca por marca o que, num rotulo, e dado e nao estrutura."""
+    limpo = texto or ""
+    limpo = _NUMERO_CNJ.sub("<numero de processo>", limpo)
+    limpo = _DATA.sub("<data>", limpo)
+    limpo = _SEQUENCIA_LONGA.sub("<numero>", limpo)
+    return limpo
+
+
+def linhas_de_botoes(botoes, prefixo: str = "") -> list[str]:
+    """Descreve os botoes SEM despejar o indice do processo junto.
+
+    Lido no Visualizador de Processos do Tribunal de Justica do Rio de Janeiro
+    em 06/10/2026: a arvore de documentos e feita de botoes, e o rotulo de cada
+    um e o proprio andamento ("Alternar 45 - Juntada - Extrato da GRERJ - dia
+    27/04/2018"). O relato prometia nao imprimir texto de celula e imprimiu os
+    andamentos, porque ali eles nao estao em celula nenhuma: estao em rotulo de
+    botao. A promessa estava certa e a regra que a sustentava era estreita
+    demais, e o relato foi colado numa conversa.
+
+    A regra nova separa controle de item de lista pela REPETICAO. Botao de
+    barra de ferramentas e unico: "Baixar o processo atual em PDF" aparece uma
+    vez. Item de arvore vem aos montes, todos com o mesmo texto visivel
+    ("expand_more"), cada um com um rotulo diferente, e e o rotulo que carrega
+    o dado. Grupo grande vira contagem, sem rotulo nenhum.
+
+    O que ainda imprime passa por `sem_dado_de_processo`, como segunda rede.
+    """
+    from collections import OrderedDict
+
+    grupos: "OrderedDict[str, list]" = OrderedDict()
+    for botao in botoes:
+        grupos.setdefault((botao.texto_visivel or "")[:50], []).append(botao)
+
+    saida = []
+    for texto, membros in grupos.items():
+        if len(membros) > TETO_DE_BOTOES_IGUAIS:
+            saida.append(
+                f"{prefixo}{texto!r} x{len(membros)}  (itens de lista: rotulos "
+                "omitidos, sao conteudo do processo)")
+            continue
+        for botao in membros:
+            alvo = (botao.identificador and f"#{botao.identificador}") or (
+                botao.nome and f"[name={botao.nome}]") or "(sem id)"
+            marca = (f" rotulo={sem_dado_de_processo(botao.rotulo)!r}"
+                     if botao.rotulo else "")
+            saida.append(f"{prefixo}{alvo:40s} {sem_dado_de_processo(texto)!r}{marca}")
+    return saida
+
+
 def quadros_do_mesmo_portal(pagina, teto: int = 3) -> list:
     """Quadros embutidos que pertencem ao PROPRIO portal, nunca a terceiros.
 
@@ -3962,14 +4021,11 @@ def _relatar_tela(pagina, titulo: str) -> None:
             print("      (nenhum)")
 
     print(f"    BOTOES NA TELA ({len(visiveis)} de {len(botoes)}):")
-    for b in visiveis:
-        alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
-        marca = f" rotulo={b.rotulo!r}" if b.rotulo else ""
-        print(f"      {alvo:40s} {(b.texto_visivel or '')[:50]!r}{marca}")
+    for linha in linhas_de_botoes(visiveis, prefixo="      "):
+        print(linha)
     if not visiveis:
-        for b in botoes[:20]:
-            alvo = b.identificador and f"#{b.identificador}" or (b.nome and f"[name={b.nome}]") or "(sem id)"
-            print(f"      (fora da tela) {alvo:30s} {(b.texto_visivel or '')[:50]!r}")
+        for linha in linhas_de_botoes(botoes[:20], prefixo="      (fora da tela) "):
+            print(linha)
     try:
         quadros = pagina.query_selector_all("iframe")
         if quadros:
@@ -3996,8 +4052,8 @@ def _relatar_tela(pagina, titulo: str) -> None:
             print("      (nenhum)")
         visiveis_no_quadro = [b for b in acoes if b.na_tela] or acoes[:20]
         print(f"    BOTOES NO QUADRO ({len(visiveis_no_quadro)} de {len(acoes)}):")
-        for b in visiveis_no_quadro:
-            print(f"      {b.linha()}")
+        for linha in linhas_de_botoes(visiveis_no_quadro, prefixo="      "):
+            print(linha)
         if not acoes:
             print("      (nenhum)")
         print(f"    ----- FIM DO QUADRO -----\n")

@@ -3425,8 +3425,12 @@ def test_botao_de_icone_mostra_o_rotulo_acessivel():
     assert '"aria-label", "title", "alt"' in trecho
     assert "rotulo=rotulo_acessivel," in trecho
 
+    # O relato imprime os botoes por `linhas_de_botoes`, e e la que o rotulo
+    # acessivel aparece, agora passado pela rede que tira dado de processo.
     relato = inspect.getsource(portal._relatar_tela)
-    assert "rotulo={b.rotulo!r}" in relato
+    assert "linhas_de_botoes(visiveis" in relato
+    montagem = inspect.getsource(portal.linhas_de_botoes)
+    assert "rotulo={sem_dado_de_processo(botao.rotulo)!r}" in montagem
 
 
 def test_sem_botao_de_copia_o_menu_tambem_e_listado():
@@ -5295,3 +5299,121 @@ def test_elemento_morto_nao_derruba_o_relato_inteiro():
     campos, _ = _coletar(_TelaQueRemonta(
         [_ElementoQueSome(False), _ElementoQueSome(True), _ElementoQueSome(False)]))
     assert [c.identificador for c in campos] == ["vivo"]
+
+
+# ==========================================================================
+# Rotulo de botao tambem e conteudo
+#
+# Visualizador de Processos do Tribunal de Justica do Rio de Janeiro,
+# 06/10/2026. A arvore de documentos e feita de botoes, e o rotulo de cada um
+# e o proprio andamento. O relato prometia nao imprimir texto de celula e
+# imprimiu os andamentos, porque ali eles nao estao em celula nenhuma. A
+# promessa estava certa e a regra que a sustentava era estreita demais, e o
+# relato foi colado numa conversa.
+# ==========================================================================
+
+def test_numero_de_processo_sai_do_rotulo():
+    from justica_mcp.portal import sem_dado_de_processo
+
+    assert sem_dado_de_processo("Alternar Processo: 0096102-52.2018.8.19.0001") == (
+        "Alternar Processo: <numero de processo>")
+
+
+def test_data_de_andamento_sai_do_rotulo():
+    from justica_mcp.portal import sem_dado_de_processo
+
+    assert "27/04/2018" not in sem_dado_de_processo(
+        "Alternar 45 - Juntada - Extrato da GRERJ - dia 27/04/2018")
+
+
+def test_sequencia_longa_de_digitos_sai_do_rotulo():
+    from justica_mcp.portal import sem_dado_de_processo
+
+    assert "201803058210" not in sem_dado_de_processo(
+        "Alternar 53 - 201803058210 - Peticao")
+
+
+def test_rotulo_de_controle_fica_intacto():
+    from justica_mcp.portal import sem_dado_de_processo
+
+    for rotulo in ("Baixar o processo atual em PDF", "Ocultar Menu",
+                   "Exibir caixa de selecao", "Dados do processo"):
+        assert sem_dado_de_processo(rotulo) == rotulo
+
+
+def _botao_de_tela(texto, rotulo=None, identificador=None):
+    from justica_mcp.portal import Campo
+
+    return Campo(marcador="button", tipo="button", nome=None,
+                 identificador=identificador, rotulo=rotulo,
+                 texto_visivel=texto, e_senha=False, extras={})
+
+
+def test_botao_unico_de_barra_de_ferramentas_e_descrito():
+    from justica_mcp.portal import linhas_de_botoes
+
+    linhas = linhas_de_botoes([
+        _botao_de_tela("download_for_offline", "Baixar o processo atual em PDF"),
+        _botao_de_tela("info", "Dados do processo"),
+    ])
+    assert any("Baixar o processo atual em PDF" in l for l in linhas)
+    assert any("Dados do processo" in l for l in linhas)
+
+
+def test_arvore_de_documentos_vira_contagem_sem_rotulo():
+    """Item de arvore vem aos montes, todos com o mesmo texto visivel, cada um
+    com um rotulo diferente, e e o rotulo que carrega o dado."""
+    from justica_mcp.portal import linhas_de_botoes
+
+    arvore = [
+        _botao_de_tela("expand_more", "Alternar Processo: 0096102-52.2018.8.19.0001"),
+        _botao_de_tela("expand_more", "Alternar 45 - Juntada - Extrato da GRERJ"),
+        _botao_de_tela("expand_more", "Alternar 52 - Juntada - Peticao"),
+        _botao_de_tela("expand_more", "Alternar 60 - Conclusao ao Juiz - Decisao"),
+    ]
+    linhas = linhas_de_botoes(arvore)
+    assert len(linhas) == 1
+    assert "x4" in linhas[0]
+    for proibido in ("GRERJ", "Conclusao", "0096102", "Juntada"):
+        assert proibido not in linhas[0], proibido
+
+
+def test_o_botao_de_baixar_sobrevive_ao_lado_da_arvore():
+    """A regra nao pode comer o controle que interessa."""
+    from justica_mcp.portal import linhas_de_botoes
+
+    botoes = [_botao_de_tela("download_for_offline", "Baixar o processo atual em PDF")]
+    botoes += [_botao_de_tela("expand_more", f"Alternar {i} - Juntada") for i in range(12)]
+    linhas = linhas_de_botoes(botoes)
+    assert any("Baixar o processo atual em PDF" in l for l in linhas)
+    assert any("x12" in l for l in linhas)
+    assert not any("Juntada" in l for l in linhas)
+
+
+def test_dois_botoes_iguais_ainda_contam_como_controle():
+    from justica_mcp.portal import linhas_de_botoes
+
+    linhas = linhas_de_botoes([
+        _botao_de_tela("expand_more", "Proximo documento"),
+        _botao_de_tela("expand_more", "Documento anterior"),
+    ])
+    assert len(linhas) == 2
+
+
+def test_o_rotulo_que_imprime_ainda_passa_pela_rede():
+    """Segunda rede: grupo pequeno imprime rotulo, e o rotulo pode trazer
+    numero de processo do mesmo jeito."""
+    from justica_mcp.portal import linhas_de_botoes
+
+    linhas = linhas_de_botoes([_botao_de_tela("info", "Processo 0096102-52.2018.8.19.0001")])
+    assert "0096102" not in linhas[0]
+    assert "<numero de processo>" in linhas[0]
+
+
+def test_a_linha_do_campo_tambem_e_limpa():
+    from justica_mcp.portal import Campo
+
+    campo = Campo(marcador="input", tipo="text", nome=None, identificador="x",
+                  rotulo="Processo 0096102-52.2018.8.19.0001", texto_visivel=None,
+                  e_senha=False, extras={})
+    assert "0096102" not in campo.linha()
