@@ -5314,8 +5314,9 @@ def consultar_processo(
 
         if identidade.sistema == "dcp":
             from .dcp import (ConsultaIndisponivel, DownloadIndisponivel,
-                              abrir_visualizador, baixar_integra,
-                              entrar_no_portal_de_servicos)
+                              PerfilNaoInformado, abrir_visualizador,
+                              baixar_integra, entrar_no_portal_de_servicos,
+                              escolher_perfil, na_tela_de_perfil)
             from .dcp import buscar as buscar_dcp
 
             print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
@@ -5332,6 +5333,18 @@ def consultar_processo(
                 return 1
             print(f"  Portal de Servicos aberto: {pagina.url[:80]}")
             _assentar(pagina, segundos)
+
+            # O portal pergunta o TIPO DE USUARIO antes de deixar entrar, e o
+            # perfil decide o que a sessao enxerga, como a inscricao no eproc.
+            if na_tela_de_perfil(pagina):
+                try:
+                    escolher_perfil(pagina, guarda, perfil, segundos)
+                except PerfilNaoInformado as exc:
+                    print(f"  [PAROU] {exc}")
+                    _relatar_tela(pagina, "TELA DO TIPO DE USUARIO")
+                    return 1
+                print(f"  Tipo de usuario: {perfil}.")
+                _assentar(pagina, segundos)
 
             try:
                 buscar_dcp(pagina, guarda, numero, url, segundos)
@@ -5955,7 +5968,10 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--botao-entrar", default=None)
     cp.add_argument("--campo-codigo", default=None)
     cp.add_argument("--botao-validar", default=None)
-    cp.add_argument("--perfil", default=None)
+    cp.add_argument("--perfil", default=None,
+                    help="qual perfil usar quando o portal pergunta: a inscricao "
+                         "no eproc (RJ168943) ou o tipo de usuario no DCP "
+                         "(Advogado)")
     cp.add_argument("--documentos", default="auto",
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
                          "'integra', 'ultimos:N' ou 'nenhum'")

@@ -486,3 +486,145 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
     except Exception:
         pass
     return janela
+
+
+# ---------------------------------------------------------------------------
+# Tipo de usuario, em `#/usuarios/alterar-perfil`
+#
+# Tela fotografada em 06/10/2026, logo depois de o Portal de Servicos abrir.
+# Duas opcoes, "Usuario Comum" e "Advogado", e o botao "Entrar" so habilita
+# depois da escolha. O perfil decide o que a sessao enxerga, exatamente como a
+# inscricao no eproc, e por isso quem o nomeia e o operador.
+# ---------------------------------------------------------------------------
+
+TELA_DE_PERFIL = "/usuarios/alterar-perfil"
+TITULO_DO_PERFIL = "Alterar Perfil"
+ROTULO_DA_LISTA_DE_PERFIL = "Selecione perfil do usuário"
+BOTAO_ENTRAR_NO_PERFIL = "Entrar"
+
+
+class PerfilNaoInformado(RuntimeError):
+    """A tela pediu o tipo de usuario e ninguem disse qual."""
+
+
+def na_tela_de_perfil(pagina: Any) -> bool:
+    """Se a tela que pede o tipo de usuario esta aberta."""
+    from .portal import PREFIXO_DE_TEXTO, elemento_visivel
+
+    try:
+        if TELA_DE_PERFIL in (pagina.url or ""):
+            return True
+    except Exception:
+        pass
+    return elemento_visivel(pagina, f"{PREFIXO_DE_TEXTO}{TITULO_DO_PERFIL}") is not None
+
+
+def _lista_de_perfil(pagina: Any) -> Optional[Any]:
+    """O `select` do tipo de usuario, quando a tela o monta como `select`."""
+    from .portal import elemento_visivel
+
+    for seletor in ("select[name=perfil]", "select#perfil", "select"):
+        achado = elemento_visivel(pagina, seletor)
+        if achado is not None:
+            return achado
+    return None
+
+
+def perfis_oferecidos(pagina: Any) -> list[str]:
+    """Os tipos de usuario que a tela oferece, para o relato da recusa.
+
+    Sao nomes de PERFIL, nao dado de processo: "Usuario Comum", "Advogado".
+    """
+    lista = _lista_de_perfil(pagina)
+    if lista is None:
+        return []
+    try:
+        textos = lista.evaluate(
+            "e => Array.from(e.options || []).map(o => o.text)")
+    except Exception:
+        return []
+    return [" ".join((t or "").split()) for t in (textos or []) if (t or "").strip()]
+
+
+def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
+                    segundos: int = 45) -> None:
+    """Escolhe o tipo de usuario que o OPERADOR nomeou e entra.
+
+    Nao escolhe por conta propria, nem quando ha so duas opcoes. O perfil
+    decide o que a sessao enxerga: entrar como "Usuario Comum" devolveria uma
+    visao reduzida sem avisar, e consulta que volta vazia e indistinguivel de
+    processo inexistente para quem le o resultado.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import (PREFIXO_DE_TEXTO, elemento_visivel, permissao_efemera,
+                         sem_acento)
+
+    if not (perfil or "").strip():
+        oferecidos = perfis_oferecidos(pagina)
+        recado = ("A tela pediu o TIPO DE USUARIO e nenhum foi informado. "
+                  "Repita o comando com --perfil.")
+        if oferecidos:
+            recado += " A tela oferece: " + "; ".join(oferecidos) + "."
+        recado += (" Escolher por conta propria daria visao reduzida sem avisar, "
+                   "e consulta que volta vazia e indistinguivel de processo "
+                   "inexistente.")
+        raise PerfilNaoInformado(recado)
+
+    procurado = sem_acento(perfil).strip()
+    alvo_da_opcao = f"{PREFIXO_DE_TEXTO}{perfil.strip()}"
+    alvo_do_entrar = f"{PREFIXO_DE_TEXTO}{BOTAO_ENTRAR_NO_PERFIL}"
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao=f"escolha do tipo de usuario {perfil.strip()!r}",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(alvo_da_opcao, alvo_do_entrar,
+                             f"{PREFIXO_DE_TEXTO}{ROTULO_DA_LISTA_DE_PERFIL}"),
+        seletores_preenchiveis=("select",),
+    ))
+
+    lista = _lista_de_perfil(pagina)
+    if lista is not None:
+        casados = [t for t in perfis_oferecidos(pagina)
+                   if sem_acento(t).strip() == procurado]
+        if len(casados) != 1:
+            raise PerfilNaoInformado(
+                f"O perfil {perfil!r} nao casa com UMA opcao da tela. "
+                f"Ela oferece: {'; '.join(perfis_oferecidos(pagina)) or '(nenhuma)'}. "
+                "Nada foi escolhido.")
+        guarda.pode_executar(Acao.PREENCHER, "select", url=pagina.url)
+        lista.select_option(label=casados[0])
+    else:
+        # Lista montada por script, sem `select`. Abre pelo proprio rotulo que a
+        # tela mostra e clica na opcao que o OPERADOR nomeou, por texto exato.
+        caixa = elemento_visivel(pagina, f"{PREFIXO_DE_TEXTO}{ROTULO_DA_LISTA_DE_PERFIL}")
+        if caixa is None:
+            raise PerfilNaoInformado(
+                f"A tela do tipo de usuario nao tem lista nem "
+                f"{ROTULO_DA_LISTA_DE_PERFIL!r}. Nada foi escolhido.")
+        guarda.pode_executar(Acao.CLICAR,
+                             f"{PREFIXO_DE_TEXTO}{ROTULO_DA_LISTA_DE_PERFIL}",
+                             url=pagina.url)
+        caixa.click()
+        try:
+            pagina.wait_for_timeout(500)
+        except Exception:
+            pass
+        opcao = elemento_visivel(pagina, alvo_da_opcao)
+        if opcao is None:
+            raise PerfilNaoInformado(
+                f"A opcao {perfil!r} nao apareceu na lista de tipos de usuario. "
+                "Nada foi escolhido.")
+        guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
+        opcao.click()
+
+    entrar = elemento_visivel(pagina, alvo_do_entrar)
+    if entrar is None:
+        raise PerfilNaoInformado(
+            f"O botao {BOTAO_ENTRAR_NO_PERFIL!r} nao esta na tela do tipo de "
+            "usuario. O perfil foi escolhido e NAO foi enviado.")
+    guarda.pode_executar(Acao.CLICAR, alvo_do_entrar, url=pagina.url)
+    entrar.click()
+    try:
+        pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+    except Exception:
+        pass

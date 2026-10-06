@@ -684,3 +684,127 @@ def test_a_consulta_passa_pela_selecao_antes_de_buscar():
         'identidade.sistema == "pje"')[0]
     assert trecho.index("entrar_no_portal_de_servicos(") < trecho.index("buscar_dcp(")
     assert "devolveu a" in trecho and "pagina publica" in trecho
+
+
+# ==========================================================================
+# Tipo de usuario, em `#/usuarios/alterar-perfil`
+#
+# Tela fotografada em 06/10/2026, logo depois de o Portal de Servicos abrir.
+# Duas opcoes, "Usuario Comum" e "Advogado", e o botao "Entrar" so habilita
+# depois da escolha.
+# ==========================================================================
+
+from justica_mcp.dcp import (  # noqa: E402
+    PerfilNaoInformado, escolher_perfil, na_tela_de_perfil, perfis_oferecidos,
+)
+
+
+class _ListaDePerfil:
+    def __init__(self, tela, textos):
+        self.tela, self.textos = tela, textos
+        self.escolhido = None
+
+    def evaluate(self, _):
+        return list(self.textos)
+
+    def select_option(self, label=None, **kw):
+        self.escolhido = label
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 200, "height": 30}
+
+
+class _TelaDePerfil:
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, url="https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil",
+                 com_select=True, textos=("Usuário Comum", "Advogado")):
+        self.url = url
+        self.cliques = []
+        self.lista = _ListaDePerfil(self, textos) if com_select else None
+        self.botoes = [_BotaoDoQuadro(self, "Entrar"),
+                       _BotaoDoQuadro(self, "Cancelar")]
+        if not com_select:
+            self.botoes.append(_BotaoDoQuadro(self, "Selecione perfil do usuário"))
+            self.botoes.extend(_BotaoDoQuadro(self, t) for t in textos)
+
+    def query_selector_all(self, seletor):
+        if seletor.startswith("select"):
+            return [self.lista] if self.lista else []
+        return list(self.botoes)
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def wait_for_timeout(self, _):
+        pass
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+
+def test_a_tela_de_perfil_e_reconhecida_pelo_endereco():
+    assert na_tela_de_perfil(_TelaDePerfil()) is True
+
+
+def test_outra_tela_nao_e_confundida_com_a_de_perfil():
+    tela = _TelaDePerfil(url="https://www3.tjrj.jus.br/portalservicos/#/dashboard")
+    tela.botoes = [_BotaoDoQuadro(tela, "Atualizar")]
+    assert na_tela_de_perfil(tela) is False
+
+
+def test_os_perfis_oferecidos_sao_lidos():
+    assert perfis_oferecidos(_TelaDePerfil()) == ["Usuário Comum", "Advogado"]
+
+
+def test_sem_perfil_informado_o_comando_para_e_lista_as_opcoes():
+    """Entrar como 'Usuario Comum' devolveria uma visao reduzida sem avisar, e
+    consulta que volta vazia e indistinguivel de processo inexistente."""
+    with pytest.raises(PerfilNaoInformado) as erro:
+        escolher_perfil(_TelaDePerfil(), _Guarda(), None, 5)
+    recado = str(erro.value)
+    assert "--perfil" in recado
+    assert "Advogado" in recado and "Usuário Comum" in recado
+    assert "visao reduzida" in recado
+
+
+def test_o_perfil_nomeado_pelo_operador_e_escolhido_e_enviado():
+    tela, guarda = _TelaDePerfil(), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 5)
+    assert tela.lista.escolhido == "Advogado"
+    assert tela.cliques == ["Entrar"]
+
+
+def test_o_acento_do_perfil_nao_atrapalha():
+    tela, guarda = _TelaDePerfil(), _Guarda()
+    escolher_perfil(tela, guarda, "Usuario Comum", 5)
+    assert tela.lista.escolhido == "Usuário Comum"
+
+
+def test_perfil_que_nao_casa_com_uma_opcao_para():
+    with pytest.raises(PerfilNaoInformado, match="nao casa com UMA opcao"):
+        escolher_perfil(_TelaDePerfil(), _Guarda(), "Magistrado", 5)
+
+
+def test_lista_montada_por_script_e_aberta_pelo_proprio_rotulo():
+    """Sem `select`, a tela e aberta pelo rotulo que ela mostra e a opcao e
+    clicada por texto exato, que foi o que o operador nomeou."""
+    tela, guarda = _TelaDePerfil(com_select=False), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 5)
+    assert tela.cliques == ["Selecione perfil do usuário", "Advogado", "Entrar"]
+
+
+def test_a_consulta_pergunta_o_perfil_antes_de_buscar():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
+        'identidade.sistema == "pje"')[0]
+    assert trecho.index("na_tela_de_perfil(pagina)") < trecho.index("buscar_dcp(")
+    assert "escolher_perfil(pagina, guarda, perfil, segundos)" in trecho
