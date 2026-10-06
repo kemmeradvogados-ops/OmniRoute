@@ -1536,3 +1536,142 @@ def test_a_recusa_separa_lista_que_nao_abriu_de_lista_sem_a_opcao():
 
     assert lista_de_opcoes_aberta(_Aberta()) is True
     assert lista_de_opcoes_aberta(_Fechada()) is False
+
+
+# ==========================================================================
+# A aba que o programa segura NAO e estavel
+#
+# Corrida de 06/10/2026: `expect_page` entregou uma janela em
+# `/portalservicos/`, sem rota nenhuma. O endereco conferia no instante em
+# que foi olhado. Um segundo depois aquela janela era `www.tjrj.jus.br`, e o
+# portal de verdade estava em OUTRA, ja em `#/usuarios/alterar-perfil`. O
+# comando levou a pagina publica do tribunal por tres passos e parou
+# anunciando, a cada um, um defeito que nao existia.
+# ==========================================================================
+
+class _AbaDeRota(_AbaComEndereco):
+    """Aba que muda de endereco depois de ser olhada N vezes."""
+
+    def __init__(self, inicial, depois, olhadas_ate_mudar, contexto=None):
+        super().__init__(inicial, contexto)
+        self._depois = depois
+        self._olhadas = 0
+        self._ate_mudar = olhadas_ate_mudar
+
+    @property
+    def url(self):
+        self._olhadas += 1
+        return self._valor if self._olhadas <= self._ate_mudar else self._depois
+
+    @url.setter
+    def url(self, valor):
+        self._valor = valor
+
+
+def test_a_raiz_do_portal_nao_e_aceita_quando_ha_uma_rota():
+    from justica_mcp.dcp import conferir_janela_do_portal
+
+    passagem = _AbaComEndereco("https://www3.tjrj.jus.br/portalservicos/")
+    certa = _AbaComEndereco(
+        "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil")
+    origem = _AbaComEndereco("https://www.tjrj.jus.br/")
+    contexto = _ContextoDeAbas([origem, passagem, certa])
+    for aba in (origem, passagem, certa):
+        aba.context = contexto
+
+    # A janela de passagem casa com `/portalservicos`, e e justamente ela que
+    # vai embora. A que ja assumiu rota e a que fica.
+    assert conferir_janela_do_portal(passagem, origem) is certa
+
+
+def test_a_raiz_ainda_serve_quando_rota_nenhuma_aparece():
+    """Recusar seria pior: o portal pode so estar demorando a montar."""
+    from justica_mcp.dcp import conferir_janela_do_portal
+
+    raiz = _AbaComEndereco("https://www3.tjrj.jus.br/portalservicos/")
+    origem = _AbaComEndereco("https://www.tjrj.jus.br/")
+    contexto = _ContextoDeAbas([origem, raiz])
+    for aba in (origem, raiz):
+        aba.context = contexto
+
+    assert conferir_janela_do_portal(raiz, origem, segundos=1) is raiz
+
+
+def test_a_rota_e_distinguida_da_raiz():
+    from justica_mcp.dcp import tem_rota_do_portal
+
+    assert tem_rota_do_portal(
+        "https://www3.tjrj.jus.br/portalservicos/#/dashboard") is True
+    assert tem_rota_do_portal("https://www3.tjrj.jus.br/portalservicos/") is False
+    assert tem_rota_do_portal("https://www.tjrj.jus.br/") is False
+    assert tem_rota_do_portal(None) is False
+
+
+def test_o_portal_e_reencontrado_quando_a_aba_segurada_foi_embora():
+    """O coracao do defeito: a pagina que o programa segura mudou sozinha."""
+    from justica_mcp.dcp import reencontrar_o_portal
+
+    foi_embora = _AbaComEndereco("https://www.tjrj.jus.br/")
+    certa = _AbaComEndereco(
+        "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil")
+    contexto = _ContextoDeAbas([foi_embora, certa])
+    for aba in (foi_embora, certa):
+        aba.context = contexto
+
+    assert reencontrar_o_portal(foi_embora, segundos=1) is certa
+
+
+def test_reencontrar_nao_recusa_quando_nao_acha():
+    """Quem recusa e o passo seguinte, que sabe o que procurava."""
+    from justica_mcp.dcp import reencontrar_o_portal
+
+    sozinha = _AbaComEndereco("https://www.tjrj.jus.br/")
+    sozinha.context = _ContextoDeAbas([sozinha])
+
+    assert reencontrar_o_portal(sozinha, segundos=1) is sozinha
+
+
+def test_a_aba_escolhida_e_trazida_para_a_frente():
+    """Em janela visivel, o Chromium nao calcula posicao de aba que esta atras,
+    e o clique do Playwright depende disso."""
+    from justica_mcp.dcp import reencontrar_o_portal
+
+    class _AbaQueAnota(_AbaComEndereco):
+        def __init__(self, url):
+            super().__init__(url)
+            self.veio_para_a_frente = False
+
+        def bring_to_front(self):
+            self.veio_para_a_frente = True
+
+    certa = _AbaQueAnota(
+        "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil")
+    certa.context = _ContextoDeAbas([certa])
+
+    assert reencontrar_o_portal(certa, segundos=1) is certa
+    assert certa.veio_para_a_frente is True
+
+
+def test_navegador_que_recusa_o_foco_nao_derruba_a_consulta():
+    """Perder a consulta por causa do foco seria desproporcional."""
+    from justica_mcp.dcp import trazer_para_a_frente
+
+    class _Recusa:
+        def bring_to_front(self):
+            raise RuntimeError("sem suporte")
+
+    aba = _Recusa()
+    assert trazer_para_a_frente(aba) is aba
+
+
+def test_o_caminho_reencontra_o_portal_a_cada_fronteira():
+    """Guarda de fonte: carregar a pagina entre passos foi o defeito."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert fonte.count("reencontrar_o_portal(pagina") == 2
+    # A primeira vem antes de a tela de perfil ser olhada.
+    assert fonte.index("reencontrar_o_portal(pagina") < fonte.index(
+        "if na_tela_de_perfil(pagina):")

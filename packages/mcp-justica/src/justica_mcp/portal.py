@@ -5467,7 +5467,8 @@ def consultar_processo(
             from .dcp import (ConsultaIndisponivel, DownloadIndisponivel,
                               PerfilNaoInformado, abrir_visualizador,
                               baixar_integra, entrar_no_portal_de_servicos,
-                              escolher_perfil, na_tela_de_perfil)
+                              escolher_perfil, na_tela_de_perfil,
+                              reencontrar_o_portal)
             from .dcp import buscar as buscar_dcp
 
             print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
@@ -5484,6 +5485,11 @@ def consultar_processo(
                 return 1
             print(f"  Portal de Servicos aberto: {endereco_sem_dado(pagina.url, 80)}")
             _assentar(pagina, segundos)
+            # A aba que o programa segura pode ter ido embora enquanto a tela
+            # montava. Em 06/10/2026 foi isso: a janela aceita como portal
+            # virou `www.tjrj.jus.br`, e o comando a levou ate o fim.
+            pagina = reencontrar_o_portal(pagina, min(segundos, 15))
+            print(f"  Tela do portal: {endereco_sem_dado(pagina.url, 80)}")
 
             # O portal pergunta o TIPO DE USUARIO antes de deixar entrar, e o
             # perfil decide o que a sessao enxerga, como a inscricao no eproc.
@@ -5506,6 +5512,7 @@ def consultar_processo(
                     return 1
                 print(f"  Tipo de usuario: {perfil}.")
                 _assentar(pagina, segundos)
+                pagina = reencontrar_o_portal(pagina, min(segundos, 15))
 
             try:
                 buscar_dcp(pagina, guarda, numero, url, segundos)

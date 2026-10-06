@@ -506,6 +506,39 @@ def escolher_opcao_do_portal(lista: Any) -> Optional[str]:
     return por_nome[0] if len(por_nome) == 1 else None
 
 
+# A RAIZ do portal e a rota que ele assume depois de montar. A diferenca entre
+# as duas decidiu a corrida de 06/10/2026: o `expect_page` entregou uma janela
+# em `/portalservicos/`, sem rota nenhuma, e ela foi embora para o site publico
+# do tribunal enquanto o portal de verdade assumia `#/usuarios/alterar-perfil`
+# em OUTRA janela, que o advogado estava vendo. O endereco conferia no instante
+# em que foi olhado, e nao conferia um segundo depois.
+MARCA_DE_ROTA_DO_PORTAL = "/portalservicos/#/"
+
+
+def tem_rota_do_portal(url: Any) -> bool:
+    """Se o endereco e uma ROTA do portal, e nao a raiz que ainda vai mudar."""
+    return MARCA_DE_ROTA_DO_PORTAL in (url or "")
+
+
+def _aba_do_portal_agora(abas: Any, exigir_rota: bool) -> Optional[Any]:
+    """A aba do portal entre as recebidas, de tras para frente.
+
+    De tras para frente porque janela nova e acrescentada ao fim da lista, e a
+    aba de ORIGEM pode exibir o endereco do portal por um instante durante a
+    entrega, antes de voltar para a pagina publica. Pegando a primeira, o
+    programa ficava com a aba que ia embora.
+    """
+    for aba in reversed(list(abas or [])):
+        try:
+            endereco = aba.url or ""
+        except Exception:
+            continue
+        if tem_rota_do_portal(endereco) if exigir_rota else (
+                MARCA_DO_PORTAL in endereco):
+            return aba
+    return None
+
+
 def achar_aba_do_portal(pagina: Any, segundos: int = 20) -> Optional[Any]:
     """A aba ou janela onde o Portal de Servicos abriu, se houver.
 
@@ -517,6 +550,12 @@ def achar_aba_do_portal(pagina: Any, segundos: int = 20) -> Optional[Any]:
 
     Procura em TODAS as abas do mesmo navegador, e espera, porque a janela leva
     um instante para aparecer e outro para assumir o endereco.
+
+    Prefere a aba que ja ASSUMIU UMA ROTA, e so aceita a raiz quando o prazo
+    acaba sem nenhuma rota aparecer. A raiz e endereco de passagem: na corrida
+    de 06/10/2026 o programa ficou com uma janela que estava nela e que, um
+    segundo depois, era o site publico do tribunal. Esperar a rota custa o
+    tempo de a tela montar, que o passo seguinte gastaria de qualquer jeito.
     """
     import time as _tempo
 
@@ -532,17 +571,15 @@ def achar_aba_do_portal(pagina: Any, segundos: int = 20) -> Optional[Any]:
             abas = [a for a in (contexto.pages or []) if not a.is_closed()]
         except Exception:
             abas = []
-        # De tras para frente: janela nova e acrescentada ao fim da lista, e a
-        # aba de ORIGEM pode exibir o endereco do portal por um instante
-        # durante a entrega, antes de voltar para a pagina publica. Pegando a
-        # primeira, o programa ficava com a aba que ia embora.
-        for aba in reversed(abas):
-            try:
-                if MARCA_DO_PORTAL in (aba.url or ""):
-                    return aba
-            except Exception:
-                continue
+        achada = _aba_do_portal_agora(abas, exigir_rota=True)
+        if achada is not None:
+            return achada
         if _tempo.monotonic() >= limite:
+            # Ultima chance, e so agora: a raiz pode ser o portal que demorou
+            # mais que o prazo para rotear, e devolver nada seria pior.
+            crua = _aba_do_portal_agora(abas, exigir_rota=False)
+            if crua is not None:
+                return crua
             return None
         try:
             pagina.wait_for_timeout(400)
@@ -566,6 +603,25 @@ def abas_do_navegador(pagina: Any, teto: int = 10) -> list[str]:
     return enderecos_das_abas(abas, teto)
 
 
+def trazer_para_a_frente(aba: Any) -> Any:
+    """Poe a aba na frente antes de o programa agir nela, e devolve a aba.
+
+    O advogado observou em 06/10/2026, com a janela do portal aberta na tela:
+    "e voce nao consegue clicar nessa aba". Em navegador com janela visivel, o
+    Chromium nao desenha nem calcula posicao de aba que esta atras, e o clique
+    do Playwright depende das duas coisas: ele espera o elemento ficar estavel
+    e visivel, e numa aba de fundo isso pode nunca acontecer.
+
+    Falhar aqui nao e motivo para parar: se o navegador recusar, o clique ainda
+    pode dar certo, e perder a consulta por causa do foco seria desproporcional.
+    """
+    try:
+        aba.bring_to_front()
+    except Exception:
+        pass
+    return aba
+
+
 def conferir_janela_do_portal(candidata: Any, pagina: Any, segundos: int = 20) -> Any:
     """Devolve a janela que E o Portal de Servicos, ou recusa dizendo onde esta.
 
@@ -579,16 +635,28 @@ def conferir_janela_do_portal(candidata: Any, pagina: Any, segundos: int = 20) -
     tela que nao e a do processo. Entao, quando o portal nao esta em aba
     nenhuma, isto recusa e diz quais abas existem.
     """
+    # Primeiro quem JA assumiu uma rota. A raiz nao serve aqui: foi aceitando a
+    # raiz que o programa ficou, em 06/10/2026, com uma janela de passagem que
+    # um segundo depois era o site publico do tribunal.
     for alvo in (candidata, pagina):
         try:
-            if alvo is not None and MARCA_DO_PORTAL in (alvo.url or ""):
-                return alvo
+            if alvo is not None and tem_rota_do_portal(alvo.url):
+                return trazer_para_a_frente(alvo)
         except Exception:
             continue
 
     achada = achar_aba_do_portal(pagina, segundos)
     if achada is not None:
-        return achada
+        return trazer_para_a_frente(achada)
+
+    # Nenhuma rota apareceu no prazo. A raiz ainda e melhor que recusar, porque
+    # o portal pode so estar demorando a montar, e o passo seguinte espera.
+    for alvo in (candidata, pagina):
+        try:
+            if alvo is not None and MARCA_DO_PORTAL in (alvo.url or ""):
+                return trazer_para_a_frente(alvo)
+        except Exception:
+            continue
 
     abertas = abas_do_navegador(pagina)
     raise ConsultaIndisponivel(
@@ -1065,3 +1133,20 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
     except Exception:
         pass
+
+
+def reencontrar_o_portal(pagina: Any, segundos: int = 15) -> Any:
+    """A aba do portal AGORA, porque a que o programa segura pode ter mudado.
+
+    A licao de 06/10/2026 nao foi "o portal abre em janela nova": foi que a
+    pagina que o programa segura NAO e estavel. A janela aceita como portal
+    saiu de `/portalservicos/` para `www.tjrj.jus.br` entre um passo e o
+    seguinte, e o comando levou a pagina publica do tribunal ate o fim, tres
+    passos adiante, anunciando a cada parada um defeito que nao existia.
+
+    Entao, a cada fronteira, o portal e reencontrado em vez de carregado. Nao
+    recusa quando nao acha: quem recusa e o passo seguinte, que sabe o que
+    procurava. Aqui so se devolve a melhor aba disponivel.
+    """
+    achada = achar_aba_do_portal(pagina, segundos)
+    return trazer_para_a_frente(achada if achada is not None else pagina)
