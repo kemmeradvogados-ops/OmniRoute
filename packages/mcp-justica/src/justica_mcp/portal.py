@@ -844,7 +844,7 @@ def acompanhar(url: str, *, segundos: int = 30, teto: int = 20) -> int:
             # maquina; janela em branco sem titulo e pagina que nao chegou.
             # Sem esta linha, as duas se parecem.
             try:
-                print(f"  Endereco: {pagina.url}")
+                print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
                 print(f"  Titulo: {pagina.title()!r}")
             except Exception as exc:
                 print(f"  Nao consegui ler a pagina ({type(exc).__name__}).")
@@ -3400,7 +3400,7 @@ def autenticar(
                     pass
                 estado.registrar(acao="login_etapa_perfil", tribunal=identidade.tribunal,
                                  sistema=identidade.sistema, resultado=rotulo.splitlines()[0])
-                print(f"  Endereco: {pagina.url}")
+                print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
                 print(f"  Titulo: {pagina.title()!r}")
                 campos, botoes = _coletar(pagina)
 
@@ -4235,6 +4235,22 @@ def sem_dado_de_processo(texto: str) -> str:
     return limpo
 
 
+def endereco_sem_dado(url: str, teto: int = 100) -> str:
+    """O endereco como ele pode ser lido em voz alta, impresso ou colado.
+
+    Endereco nao e estrutura: depois da busca, e nele que viaja o numero do
+    processo. O relato prometia nao imprimir dado de cliente e imprimia o
+    endereco cru, com parametros, exatamente nas telas onde ja ha processo.
+
+    Corta no `?`, como a lista de abas sempre fez, e ainda passa o resto por
+    `sem_dado_de_processo`: ha portal que poe o numero no proprio caminho, e
+    nesse caso cortar o parametro nao resolveria nada.
+    """
+    limpo = (url or "").split("?")[0].split("#")[0]
+    marca = (url or "")[len(limpo):].split("?")[0]
+    return sem_dado_de_processo(limpo + marca)[:teto]
+
+
 def linhas_de_botoes(botoes, prefixo: str = "") -> list[str]:
     """Descreve os botoes SEM despejar o indice do processo junto.
 
@@ -4322,7 +4338,7 @@ def _relatar_tela(pagina, titulo: str) -> None:
     conferido em campo antes de virar codigo.
     """
     print(f"\n    ----- {titulo} -----")
-    print(f"    Endereco: {pagina.url}")
+    print(f"    Endereco: {endereco_sem_dado(pagina.url)}")
     try:
         print(f"    Titulo: {pagina.title()!r}")
     except Exception:
@@ -4379,10 +4395,10 @@ def _relatar_tela(pagina, titulo: str) -> None:
         try:
             dentro, acoes = _coletar(quadro)
         except Exception as exc:
-            print(f"    QUADRO {quadro.url[:90]}: ilegivel "
+            print(f"    QUADRO {endereco_sem_dado(quadro.url, 90)}: ilegivel "
                   f"({type(exc).__name__})")
             continue
-        print(f"\n    ----- DENTRO DO QUADRO {quadro.url[:90]} -----")
+        print(f"\n    ----- DENTRO DO QUADRO {endereco_sem_dado(quadro.url, 90)} -----")
         a_vista = [c for c in dentro if c.na_tela] or dentro[:20]
         print(f"    CAMPOS NO QUADRO ({len(a_vista)} de {len(dentro)}):")
         for c in a_vista:
@@ -5262,7 +5278,7 @@ def consultar_processo(
             except ConsultaESAJIndisponivel as exc:
                 print(f"  [FALHA] {exc}")
                 return 1
-            print(f"  Endereco: {pagina.url}")
+            print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
 
             from .esaj import expandir_movimentacoes_ate_o_fim
             from .esaj import extrair as extrair_esaj
@@ -5466,7 +5482,7 @@ def consultar_processo(
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(pagina, "TELA DE SELECAO DE SISTEMAS")
                 return 1
-            print(f"  Portal de Servicos aberto: {pagina.url[:80]}")
+            print(f"  Portal de Servicos aberto: {endereco_sem_dado(pagina.url, 80)}")
             _assentar(pagina, segundos)
 
             # O portal pergunta o TIPO DE USUARIO antes de deixar entrar, e o
@@ -5497,7 +5513,7 @@ def consultar_processo(
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(pagina, "TELA ONDE PAROU")
                 return 1
-            print(f"  Endereco: {pagina.url}")
+            print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
             for recado in _mensagens_de_erro(pagina):
                 print(f"    O portal disse: {recado}")
             estado_local.registrar(
@@ -5520,7 +5536,7 @@ def consultar_processo(
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(pagina, "TELA DO PROCESSO")
                 return 1
-            print(f"  Visualizador aberto: {janela.url[:80]}")
+            print(f"  Visualizador aberto: {endereco_sem_dado(janela.url, 80)}")
             _assentar(janela, segundos)
 
             try:

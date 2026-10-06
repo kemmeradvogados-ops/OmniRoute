@@ -6060,3 +6060,71 @@ def test_os_enderecos_saem_da_lista_recebida_e_nao_do_navegador():
     assert enderecos_das_abas(None) == []
     assert enderecos_das_abas([_Aba("https://x/a?processo=1"), _Aba("https://x/b")]) == [
         "1: https://x/a", "2: https://x/b"]
+
+
+# ==========================================================================
+# Endereco impresso nao e estrutura: depois da busca, e dado
+#
+# O relato prometia nao imprimir dado de cliente e imprimia o endereco cru,
+# com parametros, exatamente nas telas onde ja ha processo: a do processo e a
+# "TELA ONDE PAROU" da consulta. A promessa estava certa e a regra que a
+# sustentava nao alcancava o endereco.
+# ==========================================================================
+
+def test_o_parametro_sai_do_endereco_impresso():
+    from justica_mcp.portal import endereco_sem_dado
+
+    limpo = endereco_sem_dado(
+        "https://www3.tjrj.jus.br/consultaprocessual/#/detalhes"
+        "?numProcesso=00450259320218190002&parte=Fulano")
+    assert limpo == "https://www3.tjrj.jus.br/consultaprocessual/#/detalhes"
+    assert "0045025" not in limpo
+    assert "Fulano" not in limpo
+
+
+def test_a_rota_continua_inteira_no_endereco_impresso():
+    """Sem a rota o relato nao serve para nada: e ela que diz onde o programa
+    parou. Cortar o endereco todo resolveria o vazamento e criaria outro
+    problema, do tamanho exato dos que esta semana custou."""
+    from justica_mcp.portal import endereco_sem_dado
+
+    assert endereco_sem_dado(
+        "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil"
+    ) == "https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil"
+
+
+def test_o_numero_no_caminho_tambem_sai():
+    """Ha portal que poe o numero no proprio caminho, e ai cortar o parametro
+    nao resolveria nada."""
+    from justica_mcp.portal import endereco_sem_dado
+
+    limpo = endereco_sem_dado("https://x/autos/0045025-93.2021.8.19.0002/ver")
+    assert "0045025" not in limpo
+    assert "<numero de processo>" in limpo
+
+
+def test_endereco_vazio_nao_quebra():
+    from justica_mcp.portal import endereco_sem_dado
+
+    assert endereco_sem_dado("") == ""
+    assert endereco_sem_dado(None) == ""
+
+
+def test_nenhum_endereco_e_impresso_cru():
+    """Guarda de fonte: cada `print` de endereco passa pela limpeza.
+
+    Um `print(f"...{pagina.url}")` novo nao levanta erro nenhum e nao aparece
+    em teste de comportamento: so aparece quando ja foi colado numa conversa.
+    """
+    import pathlib
+
+    raiz = pathlib.Path(__file__).resolve().parent.parent / "src" / "justica_mcp"
+    cruas = []
+    for arquivo in raiz.rglob("*.py"):
+        for n, linha in enumerate(arquivo.read_text(encoding="utf-8").splitlines(), 1):
+            if "print(" not in linha:
+                continue
+            for cru in (".url}", ".url[:", ".url!r"):
+                if cru in linha:
+                    cruas.append(f"{arquivo.name}:{n}: {linha.strip()}")
+    assert not cruas, "endereco impresso sem limpeza:\n" + "\n".join(cruas)

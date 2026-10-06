@@ -1286,7 +1286,9 @@ def copiar_autos_pelo_visualizador(
     except Exception:
         pass
     _assentar(janela, segundos)
-    print(f"    Pasta Digital aberta: {janela.url[:90]}")
+    from .portal import endereco_sem_dado
+
+    print(f"    Pasta Digital aberta: {endereco_sem_dado(janela.url, 90)}")
 
     # A janela e NOSSA: foi este programa que a abriu, com um clique
     # autorizado. Ela se fecha sozinha depois de entregar o arquivo, e fechar a

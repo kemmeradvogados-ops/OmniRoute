@@ -84,13 +84,13 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
     from pathlib import Path
 
     from .core.guarda_navegacao import Acao, Permissao
-    from .portal import permissao_efemera
+    from .portal import endereco_sem_dado, permissao_efemera
 
     botao = achar_botao_de_download(pagina)
     if botao is None:
         raise DownloadIndisponivel(
             f"O botao {BOTAO_DE_DOWNLOAD!r} nao esta na barra desta tela "
-            f"({pagina.url[:80]}). Nada foi clicado.")
+            f"({endereco_sem_dado(pagina.url, 80)}). Nada foi clicado.")
 
     alvo_do_botao = f'[aria-label="{BOTAO_DE_DOWNLOAD}"]'
     alvo_da_escolha = f"texto={ESCOLHA_INTEGRAL}"
@@ -261,7 +261,8 @@ def ja_esta_na_consulta(pagina: Any) -> bool:
 def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> None:
     """Do painel ate a consulta processual, pelo menu lateral."""
     from .core.guarda_navegacao import Acao, Permissao
-    from .portal import (PREFIXO_DE_TEXTO, esperar_elemento, permissao_efemera)
+    from .portal import (PREFIXO_DE_TEXTO, endereco_sem_dado, esperar_elemento,
+                         permissao_efemera)
 
     if ja_esta_na_consulta(pagina):
         return
@@ -281,7 +282,8 @@ def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> No
         # perfil ele nao esta, e procurar mais nao o faria aparecer. Dizer isso
         # aqui poupa a rodada inteira que custaria descobri-lo de novo.
         raise ConsultaIndisponivel(
-            f"O menu {MENU_DE_CONSULTAS} nao esta na tela ({pagina.url[:80]}). "
+            f"O menu {MENU_DE_CONSULTAS} nao esta na tela "
+            f"({endereco_sem_dado(pagina.url, 80)}). "
             "Ele so existe no painel, depois de o TIPO DE USUARIO ser escolhido: "
             f"se o endereco ainda for {TELA_DE_PERFIL}, a escolha do perfil e "
             "que nao chegou ao fim. Nada foi clicado.")
@@ -304,7 +306,8 @@ def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> No
         if _tempo.monotonic() >= limite:
             raise ConsultaIndisponivel(
                 f"O item {ITEM_DA_CONSULTA!r} foi clicado e a tela nao chegou a "
-                f"consulta. Endereco atual: {pagina.url[:80]}. Nada foi digitado.")
+                f"consulta. Endereco atual: {endereco_sem_dado(pagina.url, 80)}. "
+                "Nada foi digitado.")
         try:
             pagina.wait_for_timeout(400)
         except Exception:
@@ -607,8 +610,8 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
     """
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import (PREFIXO_DE_TEXTO, achar_opcional, elemento_visivel,
-                         esperar_elemento, esperar_tela_montar, pagina_de,
-                         permissao_efemera)
+                         endereco_sem_dado, esperar_elemento, esperar_tela_montar,
+                         pagina_de, permissao_efemera)
 
     # O endereco de login carrega `sgSist=PORTALSERVICOS`, e o portal as vezes
     # entra sozinho naquele sistema, sem passar pela escolha. Conferido em
@@ -638,7 +641,7 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
         montou = esperar_tela_montar(pagina, min(segundos, 5))
         raise ConsultaIndisponivel(
             f"A tela de selecao de sistemas nao tem {LISTA_DE_SISTEMAS}. "
-            f"Endereco atual: {pagina.url[:80]}. "
+            f"Endereco atual: {endereco_sem_dado(pagina.url, 80)}. "
             + ("A tela montou e a lista nao esta nela."
                if montou else "A tela nao chegou a montar: nenhum campo e nenhum "
                               "botao apareceram no prazo.")
