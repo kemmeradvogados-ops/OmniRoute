@@ -5487,3 +5487,20 @@ def test_o_agrupamento_acontece_antes_do_corte():
 
     fonte = inspect.getsource(portal._relatar_estrutura_de_dados)
     assert fonte.index("agrupar_identificadores(nomes)") < fonte.index("[:teto_ids]")
+
+
+def test_o_acompanhamento_avisa_antes_de_abrir_o_navegador():
+    """O perfil persistente so aceita um navegador por vez. Com outra janela
+    deste programa aberta, a abertura espera em silencio: o operador ve o
+    cabecalho, nao ve janela nenhuma e nao tem como saber o que esta havendo.
+    Aconteceu em 06/10/2026."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    aviso = fonte.split("Abrindo o navegador no perfil")[1].split("with sync_playwright")[0]
+    assert "so uma por vez" in aviso
+    # O aviso precisa sair ANTES da abertura, ou nao serve para nada.
+    assert fonte.index("Abrindo o navegador no perfil") < fonte.index(
+        "abrir_navegador(p, False, executavel)")

@@ -754,8 +754,16 @@ def acompanhar(url: str, *, segundos: int = 30, teto: int = 20) -> int:
 
     executavel = os.environ.get("JUSTICA_CHROMIUM") or None
     registradas = 0
+    # Dito ANTES de abrir, e nao depois: o perfil persistente so aceita um
+    # navegador por vez, e quando outra execucao deste programa ficou com a
+    # janela aberta, a abertura fica esperando em silencio. O operador ve o
+    # cabecalho, nao ve janela nenhuma e nao tem como saber o que esta havendo.
+    print(f"  Abrindo o navegador no perfil {pasta_do_navegador()}...")
+    print("  Se nenhuma janela aparecer em alguns segundos, procure uma janela")
+    print("  deste programa ja aberta e feche-a: o perfil aceita so uma por vez.")
     with sync_playwright() as p:
         navegador, pagina = abrir_navegador(p, False, executavel)
+        print("  Janela aberta.\n")
         try:
             guarda.avaliar(Acao.NAVEGAR, url).exigir()
             _ir_para(pagina, url, segundos)
