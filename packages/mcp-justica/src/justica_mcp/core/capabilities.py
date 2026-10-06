@@ -2,7 +2,16 @@
 
 Sem esta matriz o agente tenta baixar a integra por um adaptador que nao baixa,
 recebe vazio e inventa uma explicacao. Com ela, o servidor responde antes de
-gastar a chamada: "o DCP nao expoe documentos por esta via".
+gastar a chamada: "o DataJud expoe metadados e movimentos, nunca documentos".
+
+A diferenca entre as duas recusas e o ponto da matriz, e confundi-las e pior
+que nao ter matriz nenhuma. NAO_SUPORTADO e afirmacao sobre A FONTE: aquele
+portal nao oferece aquilo, e nenhum trabalho deste lado muda isso.
+NAO_IMPLEMENTADO e afirmacao sobre ESTE PROJETO: a fonte oferece e o adaptador
+ainda nao foi escrito. Escrever NAO_SUPORTADO para dizer "nao pretendo
+construir" poe na boca do servidor uma afirmacao falsa sobre o tribunal, e o
+advogado deixa de procurar no portal uma coisa que esta la. Foi o que
+aconteceu com o DCP do Tribunal de Justica do Rio de Janeiro ate 06/10/2026.
 """
 
 from __future__ import annotations
@@ -119,13 +128,16 @@ MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
     },
     "pje": {c: _fase2() for c in Capacidade},
     "cpe": {c: _fase2() for c in Capacidade},
-    "dcp": {
-        **{c: _fase2() for c in Capacidade},
-        Capacidade.BAIXAR_INTEGRA: _nao_suportado(
-            "Portal legado do Tribunal de Justica do Estado do Rio de Janeiro, "
-            "em extincao pela migracao ao eproc. Nao ha previsao de adaptador de documentos."
-        ),
-    },
+    # Corrigido em 06/10/2026. A declaracao anterior dizia NAO_SUPORTADO para a
+    # integra, com a justificativa de ser portal legado em extincao. Isso era
+    # decisao de planejamento escrita como fato sobre o tribunal, e o fato e o
+    # contrario: o operador da banca, que usa o portal, confirmou que o DCP
+    # baixa a integra do processo. Nenhuma tela dele foi lida ainda, entao o
+    # que falta e o adaptador, deste lado, e e isso que a matriz passa a dizer.
+    "dcp": {c: _fase2(
+        "O portal baixa a integra, conforme uso do operador em 06/10/2026, e o "
+        "adaptador ainda nao foi escrito: nenhuma tela do DCP foi lida ate aqui."
+    ) if c is Capacidade.BAIXAR_INTEGRA else _fase2() for c in Capacidade},
 }
 
 

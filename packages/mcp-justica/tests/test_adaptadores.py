@@ -83,3 +83,48 @@ def test_chave_explicita_vence_o_ambiente(monkeypatch):
     monkeypatch.setenv("DATAJUD_API_KEY", "do-ambiente")
     a = AdaptadorDataJud(chave="explicita")
     assert a._cabecalhos()["Authorization"] == "APIKey explicita"
+
+
+# ==========================================================================
+# NAO_SUPORTADO fala da FONTE; NAO_IMPLEMENTADO fala deste projeto
+#
+# Confundir as duas e pior que nao ter matriz nenhuma: escrever NAO_SUPORTADO
+# para dizer "nao pretendo construir" poe na boca do servidor uma afirmacao
+# falsa sobre o tribunal, e o advogado deixa de procurar no portal uma coisa
+# que esta la. Foi o que aconteceu com o DCP do Tribunal de Justica do Rio de
+# Janeiro ate 06/10/2026, quando o operador confirmou que o portal baixa a
+# integra do processo.
+# ==========================================================================
+
+def test_o_dcp_nao_declara_mais_que_o_portal_nao_baixa_a_integra():
+    from justica_mcp.core.capabilities import Situacao, consultar
+
+    decl = consultar("dcp", Capacidade.BAIXAR_INTEGRA)
+    assert decl.situacao is not Situacao.NAO_SUPORTADO
+    assert decl.situacao is Situacao.NAO_IMPLEMENTADO
+
+
+def test_o_motivo_do_dcp_diz_que_falta_o_adaptador_e_nao_o_portal():
+    from justica_mcp.core.capabilities import consultar
+
+    motivo = consultar("dcp", Capacidade.BAIXAR_INTEGRA).motivo
+    assert "o portal baixa a integra" in motivo.lower()
+    assert "adaptador ainda nao foi escrito" in motivo
+
+
+def test_o_que_a_fonte_realmente_nao_expoe_continua_nao_suportado():
+    """A correcao do DCP nao afrouxa a matriz: o DataJud publica metadados e
+    movimentos, e isso e desenho da fonte, nao falta de trabalho nosso."""
+    from justica_mcp.core.capabilities import Situacao, consultar
+
+    assert consultar("datajud", Capacidade.BAIXAR_INTEGRA).situacao is (
+        Situacao.NAO_SUPORTADO)
+
+
+def test_nenhuma_capacidade_do_dcp_ficou_sem_declaracao():
+    from justica_mcp.core.capabilities import Situacao, consultar
+
+    for capacidade in Capacidade:
+        decl = consultar("dcp", capacidade)
+        assert decl.situacao is Situacao.NAO_IMPLEMENTADO, capacidade
+        assert decl.motivo, capacidade
