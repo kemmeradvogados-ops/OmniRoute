@@ -379,3 +379,110 @@ def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45) -> Any:
     except Exception:
         pass
     return janela
+
+
+# ---------------------------------------------------------------------------
+# Entrada no Portal de Servicos, pela tela de selecao de sistemas
+#
+# Conferido em campo em 06/10/2026: navegar DIRETO para a consulta nao
+# funciona. O endereco `#/consproc/consultaportal` devolveu a pagina publica do
+# tribunal, em `www.tjrj.jus.br`. A sessao do IdServerJus existe, e o Portal de
+# Servicos so e alcancado pela entrega que este formulario faz.
+# ---------------------------------------------------------------------------
+
+TELA_DE_SELECAO = "/selecao-sistemas"
+LISTA_DE_SISTEMAS = "#sistema"
+ABRIR_EM_ABA = "#optionAba"
+ABRIR_EM_JANELA = "#optionPopup"
+BOTAO_ENVIAR = "Enviar"
+
+SIGLA_DO_PORTAL = "PORTALSERVICOS"
+NOME_DO_PORTAL = "portal de servicos"
+
+
+def escolher_opcao_do_portal(lista: Any) -> Optional[str]:
+    """O valor da opcao que leva ao Portal de Servicos, ou None.
+
+    Casa primeiro pelo valor, que e a sigla, e so depois pelo texto. Exige
+    UMA correspondencia: duas seriam escolha no escuro, e escolher o sistema
+    errado leva a sessao para outro lugar sem dizer nada.
+    """
+    from .portal import sem_acento
+
+    try:
+        opcoes = lista.evaluate(
+            "e => Array.from(e.options || []).map(o => [o.value, o.text])")
+    except Exception:
+        return None
+    por_sigla = [v for v, _ in (opcoes or []) if (v or "").strip() == SIGLA_DO_PORTAL]
+    if len(por_sigla) == 1:
+        return por_sigla[0]
+    por_nome = [v for v, t in (opcoes or [])
+                if NOME_DO_PORTAL in sem_acento(t or "")]
+    return por_nome[0] if len(por_nome) == 1 else None
+
+
+def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -> Any:
+    """Da tela de selecao de sistemas ate o Portal de Servicos aberto.
+
+    Devolve a JANELA onde o portal abriu. Pede a abertura em ABA, e nao em
+    janela destacada: aba e o que o navegador entrega de forma previsivel, e
+    janela destacada pode ser barrada sem aviso nenhum.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import (PREFIXO_DE_TEXTO, achar_opcional, elemento_visivel,
+                         pagina_de, permissao_efemera)
+
+    lista = achar_opcional(pagina, LISTA_DE_SISTEMAS)
+    if lista is None:
+        raise ConsultaIndisponivel(
+            f"A tela de selecao de sistemas nao tem {LISTA_DE_SISTEMAS}. "
+            f"Endereco atual: {pagina.url[:80]}. Nada foi escolhido.")
+
+    valor = escolher_opcao_do_portal(lista)
+    if valor is None:
+        raise ConsultaIndisponivel(
+            f"Nao achei UMA opcao do {SIGLA_DO_PORTAL} na lista de sistemas. "
+            "Escolher no escuro levaria a sessao para outro sistema sem dizer "
+            "nada. Nada foi escolhido.")
+
+    enviar = elemento_visivel(pagina, f"{PREFIXO_DE_TEXTO}{BOTAO_ENVIAR}")
+    if enviar is None:
+        raise ConsultaIndisponivel(
+            f"O botao {BOTAO_ENVIAR!r} nao esta na tela de selecao. "
+            "Nada foi escolhido.")
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="entrada no Portal de Servicos pela selecao de sistemas",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(ABRIR_EM_ABA, f"{PREFIXO_DE_TEXTO}{BOTAO_ENVIAR}"),
+        seletores_preenchiveis=(LISTA_DE_SISTEMAS,),
+    ))
+
+    guarda.pode_executar(Acao.PREENCHER, LISTA_DE_SISTEMAS, url=pagina.url)
+    lista.select_option(valor)
+
+    # Aba, nunca janela destacada: aba e o que o navegador entrega de forma
+    # previsivel, e janela destacada pode ser barrada sem aviso nenhum.
+    aba = achar_opcional(pagina, ABRIR_EM_ABA)
+    if aba is not None:
+        guarda.pode_executar(Acao.CLICAR, ABRIR_EM_ABA, url=pagina.url)
+        aba.click()
+
+    guarda.pode_executar(Acao.CLICAR, f"{PREFIXO_DE_TEXTO}{BOTAO_ENVIAR}",
+                         url=pagina.url)
+    hospedeira = pagina_de(pagina)
+    try:
+        with hospedeira.context.expect_page(timeout=segundos * 1000) as nova:
+            enviar.click()
+        janela = nova.value
+    except Exception:
+        # Sem janela nova NAO e falha: pode ter aberto na propria aba. Quem
+        # julga e a conferencia do formulario da consulta, que diz o que achou.
+        return pagina
+    try:
+        janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
+    except Exception:
+        pass
+    return janela

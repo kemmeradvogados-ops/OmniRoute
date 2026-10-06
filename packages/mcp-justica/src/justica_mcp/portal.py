@@ -5314,10 +5314,25 @@ def consultar_processo(
 
         if identidade.sistema == "dcp":
             from .dcp import (ConsultaIndisponivel, DownloadIndisponivel,
-                              abrir_visualizador, baixar_integra)
+                              abrir_visualizador, baixar_integra,
+                              entrar_no_portal_de_servicos)
             from .dcp import buscar as buscar_dcp
 
             print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
+            # A entrada pela tela de selecao NAO e etapa decorativa. Conferido
+            # em campo em 06/10/2026: navegar direto para a consulta devolveu a
+            # pagina publica do tribunal. A sessao do IdServerJus existe, e o
+            # Portal de Servicos so e alcancado pela entrega que aquele
+            # formulario faz.
+            try:
+                pagina = entrar_no_portal_de_servicos(pagina, guarda, segundos)
+            except ConsultaIndisponivel as exc:
+                print(f"  [PAROU] {exc}")
+                _relatar_tela(pagina, "TELA DE SELECAO DE SISTEMAS")
+                return 1
+            print(f"  Portal de Servicos aberto: {pagina.url[:80]}")
+            _assentar(pagina, segundos)
+
             try:
                 buscar_dcp(pagina, guarda, numero, url, segundos)
             except ConsultaIndisponivel as exc:

@@ -503,3 +503,184 @@ def test_a_janela_do_visualizador_e_fechada_mesmo_com_falha():
     trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
         'identidade.sistema == "pje"')[0]
     assert "finally:" in trecho and "_fechar(janela)" in trecho
+
+
+# ==========================================================================
+# A entrada no Portal de Servicos nao se pula
+#
+# Conferido em campo em 06/10/2026: navegar DIRETO para a consulta devolveu a
+# pagina publica do tribunal, em `www.tjrj.jus.br`. A sessao do IdServerJus
+# existe, e o Portal de Servicos so e alcancado pela entrega que o formulario
+# de selecao de sistemas faz.
+# ==========================================================================
+
+from justica_mcp.dcp import (  # noqa: E402
+    ABRIR_EM_ABA, BOTAO_ENVIAR, LISTA_DE_SISTEMAS, SIGLA_DO_PORTAL,
+    entrar_no_portal_de_servicos, escolher_opcao_do_portal,
+)
+
+
+class _ListaDeSistemas:
+    def __init__(self, tela, opcoes):
+        self.tela, self.opcoes = tela, opcoes
+        self.escolhido = None
+
+    def evaluate(self, _):
+        return [list(par) for par in self.opcoes]
+
+    def select_option(self, valor):
+        self.escolhido = valor
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 200, "height": 30}
+
+
+class _OpcaoDeAbertura:
+    def __init__(self, tela, identificador):
+        self.tela, self.identificador = tela, identificador
+
+    def click(self):
+        self.tela.cliques.append(self.identificador)
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 20, "height": 20}
+
+
+class _AbaNova:
+    url = "https://www3.tjrj.jus.br/portalservicos/#/dashboard"
+
+    def wait_for_load_state(self, *a, **kw):
+        pass
+
+
+class _EsperaDeAba:
+    def __init__(self, tela):
+        self.tela = tela
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    @property
+    def value(self):
+        if not self.tela.abre_aba:
+            raise RuntimeError("TimeoutError")
+        return _AbaNova()
+
+
+class _Contexto:
+    def __init__(self, tela):
+        self.tela = tela
+
+    def expect_page(self, timeout=None):
+        if not self.tela.abre_aba:
+            raise RuntimeError("TimeoutError: nenhuma aba nova")
+        return _EsperaDeAba(self.tela)
+
+
+class _TelaDeSelecao:
+    url = "https://www3.tjrj.jus.br/idserverjus-front/#/selecao-sistemas"
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, opcoes=None, tem_lista=True, tem_enviar=True,
+                 abre_aba=True):
+        self.cliques = []
+        self.abre_aba = abre_aba
+        self.context = _Contexto(self)
+        padrao = [("", "Selecione"), (SIGLA_DO_PORTAL, "Portal de Serviços"),
+                  ("PORTALSEGURO", "Portal Seguro")]
+        self.lista = (_ListaDeSistemas(self, opcoes if opcoes is not None else padrao)
+                      if tem_lista else None)
+        self.aba = _OpcaoDeAbertura(self, ABRIR_EM_ABA)
+        self.enviar = _BotaoDoQuadro(self, BOTAO_ENVIAR) if tem_enviar else None
+
+    def query_selector(self, seletor):
+        if seletor == LISTA_DE_SISTEMAS:
+            return self.lista
+        if seletor == ABRIR_EM_ABA:
+            return self.aba
+        return None
+
+    def query_selector_all(self, _):
+        return [self.enviar] if self.enviar else []
+
+
+def test_a_opcao_do_portal_e_achada_pela_sigla():
+    tela = _TelaDeSelecao()
+    assert escolher_opcao_do_portal(tela.lista) == SIGLA_DO_PORTAL
+
+
+def test_a_opcao_do_portal_e_achada_pelo_nome_quando_a_sigla_muda():
+    tela = _TelaDeSelecao(opcoes=[("PS2", "Portal de Serviços"), ("X", "Outro")])
+    assert escolher_opcao_do_portal(tela.lista) == "PS2"
+
+
+def test_duas_opcoes_parecidas_nao_viram_escolha():
+    """Escolher no escuro levaria a sessao para outro sistema sem dizer nada."""
+    tela = _TelaDeSelecao(opcoes=[("A", "Portal de Serviços"),
+                                  ("B", "Portal de Serviços antigo")])
+    assert escolher_opcao_do_portal(tela.lista) is None
+
+
+def test_lista_sem_o_portal_devolve_nada():
+    tela = _TelaDeSelecao(opcoes=[("SISENVARQ", "Envio de Arquivos")])
+    assert escolher_opcao_do_portal(tela.lista) is None
+
+
+def test_a_entrada_escolhe_marca_a_aba_e_envia():
+    tela, guarda = _TelaDeSelecao(), _Guarda()
+    janela = entrar_no_portal_de_servicos(tela, guarda, 5)
+    assert tela.lista.escolhido == SIGLA_DO_PORTAL
+    assert tela.cliques == [ABRIR_EM_ABA, BOTAO_ENVIAR]
+    assert janela is not tela
+
+
+def test_a_abertura_pedida_e_em_aba_nunca_em_janela_destacada():
+    """Aba e o que o navegador entrega de forma previsivel; janela destacada
+    pode ser barrada sem aviso nenhum."""
+    from justica_mcp.dcp import ABRIR_EM_JANELA
+
+    tela, guarda = _TelaDeSelecao(), _Guarda()
+    entrar_no_portal_de_servicos(tela, guarda, 5)
+    assert ABRIR_EM_JANELA not in tela.cliques
+
+
+def test_sem_aba_nova_devolve_a_propria_tela():
+    """Pode ter aberto na propria aba. Quem julga e a conferencia do formulario
+    da consulta, que diz o que achou."""
+    tela, guarda = _TelaDeSelecao(abre_aba=False), _Guarda()
+    assert entrar_no_portal_de_servicos(tela, guarda, 5) is tela
+
+
+def test_tela_sem_a_lista_para_sem_escolher():
+    tela, guarda = _TelaDeSelecao(tem_lista=False), _Guarda()
+    with pytest.raises(ConsultaIndisponivel, match="nao tem #sistema"):
+        entrar_no_portal_de_servicos(tela, guarda, 5)
+    assert tela.cliques == []
+
+
+def test_tela_sem_o_enviar_para_sem_escolher():
+    tela, guarda = _TelaDeSelecao(tem_enviar=False), _Guarda()
+    with pytest.raises(ConsultaIndisponivel, match="Enviar"):
+        entrar_no_portal_de_servicos(tela, guarda, 5)
+    assert tela.lista.escolhido is None
+
+
+def test_a_consulta_passa_pela_selecao_antes_de_buscar():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
+        'identidade.sistema == "pje"')[0]
+    assert trecho.index("entrar_no_portal_de_servicos(") < trecho.index("buscar_dcp(")
+    assert "devolveu a" in trecho and "pagina publica" in trecho
