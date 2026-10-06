@@ -737,6 +737,47 @@ def opcoes_a_vista(pagina: Any, teto: int = 12) -> list[str]:
     return saida
 
 
+def perfil_assumido_pelo_controle(pagina: Any, perfil: str) -> bool:
+    """Se o controle passou a MOSTRAR o perfil escolhido.
+
+    Prova positiva, no lugar de confiar no clique. Nas telas fotografadas em
+    06/10/2026 o botao "Entrar" nasce desabilitado, em verde claro, e so fica
+    verde forte depois de o controle assumir o perfil. Clicar nele antes disso
+    nao faz nada, e sem esta conferencia o comando seguiria como se tivesse
+    entrado.
+
+    Vale para os dois jeitos de a tela montar a escolha, porque a pergunta e a
+    mesma nos dois: o que o controle mostra agora.
+    """
+    from .portal import elemento_por_rotulo, sem_acento
+
+    alvo = sem_acento(perfil).strip()
+
+    lista = _lista_de_perfil(pagina)
+    if lista is not None:
+        for leitura in ("e => (e.selectedOptions && e.selectedOptions[0]) "
+                        "? e.selectedOptions[0].text : (e.value || '')",
+                        "e => e.value || ''"):
+            try:
+                escrito = lista.evaluate(leitura) or ""
+            except Exception:
+                continue
+            if sem_acento(str(escrito)).strip() == alvo:
+                return True
+
+    caixa = elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL)
+    if caixa is not None:
+        for ler in (lambda e: e.evaluate("e => e.value || ''"),
+                    lambda e: e.inner_text()):
+            try:
+                escrito = ler(caixa) or ""
+            except Exception:
+                continue
+            if sem_acento(str(escrito)).strip() == alvo:
+                return True
+    return False
+
+
 def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                     segundos: int = 45) -> None:
     """Escolhe o tipo de usuario que o OPERADOR nomeou e entra.
@@ -837,6 +878,19 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
             raise PerfilNaoInformado(recado + " Nada foi escolhido.")
         guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
         opcao.click()
+
+    # Prova positiva antes de enviar. O botao "Entrar" nasce desabilitado e so
+    # habilita depois de a caixa assumir o perfil: clicar nele antes nao faz
+    # nada, e sem esta conferencia o comando seguiria como se tivesse entrado.
+    try:
+        pagina.wait_for_timeout(400)
+    except Exception:
+        pass
+    if not perfil_assumido_pelo_controle(pagina, perfil.strip()):
+        raise PerfilNaoInformado(
+            f"A opcao {perfil.strip()!r} foi escolhida e o controle nao passou "
+            "a mostra-la. O botao de entrar so habilita depois disso, entao "
+            "clicar nele nao faria nada. Nada foi enviado.")
 
     entrar = elemento_visivel(pagina, alvo_do_entrar)
     if entrar is None:

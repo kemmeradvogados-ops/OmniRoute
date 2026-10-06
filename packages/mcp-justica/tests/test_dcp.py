@@ -717,7 +717,9 @@ class _ListaDePerfil:
         self.tela, self.textos = tela, textos
         self.escolhido = None
 
-    def evaluate(self, _):
+    def evaluate(self, roteiro):
+        if "selectedOptions" in roteiro or roteiro == "e => e.value || ''":
+            return self.escolhido or ""
         return list(self.textos)
 
     def select_option(self, label=None, **kw):
@@ -736,12 +738,16 @@ class _CaixaComRotulo:
 
     def __init__(self, tela, rotulo):
         self.tela, self.rotulo = tela, rotulo
+        self.valor = ""
 
     def get_attribute(self, nome):
         return self.rotulo if nome == "placeholder" else None
 
+    def evaluate(self, _):
+        return self.valor
+
     def inner_text(self):
-        return ""
+        return self.valor
 
     def is_visible(self):
         return True
@@ -757,6 +763,7 @@ class _CaixaComRotulo:
     def type(self, texto, delay=None):
         self.tela.digitado = texto
         self.tela.aberta = True
+        self.valor = ""
 
 
 class _ItemDaLista:
@@ -779,6 +786,8 @@ class _ItemDaLista:
 
     def click(self):
         self.tela.cliques.append(self.texto)
+        if self.tela.caixa is not None and self.tela.assume_o_valor:
+            self.tela.caixa.valor = self.texto
 
 
 class _TelaDePerfil:
@@ -786,11 +795,12 @@ class _TelaDePerfil:
 
     def __init__(self, url="https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil",
                  com_select=True, textos=("Usuário Comum", "Advogado"),
-                 abre_no_clique=True):
+                 abre_no_clique=True, assume_o_valor=True):
         self.url = url
         self.cliques = []
         self.aberta = False
         self.abre_no_clique = abre_no_clique
+        self.assume_o_valor = assume_o_valor
         self.digitado = None
         self.textos = list(textos)
         self.lista = _ListaDePerfil(self, textos) if com_select else None
@@ -1098,3 +1108,46 @@ def test_trava_barrando_o_programa_nao_vira_traceback():
         'identidade.sistema == "pje"')[0]
     assert "except NavegacaoBloqueada as exc:" in trecho
     assert "defeito deste programa, nao do portal" in trecho
+
+
+# ==========================================================================
+# Prova positiva antes de enviar
+#
+# Nas telas fotografadas em 06/10/2026 o botao "Entrar" nasce desabilitado,
+# em verde claro, e so fica verde forte depois de o controle assumir o perfil.
+# Clicar nele antes disso nao faz nada, e sem conferir o comando seguiria como
+# se tivesse entrado.
+# ==========================================================================
+
+from justica_mcp.dcp import perfil_assumido_pelo_controle  # noqa: E402
+
+
+def test_o_select_que_assumiu_o_perfil_e_prova():
+    tela, guarda = _TelaDePerfil(), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 2)
+    assert perfil_assumido_pelo_controle(tela, "Advogado") is True
+
+
+def test_a_caixa_que_assumiu_o_perfil_e_prova():
+    tela, guarda = _TelaDePerfil(com_select=False), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 2)
+    assert perfil_assumido_pelo_controle(tela, "Advogado") is True
+
+
+def test_controle_que_nao_assume_impede_o_envio():
+    """Clicar num botao que ainda nao habilitou nao faz nada, e seguir dali
+    seria dar o perfil por escolhido sem estar."""
+    tela = _TelaDePerfil(com_select=False, assume_o_valor=False)
+    with pytest.raises(PerfilNaoInformado, match="nao passou a mostra-la"):
+        escolher_perfil(tela, _Guarda(), "Advogado", 2)
+    assert "Entrar" not in tela.cliques
+
+
+def test_a_prova_vem_antes_do_clique_em_entrar():
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.escolher_perfil)
+    assert fonte.index("perfil_assumido_pelo_controle(") < fonte.index(
+        "entrar.click()")
