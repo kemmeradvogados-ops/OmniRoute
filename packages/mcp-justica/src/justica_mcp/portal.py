@@ -4909,7 +4909,7 @@ def _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave: str,
 #          em aba nova. Os identificadores dos campos nao apareceram nas fotos,
 #          entao o adaptador procura os campos pela forma e confere o que
 #          digitou antes de pesquisar; se a forma nao bater, ele para.
-SISTEMAS_COM_CONSULTA = frozenset({"esaj", "eproc", "pje"})
+SISTEMAS_COM_CONSULTA = frozenset({"esaj", "eproc", "pje", "dcp"})
 
 # Conferidos na tela real do TRF2 em 02/10/2026, depois da selecao de perfil:
 # `input#txtNumProcessoPesquisaRapida` com rotulo "Número do processo", e
@@ -5267,6 +5267,78 @@ def consultar_processo(
                 acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
                 sistema=identidade.sistema, numero=numero.formatado,
                 resultado=f"{dados['totais']['movimentacoes']} movimentacao(oes)",
+            )
+            return 0
+
+        if identidade.sistema == "dcp":
+            from .dcp import (ConsultaIndisponivel, DownloadIndisponivel,
+                              abrir_visualizador, baixar_integra)
+            from .dcp import buscar as buscar_dcp
+
+            print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
+            try:
+                buscar_dcp(pagina, guarda, numero, url, segundos)
+            except ConsultaIndisponivel as exc:
+                print(f"  [PAROU] {exc}")
+                _relatar_tela(pagina, "TELA ONDE PAROU")
+                return 1
+            print(f"  Endereco: {pagina.url}")
+            for recado in _mensagens_de_erro(pagina):
+                print(f"    O portal disse: {recado}")
+            estado_local.registrar(
+                acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+                sistema=identidade.sistema, numero=numero.formatado,
+                resultado="busca enviada",
+            )
+
+            # Abrir os autos e um SEGUNDO passo, e so acontece quando o
+            # operador pede documentos. Consultar e ler a capa; abrir o
+            # visualizador e entrar nos autos, e as duas coisas nao se
+            # confundem so porque ficam na mesma tela.
+            if documentos == "nenhum":
+                print("  Documentos nao pedidos: o visualizador NAO foi aberto.")
+                return 0
+
+            try:
+                janela = abrir_visualizador(pagina, guarda, segundos)
+            except ConsultaIndisponivel as exc:
+                print(f"  [PAROU] {exc}")
+                _relatar_tela(pagina, "TELA DO PROCESSO")
+                return 1
+            print(f"  Visualizador aberto: {janela.url[:80]}")
+            _assentar(janela, segundos)
+
+            try:
+                from .core.acervo import garantir_pasta
+
+                pasta = garantir_pasta(numero.apenas_digitos)
+                arquivo = baixar_integra(
+                    janela, guarda, pasta, numero.apenas_digitos, segundos)
+            except DownloadIndisponivel as exc:
+                print(f"  [PAROU] {exc}")
+                _relatar_tela(janela, "TELA DO VISUALIZADOR")
+                return 1
+            finally:
+                _fechar(janela)
+
+            tamanho = 0
+            try:
+                import os as _os
+
+                tamanho = _os.path.getsize(arquivo)
+            except OSError:
+                pass
+            print(f"\n  Integra gravada em {arquivo}")
+            print(f"  Tamanho: {tamanho} byte(s).")
+            # Dito sempre, e nao so quando algo parece errado: o advogado
+            # informou que processo grande as vezes nao baixa de uma vez, e um
+            # PDF parcial guardado como integra nao se denuncia sozinho.
+            print("  CONFIRA se o arquivo tem o processo inteiro. Processo grande")
+            print("  as vezes nao baixa de uma vez, e daqui nao da para saber.")
+            estado_local.registrar(
+                acao="copia_integral", tribunal=identidade.tribunal,
+                sistema=identidade.sistema, numero=numero.formatado,
+                resultado="integra gravada", detalhe=str(tamanho),
             )
             return 0
 

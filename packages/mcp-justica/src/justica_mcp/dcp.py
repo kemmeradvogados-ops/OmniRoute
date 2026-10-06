@@ -141,3 +141,241 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
     arquivo = pasta / f"integra-{sugerido}"
     baixado.save_as(str(arquivo))
     return str(arquivo)
+
+
+# ---------------------------------------------------------------------------
+# Consulta processual do Portal de Servicos
+#
+# Telas fotografadas em 06/10/2026, versao 5.25.2 do portal. O formulario
+# inteiro mora num QUADRO EMBUTIDO dentro da pagina do portal, e e por isso que
+# o relato da pagina de fora dizia "0 campos": o que importa esta no quadro.
+# ---------------------------------------------------------------------------
+
+SUFIXO_DA_CONSULTA = "/portalservicos/#/consproc/consultaportal"
+
+# O quadro onde o formulario vive, reconhecido pelo caminho.
+MARCA_DO_QUADRO = "/consultaprocessual/"
+
+# Tipo de numeracao. "Unica" ja vem marcada, e ainda assim e conferida: achar
+# a tela com "Antiga" marcada e digitar o numero unico devolve "nada
+# encontrado", que o advogado leria como processo inexistente.
+OPCAO_NUMERACAO_UNICA = "#numeracaoUnica"
+OPCAO_NUMERACAO_ANTIGA = "#numeracaoAntiga"
+
+# Os DOIS campos do numero, com `.8.19.` escrito fixo na tela entre eles.
+# Nao sao seis campos como no PJe: aqui o primeiro leva sequencial, digito e
+# ano juntos, e o segundo leva so a origem.
+CAMPO_INICIO = "input[name=numeroProcesso]"
+CAMPO_ORIGEM = "#inputSufixoUnica3"
+
+BOTAO_PESQUISAR = "Pesquisar"
+BOTAO_VISUALIZADOR = "Processo Eletrônico - Visualizador"
+
+# O `.8.19.` fixo entre os campos e o que amarra este formulario ao Tribunal
+# de Justica do Estado do Rio de Janeiro.
+SEGMENTO_DO_RIO = 8
+TRIBUNAL_DO_RIO = "19"
+
+
+class ConsultaIndisponivel(RuntimeError):
+    """A consulta parou antes de pesquisar, e nada foi enviado."""
+
+
+def endereco_da_consulta(url_de_login: str) -> str:
+    """Endereco da consulta processual, derivado do endereco de login."""
+    partes = (url_de_login or "").split("://", 1)
+    if len(partes) != 2 or not partes[1]:
+        raise ConsultaIndisponivel(
+            "Sem endereco de login configurado, nao da para achar a consulta.")
+    esquema, resto = partes
+    servidor = resto.split("/", 1)[0]
+    if not servidor:
+        raise ConsultaIndisponivel(
+            "O endereco de login nao tem servidor; nao da para achar a consulta.")
+    return f"{esquema}://{servidor}{SUFIXO_DA_CONSULTA}"
+
+
+def conferir_tribunal(numero: Any) -> None:
+    """Recusa numero que nao seja do Tribunal de Justica do Rio de Janeiro.
+
+    O formulario traz `.8.19.` escrito fixo entre os dois campos: o portal nao
+    pergunta segmento nem tribunal, ele os impoe. Mandar aqui um numero de
+    outro tribunal montaria, silenciosamente, o numero de UM PROCESSO QUE NAO
+    E O PEDIDO, e a tela que voltasse seria de outro feito ou de nenhum.
+    """
+    if int(numero.segmento) != SEGMENTO_DO_RIO or numero.tribunal != TRIBUNAL_DO_RIO:
+        raise ConsultaIndisponivel(
+            f"O numero {numero.formatado} e do segmento {numero.segmento} e do "
+            f"tribunal {numero.tribunal}. Esta tela tem '.{SEGMENTO_DO_RIO}."
+            f"{TRIBUNAL_DO_RIO}.' fixo entre os campos e so serve ao Tribunal de "
+            "Justica do Estado do Rio de Janeiro. Nada foi digitado.")
+
+
+def partes_do_numero(numero: Any) -> tuple[str, str]:
+    """O numero como esta tela o divide: inicio e origem."""
+    inicio = f"{numero.sequencial}-{numero.digito_verificador}.{numero.ano}"
+    return inicio, numero.origem
+
+
+def quadro_da_consulta(pagina: Any) -> Any:
+    """O quadro embutido onde o formulario vive, ou a propria pagina.
+
+    Devolver a pagina quando nao ha quadro nao e desistir: a conferencia
+    seguinte procura os campos, e e ela quem para com uma mensagem que diz o
+    que achou.
+    """
+    try:
+        for quadro in list(pagina.frames or [])[1:]:
+            if MARCA_DO_QUADRO in (quadro.url or ""):
+                return quadro
+    except Exception:
+        pass
+    return pagina
+
+
+def conferir_forma_do_formulario(quadro: Any) -> tuple:
+    """Acha os dois campos e o botao, e recusa a tela que nao bate.
+
+    Antes de digitar, nunca depois: campo que falta devolve busca vazia, e
+    busca vazia e indistinguivel de processo inexistente para quem le o
+    resultado.
+    """
+    from .portal import achar_opcional, elemento_visivel
+
+    inicio = elemento_visivel(quadro, CAMPO_INICIO)
+    origem = elemento_visivel(quadro, CAMPO_ORIGEM)
+    faltando = [nome for nome, alvo in
+                ((CAMPO_INICIO, inicio), (CAMPO_ORIGEM, origem)) if alvo is None]
+    if faltando:
+        raise ConsultaIndisponivel(
+            "A tela da consulta nao tem " + " nem ".join(faltando)
+            + ". Nada foi digitado. Ou a autenticacao parou antes dela, ou a "
+            "tela mudou desde 06/10/2026.")
+
+    pesquisar = elemento_visivel(quadro, f"texto={BOTAO_PESQUISAR}")
+    if pesquisar is None:
+        raise ConsultaIndisponivel(
+            f"O botao {BOTAO_PESQUISAR!r} nao esta na tela. Nada foi digitado.")
+
+    unica = achar_opcional(quadro, OPCAO_NUMERACAO_UNICA)
+    return inicio, origem, pesquisar, unica
+
+
+def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
+           segundos: int = 45) -> Any:
+    """Abre a consulta, digita o numero e pesquisa. Devolve o quadro usado.
+
+    Somente leitura: preenche e pesquisa. Nao abre o visualizador e nao baixa
+    nada, porque abrir os autos e ato separado.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import _assentar, permissao_efemera, preencher_conferindo
+
+    conferir_tribunal(numero)
+    destino = endereco_da_consulta(url_de_login)
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(destino).padrao_url,
+        descricao="consulta processual do Portal de Servicos",
+        conferido_em="execucao atual",
+    ))
+    guarda.pode_executar(Acao.NAVEGAR, destino, url=destino)
+    pagina.goto(destino, timeout=segundos * 1000, wait_until="domcontentloaded")
+    _assentar(pagina, segundos)
+
+    quadro = quadro_da_consulta(pagina)
+    inicio, origem, pesquisar, unica = conferir_forma_do_formulario(quadro)
+
+    # A autorizacao so e escrita DEPOIS de a forma bater, e nomeia o que a
+    # propria tela mostrou. Liberar antes seria liberar o que ainda nao se sabe
+    # o que e.
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="consulta processual, somente a busca",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(OPCAO_NUMERACAO_UNICA, f"texto={BOTAO_PESQUISAR}"),
+        seletores_preenchiveis=(CAMPO_INICIO, CAMPO_ORIGEM),
+    ))
+
+    # "Unica" ja vem marcada, e ainda assim e garantida: achar a tela com
+    # "Antiga" marcada e digitar o numero unico devolve "nada encontrado", que
+    # o advogado leria como processo inexistente.
+    if unica is not None:
+        try:
+            ja_marcada = unica.evaluate("e => !!e.checked")
+        except Exception:
+            ja_marcada = False
+        if not ja_marcada:
+            guarda.pode_executar(Acao.CLICAR, OPCAO_NUMERACAO_UNICA, url=pagina.url)
+            unica.click()
+
+    texto_inicio, texto_origem = partes_do_numero(numero)
+    for alvo, seletor, valor, rotulo in (
+        (inicio, CAMPO_INICIO, texto_inicio, "inicio do numero"),
+        (origem, CAMPO_ORIGEM, texto_origem, "origem do numero"),
+    ):
+        guarda.pode_executar(Acao.PREENCHER, seletor, url=pagina.url)
+        preencher_conferindo(alvo, valor, rotulo)
+
+    # Remonta o numero a partir da TELA, com o `.8.19.` que o portal impoe, e
+    # confere contra o pedido. Campo com mascara que recusa o formato fica
+    # vazio sem reclamar, e a busca volta "nada encontrado" por defeito nosso.
+    digitado = (_so_digitos(inicio) + str(SEGMENTO_DO_RIO) + TRIBUNAL_DO_RIO
+                + _so_digitos(origem))
+    if digitado != numero.apenas_digitos:
+        raise ConsultaIndisponivel(
+            f"O numero montado na tela ficou com {len(digitado)} digito(s) e nao "
+            f"confere com {numero.formatado}. Nada foi pesquisado.")
+
+    guarda.pode_executar(Acao.CLICAR, f"texto={BOTAO_PESQUISAR}", url=pagina.url)
+    pesquisar.click()
+    _assentar(pagina, segundos)
+    return quadro
+
+
+def _so_digitos(elemento: Any) -> str:
+    try:
+        return elemento.evaluate("e => (e.value || '').replace(/\\D/g, '')")
+    except Exception:
+        return ""
+
+
+def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45) -> Any:
+    """Clica em "Processo Eletronico - Visualizador" e devolve a JANELA NOVA.
+
+    O visualizador abre em janela propria, com um endereco cifrado que nao se
+    monta a partir do numero do processo: ele e gerado por este clique. Nao ha
+    como pular esta etapa.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import elemento_visivel, pagina_de, permissao_efemera
+
+    quadro = quadro_da_consulta(pagina)
+    botao = elemento_visivel(quadro, f"texto={BOTAO_VISUALIZADOR}")
+    if botao is None:
+        raise ConsultaIndisponivel(
+            f"O botao {BOTAO_VISUALIZADOR!r} nao esta na tela do processo. "
+            "Nada foi aberto.")
+
+    alvo = f"texto={BOTAO_VISUALIZADOR}"
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="abrir o Visualizador de Processos",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(alvo,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, alvo, url=pagina.url)
+
+    hospedeira = pagina_de(pagina)
+    try:
+        with hospedeira.context.expect_page(timeout=segundos * 1000) as nova:
+            botao.click()
+        janela = nova.value
+    except Exception as exc:
+        raise ConsultaIndisponivel(
+            f"O visualizador nao abriu em {segundos}s ({type(exc).__name__}). "
+            "Nada foi lido.") from None
+    try:
+        janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
+    except Exception:
+        pass
+    return janela

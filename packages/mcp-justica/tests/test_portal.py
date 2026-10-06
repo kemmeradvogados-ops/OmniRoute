@@ -2261,9 +2261,11 @@ def test_sistema_sem_consulta_e_recusado_sem_tocar_no_portal(capsys, monkeypatch
 
 
 def test_os_sistemas_com_consulta_sao_os_conferidos():
+    """O DCP do Tribunal de Justica do Rio de Janeiro entrou em 06/10/2026,
+    com a consulta do Portal de Servicos lida em campo."""
     from justica_mcp.portal import SISTEMAS_COM_CONSULTA
 
-    assert SISTEMAS_COM_CONSULTA == {"esaj", "eproc", "pje"}
+    assert SISTEMAS_COM_CONSULTA == {"esaj", "eproc", "pje", "dcp"}
 
 
 def test_numero_invalido_e_recusado_antes_de_tudo(capsys, monkeypatch):
