@@ -1056,3 +1056,45 @@ def test_o_relato_das_opcoes_corta_texto_longo():
     tela = _TelaDePerfil(com_select=False, textos=("Advogado", "x" * 80))
     tela.aberta = True
     assert opcoes_a_vista(tela) == ["Advogado"]
+
+
+# ==========================================================================
+# A trava barrando o proprio programa
+#
+# 06/10/2026: o comando terminou em traceback no meio da escolha do perfil. A
+# autorizacao liberava `select` para preencher, e o caminho de digitar usa a
+# caixa. A trava fez o que devia; a autorizacao e que estava incompleta.
+# ==========================================================================
+
+def test_a_caixa_e_liberada_para_clicar_e_para_preencher():
+    """Ela e clicada para abrir a lista e, quando a lista nao abre, recebe o
+    nome digitado."""
+    from justica_mcp.dcp import SELETOR_DA_CAIXA_DE_PERFIL
+
+    tela, guarda = _TelaDePerfil(com_select=False, abre_no_clique=False), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 2)
+    permissao = guarda.permissoes[0]
+    assert SELETOR_DA_CAIXA_DE_PERFIL in permissao.seletores_clicaveis
+    assert SELETOR_DA_CAIXA_DE_PERFIL in permissao.seletores_preenchiveis
+
+
+def test_o_select_continua_liberado_para_preencher():
+    from justica_mcp.dcp import SELETOR_DA_CAIXA_DE_PERFIL
+
+    tela, guarda = _TelaDePerfil(), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 2)
+    assert "select" in guarda.permissoes[0].seletores_preenchiveis
+
+
+def test_trava_barrando_o_programa_nao_vira_traceback():
+    """O operador nao tem o que fazer com um traceback, e ele parece defeito
+    grave do navegador."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
+        'identidade.sistema == "pje"')[0]
+    assert "except NavegacaoBloqueada as exc:" in trecho
+    assert "defeito deste programa, nao do portal" in trecho

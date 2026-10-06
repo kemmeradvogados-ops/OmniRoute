@@ -770,7 +770,11 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         conferido_em="execucao atual",
         seletores_clicaveis=(alvo_da_opcao, alvo_do_entrar,
                              SELETOR_DA_CAIXA_DE_PERFIL),
-        seletores_preenchiveis=("select",),
+        # A caixa entra nos DOIS: ela e clicada para abrir a lista e, quando a
+        # lista nao abre, recebe o nome digitado. Liberar so `select` deixava o
+        # caminho de digitar barrado pela propria trava, e o comando terminava
+        # em traceback no meio da escolha do perfil.
+        seletores_preenchiveis=("select", SELETOR_DA_CAIXA_DE_PERFIL),
     ))
 
     from .portal import esperar_tela_montar

@@ -5405,6 +5405,16 @@ def consultar_processo(
                     print(f"  [PAROU] {exc}")
                     _relatar_tela(pagina, "TELA DO TIPO DE USUARIO")
                     return 1
+                except NavegacaoBloqueada as exc:
+                    # A trava barrando o proprio programa e defeito DESTE lado,
+                    # nao do portal, e nao pode chegar ao operador como
+                    # traceback: ele nao tem o que fazer com um, e o traceback
+                    # parece defeito grave do navegador.
+                    print(f"  [PAROU] A trava barrou uma acao do proprio comando: {exc}")
+                    print("  Isto e defeito deste programa, nao do portal. Nada")
+                    print("  foi feito na tela, e a sessao continua aberta.")
+                    _relatar_tela(pagina, "TELA DO TIPO DE USUARIO")
+                    return 1
                 print(f"  Tipo de usuario: {perfil}.")
                 _assentar(pagina, segundos)
 
