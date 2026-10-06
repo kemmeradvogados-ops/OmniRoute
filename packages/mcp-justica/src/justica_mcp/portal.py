@@ -345,10 +345,12 @@ def janela_de(pagina: Any) -> dict:
         return {"width": 1280, "height": 720}
 
 
-# Quantas opcoes de uma lista de escolha cabem no relato, e qual o tamanho
-# maximo de um valor para ele contar como CODIGO e nao como dado.
+# Quantas opcoes de uma lista de escolha cabem no relato, o tamanho maximo de
+# um valor, e a partir de quantos digitos uma sequencia so de numeros deixa de
+# ser codigo e passa a cheirar a documento.
 TETO_DE_OPCOES = 30
-TAMANHO_DE_CODIGO = 12
+TAMANHO_DE_CODIGO = 24
+DIGITOS_QUE_VIRAM_DOCUMENTO = 8
 
 
 def parece_codigo(valor: str) -> bool:
@@ -361,15 +363,30 @@ def parece_codigo(valor: str) -> bool:
     escolher o sistema e para escolher entre processos de clientes, e o relato
     e colado em conversa.
 
-    O corte e pela FORMA do valor. Sigla de sistema ("DCP", "EPROC") e codigo
-    curto sem espaco e sem pontuacao. Numero de processo tem pontuacao e vinte
-    e cinco caracteres; nome de parte tem espaco. Nenhum dos dois passa, e o
-    que nao passa e CONTADO, nunca impresso.
+    A primeira versao cortava por tamanho, em doze caracteres, e escondeu
+    justamente o que o operador procurava: `PORTALSERVICOS` tem quatorze. O
+    tamanho era a medida errada. O que separa codigo de dado nao e o
+    comprimento e sim a FORMA:
+
+      - espaco ou pontuacao derrubam, e isso ja basta para nome de parte
+        ("Fulano de Tal") e para numero de processo formatado
+        ("0854091-62.2024.8.19.0001");
+      - sequencia so de digitos com oito ou mais derruba tambem, e e esta
+        linha que protege o que o tamanho nunca protegeu: numero de processo
+        sem pontuacao tem vinte, cadastro de pessoa fisica tem onze, de pessoa
+        juridica tem quatorze. Nenhum dos tres passa;
+      - valor curto so de digitos ("1", "2") passa, porque e indice de lista e
+        nao diz nada sobre ninguem.
+
+    O que nao passa e CONTADO, nunca impresso.
     """
     limpo = (valor or "").strip()
     if not limpo or len(limpo) > TAMANHO_DE_CODIGO:
         return False
-    return limpo.replace("_", "").replace("-", "").isalnum()
+    if not limpo.replace("_", "").replace("-", "").isalnum():
+        return False
+    so_digitos = limpo.replace("_", "").replace("-", "")
+    return not (so_digitos.isdigit() and len(so_digitos) >= DIGITOS_QUE_VIRAM_DOCUMENTO)
 
 
 def opcoes_de_escolha(elemento) -> Optional[str]:

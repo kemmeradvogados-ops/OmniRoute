@@ -4972,11 +4972,40 @@ def test_sigla_de_sistema_e_codigo():
         assert parece_codigo(valor), valor
 
 
+def test_sigla_longa_nao_e_cortada_por_tamanho():
+    """A primeira versao cortava em doze caracteres e escondeu justamente o que
+    o operador procurava: `PORTALSERVICOS` tem quatorze. Tamanho era a medida
+    errada."""
+    from justica_mcp.portal import parece_codigo
+
+    assert parece_codigo("PORTALSERVICOS") is True
+
+
 def test_numero_de_processo_nao_e_codigo():
-    """Vinte e cinco caracteres e pontuacao: nao passa, e nao pode passar."""
+    """Nas duas formas. Com pontuacao cai pela pontuacao; sem pontuacao sao
+    vinte digitos, e e a regra dos digitos que o pega."""
     from justica_mcp.portal import parece_codigo
 
     assert parece_codigo("0854091-62.2024.8.19.0001") is False
+    assert parece_codigo("08540916220248190001") is False
+
+
+def test_cadastro_de_pessoa_nao_e_codigo():
+    """Onze digitos na pessoa fisica, quatorze na juridica. Nenhum passa, e e
+    esta linha que protege o que o corte por tamanho nunca protegeu."""
+    from justica_mcp.portal import parece_codigo
+
+    assert parece_codigo("13169898795") is False
+    assert parece_codigo("12345678000199") is False
+
+
+def test_indice_curto_de_lista_continua_passando():
+    """Valor so de digitos e curto e indice de lista, e nao diz nada sobre
+    ninguem."""
+    from justica_mcp.portal import parece_codigo
+
+    assert parece_codigo("1") is True
+    assert parece_codigo("2") is True
 
 
 def test_nome_de_parte_nao_e_codigo():
