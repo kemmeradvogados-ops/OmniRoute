@@ -5820,3 +5820,91 @@ def test_a_recusa_so_e_anunciada_depois_da_espera():
     trecho = fonte.split("campo is None and campo_codigo == SEM_SEGUNDO_FATOR")[1]
     assert "if not esperar_sair_do_login(pagina):" in trecho
     assert "_tem_formulario_de_login(pagina):" not in trecho.split("elif campo is None")[0]
+
+
+# ==========================================================================
+# Tela de aplicacao de pagina unica chega vazia e se monta depois
+#
+# Portal de Servicos do Tribunal de Justica do Rio de Janeiro, 06/10/2026,
+# duas corridas seguidas: o relato dizia "0 campos, 0 botoes" numa tela que o
+# reconhecimento, feito sem pressa, mostrava com tres campos e dez botoes. A
+# mensagem acusava falta de `#sistema`, o que soava como tela mudada, e era so
+# pressa.
+# ==========================================================================
+
+class _BotaoMontado:
+    """Botao com tudo o que `_coletar` e `_por_texto_exato` tocam."""
+
+    def __init__(self, pagina):
+        self.pagina = pagina
+
+    def inner_text(self):
+        return "Entrar"
+
+    def get_attribute(self, _):
+        return None
+
+    def evaluate(self, roteiro):
+        return "button" if "tagName" in roteiro else None
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 80, "height": 30}
+
+
+class _TelaQueSeMonta:
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, olhadas_ate_montar):
+        self.olhadas = 0
+        self.ate_montar = olhadas_ate_montar
+        self.esperas = 0
+
+    def query_selector_all(self, seletor):
+        self.olhadas += 1
+        if self.olhadas < self.ate_montar:
+            return []
+        # A consulta de CAMPOS e exatamente "input, select, textarea"; a de
+        # botoes tambem cita `input`, entao comparar por conter "input"
+        # devolvia vazio para as duas.
+        if seletor == "input, select, textarea":
+            return []
+        return [_BotaoMontado(self)]
+
+    def query_selector(self, _):
+        return None
+
+    def wait_for_timeout(self, _):
+        self.esperas += 1
+
+
+def test_elemento_que_demora_a_aparecer_e_esperado():
+    from justica_mcp.portal import esperar_elemento
+
+    tela = _TelaQueSeMonta(olhadas_ate_montar=3)
+    assert esperar_elemento(tela, "texto=Entrar", segundos=5) is not None
+
+
+def test_elemento_que_nunca_aparece_devolve_nada_no_prazo():
+    from justica_mcp.portal import esperar_elemento
+
+    tela = _TelaQueSeMonta(olhadas_ate_montar=10**9)
+    assert esperar_elemento(tela, "texto=Entrar", segundos=1) is None
+
+
+def test_tela_vazia_nao_conta_como_montada():
+    """Tela de verdade tem algo; tela vazia e tela que ainda nao existe."""
+    from justica_mcp.portal import esperar_tela_montar
+
+    assert esperar_tela_montar(_TelaQueSeMonta(10**9), segundos=1) is False
+
+
+def test_tela_que_termina_de_montar_e_reconhecida():
+    from justica_mcp.portal import esperar_tela_montar
+
+    assert esperar_tela_montar(_TelaQueSeMonta(olhadas_ate_montar=2), segundos=5) is True

@@ -1749,6 +1749,63 @@ def elemento_visivel(pagina: Any, seletor: str) -> Optional[Any]:
     return None
 
 
+# Quanto esperar uma tela de aplicacao de pagina unica terminar de se montar.
+ESPERA_PARA_A_TELA_MONTAR = 20
+
+
+def esperar_elemento(pagina, seletor: str, segundos: int = ESPERA_PARA_A_TELA_MONTAR):
+    """Espera o elemento aparecer, e devolve-o, ou None no fim do prazo.
+
+    Aplicacao de pagina unica monta a tela por script DEPOIS de o endereco
+    mudar. Entre a troca de rota e a montagem existe uma janela em que o
+    documento esta vazio, e olhar uma vez so, logo apos chegar, cai nela.
+
+    Foi o que aconteceu no Portal de Servicos do Tribunal de Justica do Rio de
+    Janeiro em 06/10/2026, duas vezes seguidas: o relato dizia "0 campos, 0
+    botoes" numa tela que o reconhecimento, feito sem pressa, mostrava com tres
+    campos e dez botoes. A mensagem acusava falta de `#sistema`, o que soava
+    como tela mudada, e era so pressa.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    while True:
+        achado = elemento_visivel(pagina, seletor)
+        if achado is not None:
+            return achado
+        if _tempo.monotonic() >= limite:
+            return None
+        try:
+            pagina.wait_for_timeout(400)
+        except Exception:
+            _tempo.sleep(0.4)
+
+
+def esperar_tela_montar(pagina, segundos: int = ESPERA_PARA_A_TELA_MONTAR) -> bool:
+    """Espera a tela ter ALGUM campo ou botao. Diz se teve.
+
+    Prova generica de que a montagem terminou, para quando nao se sabe de
+    antemao qual elemento esperar. Tela de verdade tem algo; tela vazia e
+    tela que ainda nao existe.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    while True:
+        try:
+            campos, botoes = _coletar(pagina)
+        except Exception:
+            campos, botoes = [], []
+        if campos or botoes:
+            return True
+        if _tempo.monotonic() >= limite:
+            return False
+        try:
+            pagina.wait_for_timeout(400)
+        except Exception:
+            _tempo.sleep(0.4)
+
+
 def _perfis_disponiveis(botoes: list["Campo"]) -> list[tuple[str, str]]:
     """Botoes de escolha de inscricao na tela de selecao de perfil.
 

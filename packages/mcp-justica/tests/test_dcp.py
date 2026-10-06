@@ -426,7 +426,7 @@ def test_numeracao_antiga_marcada_e_corrigida():
 def test_tela_sem_um_dos_campos_para_antes_de_digitar():
     quadro = _QuadroDaConsulta(sem=[CAMPO_ORIGEM])
     with pytest.raises(ConsultaIndisponivel, match="inputSufixoUnica3"):
-        buscar(_PortalDeServicos(quadro), _Guarda(), parse_numero(PROCESSO), LOGIN, 5)
+        buscar(_PortalDeServicos(quadro), _Guarda(), parse_numero(PROCESSO), LOGIN, 1)
     assert quadro.cliques == []
 
 
@@ -603,14 +603,20 @@ class _TelaDeSelecao:
         self.enviar = _BotaoDoQuadro(self, BOTAO_ENVIAR) if tem_enviar else None
 
     def query_selector(self, seletor):
-        if seletor == LISTA_DE_SISTEMAS:
-            return self.lista
-        if seletor == ABRIR_EM_ABA:
-            return self.aba
-        return None
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
 
-    def query_selector_all(self, _):
+    def query_selector_all(self, seletor):
+        # Responde por seletor, como o navegador: um fake que devolve o mesmo
+        # elemento para tudo faz a lista de sistemas ser achada no botao.
+        if seletor == LISTA_DE_SISTEMAS:
+            return [self.lista] if self.lista else []
+        if seletor == ABRIR_EM_ABA:
+            return [self.aba]
         return [self.enviar] if self.enviar else []
+
+    def wait_for_timeout(self, _):
+        pass
 
 
 def test_a_opcao_do_portal_e_achada_pela_sigla():
@@ -663,7 +669,7 @@ def test_sem_aba_nova_devolve_a_propria_tela():
 def test_tela_sem_a_lista_para_sem_escolher():
     tela, guarda = _TelaDeSelecao(tem_lista=False), _Guarda()
     with pytest.raises(ConsultaIndisponivel, match="nao tem #sistema"):
-        entrar_no_portal_de_servicos(tela, guarda, 5)
+        entrar_no_portal_de_servicos(tela, guarda, 1)
     assert tela.cliques == []
 
 
@@ -754,7 +760,7 @@ def test_a_tela_de_perfil_e_reconhecida_pelo_endereco():
 def test_outra_tela_nao_e_confundida_com_a_de_perfil():
     tela = _TelaDePerfil(url="https://www3.tjrj.jus.br/portalservicos/#/dashboard")
     tela.botoes = [_BotaoDoQuadro(tela, "Atualizar")]
-    assert na_tela_de_perfil(tela) is False
+    assert na_tela_de_perfil(tela, segundos=1) is False
 
 
 def test_os_perfis_oferecidos_sao_lidos():

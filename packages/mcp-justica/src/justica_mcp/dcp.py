@@ -233,16 +233,18 @@ def quadro_da_consulta(pagina: Any) -> Any:
     return pagina
 
 
-def conferir_forma_do_formulario(quadro: Any) -> tuple:
+def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
     """Acha os dois campos e o botao, e recusa a tela que nao bate.
 
     Antes de digitar, nunca depois: campo que falta devolve busca vazia, e
     busca vazia e indistinguivel de processo inexistente para quem le o
     resultado.
     """
-    from .portal import achar_opcional, elemento_visivel
+    from .portal import achar_opcional, elemento_visivel, esperar_elemento
 
-    inicio = elemento_visivel(quadro, CAMPO_INICIO)
+    # Espera o primeiro campo, e so entao procura o resto: numa aplicacao de
+    # pagina unica a tela chega vazia e se monta depois.
+    inicio = esperar_elemento(quadro, CAMPO_INICIO, segundos)
     origem = elemento_visivel(quadro, CAMPO_ORIGEM)
     faltando = [nome for nome, alvo in
                 ((CAMPO_INICIO, inicio), (CAMPO_ORIGEM, origem)) if alvo is None]
@@ -283,7 +285,8 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     _assentar(pagina, segundos)
 
     quadro = quadro_da_consulta(pagina)
-    inicio, origem, pesquisar, unica = conferir_forma_do_formulario(quadro)
+    inicio, origem, pesquisar, unica = conferir_forma_do_formulario(
+        quadro, segundos)
 
     # A autorizacao so e escrita DEPOIS de a forma bater, e nomeia o que a
     # propria tela mostrou. Liberar antes seria liberar o que ainda nao se sabe
@@ -396,6 +399,9 @@ ABRIR_EM_ABA = "#optionAba"
 ABRIR_EM_JANELA = "#optionPopup"
 BOTAO_ENVIAR = "Enviar"
 
+# Como se reconhece que a sessao ja esta DENTRO do Portal de Servicos.
+MARCA_DO_PORTAL = "/portalservicos"
+
 SIGLA_DO_PORTAL = "PORTALSERVICOS"
 NOME_DO_PORTAL = "portal de servicos"
 
@@ -431,13 +437,30 @@ def entrar_no_portal_de_servicos(pagina: Any, guarda: Any, segundos: int = 45) -
     """
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import (PREFIXO_DE_TEXTO, achar_opcional, elemento_visivel,
-                         pagina_de, permissao_efemera)
+                         esperar_elemento, esperar_tela_montar, pagina_de,
+                         permissao_efemera)
 
-    lista = achar_opcional(pagina, LISTA_DE_SISTEMAS)
+    # O endereco de login carrega `sgSist=PORTALSERVICOS`, e o portal as vezes
+    # entra sozinho naquele sistema, sem passar pela escolha. Conferido em
+    # campo em 06/10/2026: uma corrida parou ja dentro de `/portalservicos/`
+    # sem nada ter sido selecionado. Quando a sessao ja esta la, insistir na
+    # tela de selecao e procurar uma tela que nao existe mais.
+    if MARCA_DO_PORTAL in (pagina.url or ""):
+        return pagina
+
+    lista = esperar_elemento(pagina, LISTA_DE_SISTEMAS, segundos)
+    if lista is None and MARCA_DO_PORTAL in (pagina.url or ""):
+        # Entrou enquanto se esperava.
+        return pagina
     if lista is None:
+        montou = esperar_tela_montar(pagina, min(segundos, 5))
         raise ConsultaIndisponivel(
             f"A tela de selecao de sistemas nao tem {LISTA_DE_SISTEMAS}. "
-            f"Endereco atual: {pagina.url[:80]}. Nada foi escolhido.")
+            f"Endereco atual: {pagina.url[:80]}. "
+            + ("A tela montou e a lista nao esta nela."
+               if montou else "A tela nao chegou a montar: nenhum campo e nenhum "
+                              "botao apareceram no prazo.")
+            + " Nada foi escolhido.")
 
     valor = escolher_opcao_do_portal(lista)
     if valor is None:
@@ -507,16 +530,22 @@ class PerfilNaoInformado(RuntimeError):
     """A tela pediu o tipo de usuario e ninguem disse qual."""
 
 
-def na_tela_de_perfil(pagina: Any) -> bool:
-    """Se a tela que pede o tipo de usuario esta aberta."""
-    from .portal import PREFIXO_DE_TEXTO, elemento_visivel
+def na_tela_de_perfil(pagina: Any, segundos: int = 8) -> bool:
+    """Se a tela que pede o tipo de usuario esta aberta.
+
+    O endereco basta e e imediato. Sem ele, espera o titulo aparecer: a tela
+    chega vazia e se monta depois, e olhar uma vez so responderia "nao" a uma
+    tela que esta chegando.
+    """
+    from .portal import PREFIXO_DE_TEXTO, esperar_elemento
 
     try:
         if TELA_DE_PERFIL in (pagina.url or ""):
             return True
     except Exception:
         pass
-    return elemento_visivel(pagina, f"{PREFIXO_DE_TEXTO}{TITULO_DO_PERFIL}") is not None
+    return esperar_elemento(
+        pagina, f"{PREFIXO_DE_TEXTO}{TITULO_DO_PERFIL}", segundos) is not None
 
 
 def _lista_de_perfil(pagina: Any) -> Optional[Any]:
@@ -582,6 +611,9 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         seletores_preenchiveis=("select",),
     ))
 
+    from .portal import esperar_tela_montar
+
+    esperar_tela_montar(pagina, segundos=min(segundos, 8))
     lista = _lista_de_perfil(pagina)
     if lista is not None:
         casados = [t for t in perfis_oferecidos(pagina)
