@@ -5908,3 +5908,38 @@ def test_tela_que_termina_de_montar_e_reconhecida():
     from justica_mcp.portal import esperar_tela_montar
 
     assert esperar_tela_montar(_TelaQueSeMonta(olhadas_ate_montar=2), segundos=5) is True
+
+
+# ==========================================================================
+# O formulario de login tambem chega depois do endereco
+#
+# IdServerJus do Tribunal de Justica do Rio de Janeiro, 06/10/2026: a tela de
+# login veio com "CAMPOS NA TELA (0 de 0)" e tres botoes de acessibilidade. O
+# comando anunciou que o campo de usuario nao existia, numa tela que estava so
+# terminando de se montar. Mesmo defeito ja corrigido nas telas de dentro, e
+# que faltava na primeira.
+# ==========================================================================
+
+def test_a_credencial_espera_o_formulario_montar():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    etapa = fonte.split("etapa 1: credencial")[1].split("etapa 2")[0]
+    assert "esperar_elemento(pagina, campo_usuario" in etapa
+    # A espera vem ANTES de procurar o campo, ou nao serve para nada.
+    assert etapa.index("esperar_elemento(pagina, campo_usuario") < etapa.index(
+        "elemento_visivel(pagina, seletor)")
+
+
+def test_campo_ausente_distingue_tela_que_nao_montou():
+    """Tela que nao montou nao e seletor mudado, e ali repetir e o certo."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    etapa = fonte.split("etapa 1: credencial")[1].split("etapa 2")[0]
+    assert "esperar_tela_montar(pagina" in etapa
+    assert "repetir o comando e o certo" in etapa

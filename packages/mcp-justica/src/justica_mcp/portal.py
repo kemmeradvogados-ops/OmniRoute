@@ -2786,6 +2786,14 @@ def autenticar(
                         url = pagina.url
 
                 # ---------- etapa 1: credencial ----------
+                # O formulario de login pode nao existir ainda. Em portal que
+                # monta a tela por script, o endereco chega antes dos campos, e
+                # olhar nesse instante faz o comando anunciar que o campo nao
+                # existe numa tela que estava so terminando de se montar. Vale
+                # a pena esperar aqui e nao em cada campo: quando o primeiro
+                # aparece, o resto do formulario ja veio com ele.
+                esperar_elemento(pagina, campo_usuario,
+                                 min(segundos, ESPERA_PARA_A_TELA_MONTAR))
                 for seletor, valor, rotulo in (
                     (campo_usuario, login, "usuario"), (campo_senha, senha, "senha"),
                 ):
@@ -2822,8 +2830,13 @@ def autenticar(
                                     sistema=identidade.sistema,
                                     resultado="portal_fora_do_ar")
                                 return 1
+                            montou = esperar_tela_montar(pagina, min(segundos, 5))
                             print(f"  [FALHA] Campo de {rotulo} ({seletor}) nao "
                                   "encontrado. Nada enviado.")
+                            if not montou:
+                                print("  A tela nao chegou a montar: nenhum campo e")
+                                print("  nenhum botao apareceram no prazo. Nao e")
+                                print("  seletor mudado, e repetir o comando e o certo.")
                         _relatar_tela(pagina, "TELA DE LOGIN")
                         return 1
                     guarda.pode_executar(Acao.PREENCHER, seletor, url=url)
