@@ -233,6 +233,78 @@ def quadro_da_consulta(pagina: Any) -> Any:
     return pagina
 
 
+# ---------------------------------------------------------------------------
+# A consulta se alcanca pelo MENU, nunca por endereco
+#
+# Conferido em campo em 06/10/2026: navegar para `#/consproc/consultaportal`
+# com a sessao aberta devolveu a pagina publica do tribunal. Rota `#/` nao e
+# endereco novo para o navegador, e sim estado interno da aplicacao; mandar o
+# navegador ir ate la RECARREGA a pagina inteira, a aplicacao perde o que
+# tinha em memoria e o portal manda o visitante para fora.
+#
+# O caminho que funciona e o do operador: clicar "Consultas" no menu lateral e
+# escolher "Consultas Processuais" na caixa que abre.
+# ---------------------------------------------------------------------------
+
+MENU_DE_CONSULTAS = "#CONSULTAS"
+ITEM_DA_CONSULTA = "Consultas Processuais"
+MARCA_DA_CONSULTA = "consproc"
+
+
+def ja_esta_na_consulta(pagina: Any) -> bool:
+    try:
+        return MARCA_DA_CONSULTA in (pagina.url or "")
+    except Exception:
+        return False
+
+
+def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> None:
+    """Do painel ate a consulta processual, pelo menu lateral."""
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import (PREFIXO_DE_TEXTO, esperar_elemento, permissao_efemera)
+
+    if ja_esta_na_consulta(pagina):
+        return
+
+    alvo_do_item = f"{PREFIXO_DE_TEXTO}{ITEM_DA_CONSULTA}"
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="abrir a consulta processual pelo menu",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(MENU_DE_CONSULTAS, alvo_do_item),
+    ))
+
+    menu = esperar_elemento(pagina, MENU_DE_CONSULTAS, min(segundos, 20))
+    if menu is None:
+        raise ConsultaIndisponivel(
+            f"O menu {MENU_DE_CONSULTAS} nao esta na tela ({pagina.url[:80]}). "
+            "Nada foi clicado.")
+    guarda.pode_executar(Acao.CLICAR, MENU_DE_CONSULTAS, url=pagina.url)
+    menu.click()
+
+    item = esperar_elemento(pagina, alvo_do_item, min(segundos, 15))
+    if item is None:
+        raise ConsultaIndisponivel(
+            f"O item {ITEM_DA_CONSULTA!r} nao apareceu depois de o menu ser "
+            "clicado. Nada mais foi clicado.")
+    guarda.pode_executar(Acao.CLICAR, alvo_do_item, url=pagina.url)
+    item.click()
+
+    # Prova positiva de que o clique levou aonde devia, em vez de confiar nele.
+    import time as _tempo
+
+    limite = _tempo.monotonic() + min(segundos, 20)
+    while not ja_esta_na_consulta(pagina):
+        if _tempo.monotonic() >= limite:
+            raise ConsultaIndisponivel(
+                f"O item {ITEM_DA_CONSULTA!r} foi clicado e a tela nao chegou a "
+                f"consulta. Endereco atual: {pagina.url[:80]}. Nada foi digitado.")
+        try:
+            pagina.wait_for_timeout(400)
+        except Exception:
+            _tempo.sleep(0.4)
+
+
 def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
     """Acha os dois campos e o botao, e recusa a tela que nao bate.
 
@@ -274,14 +346,11 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     from .portal import _assentar, permissao_efemera, preencher_conferindo
 
     conferir_tribunal(numero)
-    destino = endereco_da_consulta(url_de_login)
-    guarda.permissoes.append(Permissao(
-        padrao_url=permissao_efemera(destino).padrao_url,
-        descricao="consulta processual do Portal de Servicos",
-        conferido_em="execucao atual",
-    ))
-    guarda.pode_executar(Acao.NAVEGAR, destino, url=destino)
-    pagina.goto(destino, timeout=segundos * 1000, wait_until="domcontentloaded")
+    # Pelo MENU, nunca por endereco: rota `#/` nao e endereco novo para o
+    # navegador, e sim estado interno da aplicacao. Mandar o navegador ir ate
+    # la recarrega a pagina, a aplicacao perde o que tinha em memoria e o
+    # portal manda o visitante para a pagina publica. Conferido em campo.
+    abrir_consulta_pelo_menu(pagina, guarda, segundos)
     _assentar(pagina, segundos)
 
     quadro = quadro_da_consulta(pagina)

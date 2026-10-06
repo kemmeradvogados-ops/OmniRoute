@@ -359,23 +359,64 @@ class _QuadroDaConsulta:
         return achados[0] if achados else None
 
 
+class _ItemDeMenu:
+    def __init__(self, portal, nome, leva_a_consulta=False):
+        self.portal, self.nome = portal, nome
+        self.leva_a_consulta = leva_a_consulta
+
+    def inner_text(self):
+        return self.nome
+
+    def get_attribute(self, _):
+        return None
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 120, "height": 30}
+
+    def click(self):
+        self.portal.cliques.append(self.nome)
+        if self.nome == "menu":
+            self.portal.menu_aberto = True
+        if self.leva_a_consulta and self.portal.o_menu_funciona:
+            self.portal.url = (
+                "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal")
+
+
 class _PortalDeServicos:
-    url = "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal"
     viewport_size = {"width": 1280, "height": 800}
 
-    def __init__(self, quadro):
+    def __init__(self, quadro, comeca_na_consulta=True, tem_menu=True,
+                 o_menu_funciona=True):
         self.quadro = quadro
         self.frames = [self, quadro]
         self.navegou = []
+        self.cliques = []
+        self.menu_aberto = False
+        self.tem_menu = tem_menu
+        self.o_menu_funciona = o_menu_funciona
+        self.url = ("https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal"
+                    if comeca_na_consulta
+                    else "https://www3.tjrj.jus.br/portalservicos/#/dashboard")
 
     def goto(self, destino, **kw):
         self.navegou.append(destino)
 
-    def query_selector_all(self, _):
+    def query_selector_all(self, seletor):
+        if seletor == "#CONSULTAS":
+            return [_ItemDeMenu(self, "menu")] if self.tem_menu else []
+        if self.menu_aberto:
+            return [_ItemDeMenu(self, "Consultas Processuais", True)]
         return []
 
-    def query_selector(self, _):
-        return None
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def wait_for_timeout(self, _):
+        pass
 
     def wait_for_load_state(self, *a, **kw):
         pass
@@ -1151,3 +1192,58 @@ def test_a_prova_vem_antes_do_clique_em_entrar():
     fonte = inspect.getsource(dcp.escolher_perfil)
     assert fonte.index("perfil_assumido_pelo_controle(") < fonte.index(
         "entrar.click()")
+
+
+# ==========================================================================
+# A consulta se alcanca pelo MENU, nunca por endereco
+#
+# 06/10/2026: navegar para `#/consproc/consultaportal` com a sessao aberta
+# devolveu a pagina publica do tribunal. Rota `#/` nao e endereco novo para o
+# navegador, e sim estado interno da aplicacao: mandar o navegador ir ate la
+# RECARREGA a pagina, a aplicacao perde o que tinha em memoria e o portal
+# manda o visitante para fora.
+# ==========================================================================
+
+from justica_mcp.dcp import (  # noqa: E402
+    ITEM_DA_CONSULTA, MENU_DE_CONSULTAS, abrir_consulta_pelo_menu,
+    ja_esta_na_consulta,
+)
+
+
+def test_a_consulta_e_alcancada_clicando_no_menu():
+    portal = _PortalDeServicos(_QuadroDaConsulta(), comeca_na_consulta=False)
+    abrir_consulta_pelo_menu(portal, _Guarda(), 5)
+    assert portal.cliques == ["menu", ITEM_DA_CONSULTA]
+    assert ja_esta_na_consulta(portal)
+
+
+def test_quem_ja_esta_na_consulta_nao_clica_em_nada():
+    portal = _PortalDeServicos(_QuadroDaConsulta(), comeca_na_consulta=True)
+    abrir_consulta_pelo_menu(portal, _Guarda(), 5)
+    assert portal.cliques == []
+
+
+def test_a_busca_nao_navega_por_endereco():
+    """O `goto` para rota `#/` e justamente o que derrubava a sessao."""
+    portal = _PortalDeServicos(_QuadroDaConsulta(), comeca_na_consulta=False)
+    buscar(portal, _Guarda(), parse_numero(PROCESSO), LOGIN, 5)
+    assert portal.navegou == []
+
+
+def test_sem_o_menu_a_busca_para_sem_digitar():
+    quadro = _QuadroDaConsulta()
+    portal = _PortalDeServicos(quadro, comeca_na_consulta=False, tem_menu=False)
+    with pytest.raises(ConsultaIndisponivel, match=MENU_DE_CONSULTAS):
+        buscar(portal, _Guarda(), parse_numero(PROCESSO), LOGIN, 1)
+    assert quadro.cliques == []
+
+
+def test_clique_que_nao_leva_a_consulta_e_denunciado():
+    """Prova positiva de que o clique levou aonde devia, em vez de confiar
+    nele."""
+    quadro = _QuadroDaConsulta()
+    portal = _PortalDeServicos(quadro, comeca_na_consulta=False,
+                               o_menu_funciona=False)
+    with pytest.raises(ConsultaIndisponivel, match="nao chegou a consulta"):
+        buscar(portal, _Guarda(), parse_numero(PROCESSO), LOGIN, 1)
+    assert quadro.cliques == []
