@@ -681,6 +681,62 @@ def achar_opcao_na_lista(pagina: Any, texto: str) -> Optional[Any]:
     return None
 
 
+# Quanto esperar a lista de opcoes aparecer depois do clique na caixa.
+ESPERA_DA_LISTA = 8
+
+
+def esperar_opcao_na_lista(pagina: Any, texto: str,
+                           segundos: int = ESPERA_DA_LISTA) -> Optional[Any]:
+    """Espera a opcao aparecer depois de a caixa ser aberta.
+
+    Olhar meio segundo depois do clique nao basta: a lista e montada por
+    script, com animacao, e meio segundo pegava a tela ainda sem ela. Foi o
+    que aconteceu em 06/10/2026, com a caixa ja clicada, conforme o relato da
+    trava, e a opcao anunciada como ausente.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    while True:
+        achada = achar_opcao_na_lista(pagina, texto)
+        if achada is not None:
+            return achada
+        if _tempo.monotonic() >= limite:
+            return None
+        try:
+            pagina.wait_for_timeout(300)
+        except Exception:
+            _tempo.sleep(0.3)
+
+
+def opcoes_a_vista(pagina: Any, teto: int = 12) -> list[str]:
+    """Textos curtos das opcoes visiveis, para o relato de quando nao se acha.
+
+    Vale para a tela do TIPO DE USUARIO, onde opcao e nome de perfil. O teto e
+    o corte por tamanho existem porque a mesma forma de lista serve para
+    escolher processo, e ali o texto seria dado de cliente.
+    """
+    vistos, saida = set(), []
+    for lugar in ("[role=option]", "li", "option"):
+        try:
+            achados = pagina.query_selector_all(lugar)
+        except Exception:
+            continue
+        for elemento in achados:
+            if len(saida) >= teto:
+                return saida
+            try:
+                if not elemento.is_visible():
+                    continue
+                texto = " ".join((elemento.inner_text() or "").split())
+            except Exception:
+                continue
+            if texto and len(texto) <= 60 and texto not in vistos:
+                vistos.add(texto)
+                saida.append(texto)
+    return saida
+
+
 def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                     segundos: int = 45) -> None:
     """Escolhe o tipo de usuario que o OPERADOR nomeou e entra.
@@ -744,15 +800,37 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         guarda.pode_executar(Acao.CLICAR, SELETOR_DA_CAIXA_DE_PERFIL,
                              url=pagina.url)
         caixa.click()
-        try:
-            pagina.wait_for_timeout(500)
-        except Exception:
-            pass
-        opcao = achar_opcao_na_lista(pagina, perfil.strip())
+        opcao = esperar_opcao_na_lista(pagina, perfil.strip(),
+                                       min(segundos, ESPERA_DA_LISTA))
+
         if opcao is None:
-            raise PerfilNaoInformado(
-                f"A opcao {perfil!r} nao apareceu na lista de tipos de usuario. "
-                "Nada foi escolhido.")
+            # A caixa e `input[type=text]`: pode ser de digitar e filtrar, e
+            # nesse caso o clique sozinho nao abre lista nenhuma. Digitar o
+            # que o OPERADOR nomeou nao e escolher por conta propria: e o
+            # mesmo valor, por outro caminho.
+            guarda.pode_executar(Acao.PREENCHER, SELETOR_DA_CAIXA_DE_PERFIL,
+                                 url=pagina.url)
+            try:
+                caixa.click()
+                caixa.type(perfil.strip(), delay=40)
+            except Exception as exc:
+                raise PerfilNaoInformado(
+                    f"A opcao {perfil!r} nao apareceu, e digitar na caixa falhou "
+                    f"({type(exc).__name__}). Nada foi escolhido.") from None
+            opcao = esperar_opcao_na_lista(pagina, perfil.strip(),
+                                           min(segundos, ESPERA_DA_LISTA))
+
+        if opcao is None:
+            a_vista = opcoes_a_vista(pagina)
+            recado = (f"A opcao {perfil!r} nao apareceu na lista de tipos de "
+                      "usuario, nem depois de a caixa ser clicada e o nome ser "
+                      "digitado nela.")
+            if a_vista:
+                recado += " A lista mostra: " + "; ".join(a_vista) + "."
+            else:
+                recado += (" Nenhuma opcao visivel na tela: a lista nao chegou a "
+                           "abrir.")
+            raise PerfilNaoInformado(recado + " Nada foi escolhido.")
         guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
         opcao.click()
 

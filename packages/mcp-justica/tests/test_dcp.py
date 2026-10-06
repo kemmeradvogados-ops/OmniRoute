@@ -751,6 +751,11 @@ class _CaixaComRotulo:
 
     def click(self):
         self.tela.cliques.append(self.rotulo)
+        if self.tela.abre_no_clique:
+            self.tela.aberta = True
+
+    def type(self, texto, delay=None):
+        self.tela.digitado = texto
         self.tela.aberta = True
 
 
@@ -780,10 +785,13 @@ class _TelaDePerfil:
     viewport_size = {"width": 1280, "height": 800}
 
     def __init__(self, url="https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil",
-                 com_select=True, textos=("Usuário Comum", "Advogado")):
+                 com_select=True, textos=("Usuário Comum", "Advogado"),
+                 abre_no_clique=True):
         self.url = url
         self.cliques = []
         self.aberta = False
+        self.abre_no_clique = abre_no_clique
+        self.digitado = None
         self.textos = list(textos)
         self.lista = _ListaDePerfil(self, textos) if com_select else None
         self.caixa = (None if com_select
@@ -801,6 +809,10 @@ class _TelaDePerfil:
         if seletor == "li":
             return ([_ItemDaLista(self, t) for t in self.textos]
                     if self.aberta else [])
+        # `option` e lugar de opcao, nao de botao: devolver os botoes aqui
+        # fazia "Entrar" e "Cancelar" entrarem no relato das opcoes.
+        if seletor == "option":
+            return []
         return list(self.botoes)
 
     def query_selector(self, seletor):
@@ -965,3 +977,82 @@ def test_o_caminho_sem_select_abre_a_caixa_escolhe_e_entra():
     tela, guarda = _TelaDePerfil(com_select=False), _Guarda()
     escolher_perfil(tela, guarda, "Advogado", 5)
     assert tela.cliques == ["Selecione perfil do usuário", "Advogado", "Entrar"]
+
+
+# ==========================================================================
+# A lista nao abre instantaneamente, e pode nem abrir no clique
+#
+# 06/10/2026: a caixa foi clicada, conforme o relato da trava, e a opcao foi
+# anunciada como ausente. Olhar meio segundo depois do clique pegava a tela
+# ainda sem a lista, que e montada por script e com animacao.
+# ==========================================================================
+
+from justica_mcp.dcp import esperar_opcao_na_lista, opcoes_a_vista  # noqa: E402
+
+
+class _ListaLenta(_TelaDePerfil):
+    """A lista so aparece depois de algumas olhadas."""
+
+    def __init__(self, olhadas_ate_abrir, **kw):
+        super().__init__(com_select=False, **kw)
+        self.olhadas = 0
+        self.ate_abrir = olhadas_ate_abrir
+        self.aberta = True
+
+    def query_selector_all(self, seletor):
+        if seletor == "li":
+            self.olhadas += 1
+            if self.olhadas < self.ate_abrir:
+                return []
+        return super().query_selector_all(seletor)
+
+
+def test_opcao_que_demora_a_aparecer_e_esperada():
+    tela = _ListaLenta(olhadas_ate_abrir=4)
+    assert esperar_opcao_na_lista(tela, "Advogado", 5) is not None
+
+
+def test_opcao_que_nunca_aparece_devolve_nada():
+    tela = _ListaLenta(olhadas_ate_abrir=10**9)
+    assert esperar_opcao_na_lista(tela, "Advogado", 1) is None
+
+
+def test_caixa_que_nao_abre_no_clique_recebe_o_nome_digitado():
+    """A caixa e `input[type=text]`: pode ser de digitar e filtrar, e nesse
+    caso o clique sozinho nao abre lista nenhuma."""
+    tela, guarda = _TelaDePerfil(com_select=False, abre_no_clique=False), _Guarda()
+    escolher_perfil(tela, guarda, "Advogado", 2)
+    assert tela.digitado == "Advogado"
+    assert tela.cliques[-1] == "Entrar"
+
+
+def test_digitar_usa_o_nome_que_o_operador_deu():
+    """Digitar nao e escolher por conta propria: e o mesmo valor, por outro
+    caminho."""
+    tela, guarda = _TelaDePerfil(com_select=False, abre_no_clique=False), _Guarda()
+    escolher_perfil(tela, guarda, "Usuario Comum", 2)
+    assert tela.digitado == "Usuario Comum"
+
+
+def test_a_recusa_diz_o_que_a_lista_mostrou():
+    tela = _TelaDePerfil(com_select=False, textos=("Usuário Comum",))
+    tela.aberta = True
+    with pytest.raises(PerfilNaoInformado) as erro:
+        escolher_perfil(tela, _Guarda(), "Advogado", 2)
+    recado = str(erro.value)
+    assert "A lista mostra: Usuário Comum" in recado
+    assert "digitado nela" in recado
+
+
+def test_a_recusa_distingue_lista_vazia_de_lista_sem_a_opcao():
+    tela = _TelaDePerfil(com_select=False, abre_no_clique=False, textos=())
+    with pytest.raises(PerfilNaoInformado, match="nao chegou a abrir"):
+        escolher_perfil(tela, _Guarda(), "Advogado", 2)
+
+
+def test_o_relato_das_opcoes_corta_texto_longo():
+    """A mesma forma de lista serve para escolher processo, e ali o texto seria
+    dado de cliente."""
+    tela = _TelaDePerfil(com_select=False, textos=("Advogado", "x" * 80))
+    tela.aberta = True
+    assert opcoes_a_vista(tela) == ["Advogado"]
