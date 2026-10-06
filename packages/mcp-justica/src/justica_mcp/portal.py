@@ -345,6 +345,56 @@ def janela_de(pagina: Any) -> dict:
         return {"width": 1280, "height": 720}
 
 
+# Quantas opcoes de uma lista de escolha cabem no relato, e qual o tamanho
+# maximo de um valor para ele contar como CODIGO e nao como dado.
+TETO_DE_OPCOES = 30
+TAMANHO_DE_CODIGO = 12
+
+
+def parece_codigo(valor: str) -> bool:
+    """Se o valor de uma opcao e vocabulario da pagina, e nao dado de alguem.
+
+    Lista de escolha sem as opcoes e indocumentavel: o relato mostra que ha um
+    `select` e nao diz o que escolher, e foi o que aconteceu com a tela de
+    selecao de sistemas do Tribunal de Justica do Rio de Janeiro em 06/10/2026.
+    Imprimir tudo tambem nao serve: a mesma etiqueta `select` serve para
+    escolher o sistema e para escolher entre processos de clientes, e o relato
+    e colado em conversa.
+
+    O corte e pela FORMA do valor. Sigla de sistema ("DCP", "EPROC") e codigo
+    curto sem espaco e sem pontuacao. Numero de processo tem pontuacao e vinte
+    e cinco caracteres; nome de parte tem espaco. Nenhum dos dois passa, e o
+    que nao passa e CONTADO, nunca impresso.
+    """
+    limpo = (valor or "").strip()
+    if not limpo or len(limpo) > TAMANHO_DE_CODIGO:
+        return False
+    return limpo.replace("_", "").replace("-", "").isalnum()
+
+
+def opcoes_de_escolha(elemento) -> Optional[str]:
+    """Resumo das opcoes de um `select`: os codigos, e a conta do resto."""
+    try:
+        valores = elemento.evaluate(
+            "e => Array.from(e.options || []).map(o => o.value)")
+    except Exception:
+        return None
+    if not valores:
+        return None
+    codigos = [v for v in valores if parece_codigo(v)]
+    escondidos = len(valores) - len(codigos)
+    partes = []
+    if codigos:
+        partes.append("|".join(codigos[:TETO_DE_OPCOES]))
+        if len(codigos) > TETO_DE_OPCOES:
+            partes.append(f"e mais {len(codigos) - TETO_DE_OPCOES}")
+    if escondidos:
+        # Contadas e nao impressas: valor que nao tem forma de codigo pode ser
+        # numero de processo ou nome de parte.
+        partes.append(f"{escondidos} sem forma de codigo, nao impressa(s)")
+    return f"{len(valores)}: " + "; ".join(partes) if partes else str(len(valores))
+
+
 def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
     """Le a estrutura do formulario. Somente leitura do DOM."""
     janela = janela_de(pagina)
@@ -369,6 +419,10 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             valor = elemento.get_attribute(atributo)
             if valor is not None:
                 extras[atributo] = valor or "sim"
+        if marcador == "select":
+            resumo = opcoes_de_escolha(elemento)
+            if resumo:
+                extras["opcoes"] = resumo
 
         campos.append(Campo(
             marcador=marcador,

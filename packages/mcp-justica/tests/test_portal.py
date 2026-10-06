@@ -4953,3 +4953,86 @@ def test_relato_de_chegada_mostra_caminhos_e_estrutura():
     assert "_relatar_estrutura_de_dados(pagina)" in trecho
     # Caminho sem texto e sem parametro: a promessa do relato nao muda.
     assert "sem texto" in trecho
+
+
+# ==========================================================================
+# Lista de escolha sem as opcoes e indocumentavel
+#
+# Tela de selecao de sistemas do Tribunal de Justica do Rio de Janeiro,
+# 06/10/2026: o relato mostrou `select#sistema` e nao disse o que escolher.
+# Imprimir tudo tambem nao serve: a mesma etiqueta serve para escolher o
+# sistema e para escolher entre processos de clientes, e o relato e colado em
+# conversa. O corte e pela FORMA do valor.
+# ==========================================================================
+
+def test_sigla_de_sistema_e_codigo():
+    from justica_mcp.portal import parece_codigo
+
+    for valor in ("DCP", "EPROC", "PJE", "e-SAJ", "SISTEMA_1"):
+        assert parece_codigo(valor), valor
+
+
+def test_numero_de_processo_nao_e_codigo():
+    """Vinte e cinco caracteres e pontuacao: nao passa, e nao pode passar."""
+    from justica_mcp.portal import parece_codigo
+
+    assert parece_codigo("0854091-62.2024.8.19.0001") is False
+
+
+def test_nome_de_parte_nao_e_codigo():
+    from justica_mcp.portal import parece_codigo
+
+    assert parece_codigo("Fulano de Tal") is False
+    assert parece_codigo("") is False
+
+
+class _ListaDeEscolha:
+    def __init__(self, valores):
+        self.valores = valores
+
+    def evaluate(self, _):
+        return list(self.valores)
+
+
+def test_os_codigos_entram_e_o_resto_e_so_contado():
+    from justica_mcp.portal import opcoes_de_escolha
+
+    resumo = opcoes_de_escolha(_ListaDeEscolha(
+        ["DCP", "EPROC", "0854091-62.2024.8.19.0001", "Fulano de Tal"]))
+    assert "DCP|EPROC" in resumo
+    assert resumo.startswith("4:")
+    assert "2 sem forma de codigo, nao impressa(s)" in resumo
+    assert "0854091" not in resumo and "Fulano" not in resumo
+
+
+def test_lista_so_de_dados_nao_imprime_nenhum_valor():
+    from justica_mcp.portal import opcoes_de_escolha
+
+    resumo = opcoes_de_escolha(_ListaDeEscolha(
+        ["0854091-62.2024.8.19.0001", "0000001-11.2020.8.19.0002"]))
+    assert "0854091" not in resumo
+    assert "2 sem forma de codigo" in resumo
+
+
+def test_lista_vazia_nao_vira_linha_no_relato():
+    from justica_mcp.portal import opcoes_de_escolha
+
+    assert opcoes_de_escolha(_ListaDeEscolha([])) is None
+
+
+def test_lista_enorme_de_codigos_e_cortada_com_a_conta_a_vista():
+    from justica_mcp.portal import TETO_DE_OPCOES, opcoes_de_escolha
+
+    resumo = opcoes_de_escolha(_ListaDeEscolha(
+        [f"COD{i}" for i in range(TETO_DE_OPCOES + 5)]))
+    assert f"e mais 5" in resumo
+
+
+def test_so_select_ganha_a_linha_de_opcoes(monkeypatch):
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._coletar)
+    assert 'if marcador == "select":' in fonte
+    assert 'extras["opcoes"] = resumo' in fonte
