@@ -4611,11 +4611,13 @@ def test_sistemas_ja_lidos_sao_reconhecidos():
 
 
 def test_sistema_nunca_lido_nao_passa_por_registrado():
-    """O DCP do Tribunal de Justica do Rio tem credencial declarada e nenhuma
-    tela lida. Ate hoje ele herdava os seletores do eproc em silencio."""
+    """Foi o caso do DCP do Tribunal de Justica do Rio ate 06/10/2026:
+    credencial declarada, nenhuma tela lida, e os seletores do eproc herdados
+    em silencio. A tela dele ja foi lida, entao o guarda e exercitado aqui com
+    um sistema que de fato nao existe."""
     from justica_mcp.portal import sistema_tem_seletores
 
-    assert sistema_tem_seletores("dcp") is False
+    assert sistema_tem_seletores("projudi") is False
     assert sistema_tem_seletores("") is False
 
 
@@ -4639,3 +4641,90 @@ def test_autenticar_para_antes_de_abrir_o_navegador():
     # A recusa vem ANTES de abrir o navegador: nada de rede acontece.
     # Compara com a CHAMADA, e nao com o nome: o import dela abre a funcao.
     assert fonte.index("sistema_tem_seletores") < fonte.index("with sync_playwright()")
+
+
+# ==========================================================================
+# reCAPTCHA e aviso, nao veredicto
+#
+# Tela de entrada do DCP do Tribunal de Justica do Rio de Janeiro, lida em
+# 06/10/2026: `div#recaptcha` na pagina e o relato anunciando "desafio de
+# verificacao humana detectado: nao". As duas coisas eram verdadeiras ao mesmo
+# tempo, e juntas enganavam.
+# ==========================================================================
+
+class _TelaComSeletores:
+    def __init__(self, presentes):
+        self.presentes = set(presentes)
+
+    def query_selector(self, seletor):
+        return object() if seletor in self.presentes else None
+
+
+def test_o_recaptcha_do_dcp_e_apontado():
+    from justica_mcp.portal import recaptcha_na_pagina
+
+    assert recaptcha_na_pagina(_TelaComSeletores({"#recaptcha"})) == "#recaptcha"
+
+
+def test_tela_sem_recaptcha_nao_inventa_um():
+    from justica_mcp.portal import recaptcha_na_pagina
+
+    assert recaptcha_na_pagina(_TelaComSeletores(set())) is None
+
+
+def test_recaptcha_nao_faz_o_comando_esperar_o_operador():
+    """Esperar aqui travaria TODA execucao daquele portal numa caixa que talvez
+    nunca apareca: o reCAPTCHA mora na pagina o tempo todo, ao contrario da
+    marca do Cloudflare, que so aparece quando o desafio esta sendo cobrado."""
+    from justica_mcp.portal import _ha_desafio_humano
+
+    assert _ha_desafio_humano(_TelaComSeletores({"#recaptcha"})) is False
+
+
+def test_o_desafio_do_cloudflare_continua_sendo_veredicto():
+    from justica_mcp.portal import _ha_desafio_humano
+
+    assert _ha_desafio_humano(_TelaComSeletores({".cf-turnstile"})) is True
+
+
+# ---------------- a tela de entrada do DCP ----------------
+
+def test_o_dcp_tem_os_seletores_lidos_em_campo():
+    from justica_mcp.portal import seletores_do_sistema
+
+    s = seletores_do_sistema("dcp")
+    assert s["campo_usuario"] == "#usuario"
+    assert s["campo_senha"] == "#senha"
+    # O botao "Entrar" do IdServerJus nao tem identificador.
+    assert s["botao_entrar"] == "texto=Entrar"
+    # Sem segundo fator: o cofre confirma e a tela confirma.
+    assert s["campo_codigo"] == "" and s["botao_validar"] == ""
+
+
+def test_o_dcp_nao_herda_mais_os_seletores_do_eproc():
+    from justica_mcp.portal import SELETORES_POR_SISTEMA, seletores_do_sistema
+
+    assert seletores_do_sistema("dcp") != SELETORES_POR_SISTEMA["eproc"]
+
+
+def test_entrar_do_idserverjus_nao_casa_com_os_outros_botoes_da_tela():
+    """A comparacao por texto e EXATA, e aqui isso basta: nenhum dos outros
+    botoes da tela comeca por "Entrar"."""
+    from justica_mcp.portal import PREFIXO_DE_TEXTO, seletores_do_sistema
+
+    alvo = seletores_do_sistema("dcp")["botao_entrar"]
+    assert alvo.startswith(PREFIXO_DE_TEXTO)
+    procurado = alvo[len(PREFIXO_DE_TEXTO):]
+    for outro in ("Esqueci Minha Senha", "Libras", "Voz", "+ Acessibilidade"):
+        assert outro != procurado
+
+
+def test_o_mapa_e_gravado_com_marca_de_ordem_de_byte():
+    """Sem ela o Get-Content do PowerShell le o arquivo pela pagina de codigo
+    do sistema, e o mapa chega ao operador com os acentos trocados."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.mapear)
+    assert 'encoding="utf-8-sig"' in fonte

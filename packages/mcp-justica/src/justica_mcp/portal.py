@@ -1556,7 +1556,11 @@ def mapear(alvos=None, *, oculto: bool = False, segundos: int = 30) -> int:
                     continue
                 arquivo = (pasta_dos_mapas()
                            / f"{config.tribunal}-{config.sistema}-{momento}.txt")
-                arquivo.write_text(resultado["relato"], encoding="utf-8")
+                # Com marca de ordem de byte: o `Get-Content` do PowerShell le
+                # UTF-8 sem marca usando a pagina de codigo do sistema, e o mapa
+                # chega ao operador com "usuArio" no lugar de "usuario". E o mesmo
+                # motivo pelo qual o .env e lido como utf-8-sig.
+                arquivo.write_text(resultado["relato"], encoding="utf-8-sig")
                 print(f"    Mapa: {arquivo}")
         finally:
             try:
@@ -1710,6 +1714,27 @@ SELETORES_POR_SISTEMA = {
     },
     # Lido do mapa de 22/09/2026 (sso.cloud.pje.jus.br, Keycloak do PJe):
     # form#loginForm com input#username, input#password e input#kc-login.
+    # Lida em 06/10/2026 na tela de entrada do DCP do Tribunal de Justica do
+    # Rio de Janeiro, em `www3.tjrj.jus.br/idserverjus-front/#/login`. Quem
+    # autentica nao e o DCP: e o IdServerJus, o controle de acesso unico do
+    # tribunal, e por isso esta tela nao se parece com nenhuma das outras.
+    #
+    # O botao "Entrar" NAO tem identificador, entao vai pelo texto. A
+    # comparacao e exata, e aqui isso basta: os outros botoes da tela sao
+    # "Esqueci Minha Senha", "Libras", "Voz" e "+ Acessibilidade", e nenhum
+    # comeca por "Entrar".
+    #
+    # Sem segundo fator. O cofre confirma, a tela confirma, e por isso os dois
+    # campos de codigo ficam vazios. Se um dia a tela passar a pedir, o
+    # comando relata o campo que achou em vez de dizer que ela nao apareceu.
+    "dcp": {
+        "campo_usuario": "#usuario",
+        "campo_senha": "#senha",
+        "campo_senha_oculto": "#senha",
+        "botao_entrar": "texto=Entrar",
+        "campo_codigo": "",
+        "botao_validar": "",
+    },
     # O segundo fator nao aparece na tela de entrada.
     "pje": {
         "campo_usuario": "#username",
@@ -1757,6 +1782,19 @@ FAMILIAS_DE_LOGIN = (
         "campo_usuario": "#cpf",
         "campo_senha": "input[name=password]",
         "campo_senha_oculto": "input[name=password]",
+        "botao_entrar": "texto=Entrar",
+        "campo_codigo": "",
+        "botao_validar": "",
+    },
+    {
+        # Controle de acesso unico do Tribunal de Justica do Rio de Janeiro.
+        # Entra nas familias porque o DCP nao e o unico servico atras dele: o
+        # portal de servicos manda para ca com `sgSist` diferente, e a tela e
+        # a mesma.
+        "nome": "idserverjus",
+        "campo_usuario": "#usuario",
+        "campo_senha": "#senha",
+        "campo_senha_oculto": "#senha",
         "botao_entrar": "texto=Entrar",
         "campo_codigo": "",
         "botao_validar": "",
@@ -2962,6 +3000,24 @@ MARCAS_DESAFIO = (
     "#cf-challenge-running",
 )
 
+# reCAPTCHA do Google NAO entra em MARCAS_DESAFIO, e a diferenca e de desenho.
+# O Cloudflare so bota a marca na pagina quando esta cobrando o desafio, entao
+# achar a marca e achar o desafio. O reCAPTCHA mora na pagina o tempo todo:
+# pode estar vazio, invisivel, ou so ser acionado no envio. Tratar os dois
+# igual faria o comando esperar o operador marcar uma caixa que talvez nunca
+# apareca, em TODA execucao daquele portal.
+#
+# Ignora-lo tambem nao serve: o relato diria "desafio: nao" numa tela que
+# carrega reCAPTCHA, e quando o portal recusasse o login ninguem saberia por
+# que. Entao ele vira AVISO, e nao veredicto.
+MARCAS_DE_RECAPTCHA = (
+    "#recaptcha",
+    ".g-recaptcha",
+    'iframe[src*="recaptcha"]',
+    'script[src*="recaptcha"]',
+    "[data-sitekey]",
+)
+
 
 # Texto que o Turnstile mostra quando REPROVA a verificacao. Visto em campo em
 # 21 de setembro de 2026, no eproc do Tribunal Regional Federal da 2a Regiao.
@@ -3028,6 +3084,26 @@ def _ha_desafio_humano(pagina) -> bool:
         except Exception:
             continue
     return False
+
+
+def recaptcha_na_pagina(pagina) -> Optional[str]:
+    """A marca de reCAPTCHA que esta na pagina, se houver, ou None.
+
+    Lido na tela de entrada do DCP do Tribunal de Justica do Rio de Janeiro em
+    06/10/2026: `div#recaptcha` presente, e o relato anunciando "desafio de
+    verificacao humana detectado: nao". As duas coisas eram verdadeiras ao
+    mesmo tempo, e juntas enganavam.
+
+    Devolve a marca para o relato, nunca para decidir esperar o operador: ver
+    o comentario em MARCAS_DE_RECAPTCHA.
+    """
+    for marca in MARCAS_DE_RECAPTCHA:
+        try:
+            if pagina.query_selector(marca) is not None:
+                return marca
+        except Exception:
+            continue
+    return None
 
 
 def seletor_de_codigo_a_vista(pagina) -> Optional[str]:
@@ -3560,6 +3636,11 @@ def _relatar_tela(pagina, titulo: str) -> None:
         pass
     print(f"    Desafio de verificacao humana detectado: "
           f"{'sim' if _ha_desafio_humano(pagina) else 'nao'}")
+    marca_recaptcha = recaptcha_na_pagina(pagina)
+    if marca_recaptcha and not _ha_desafio_humano(pagina):
+        print(f"    A pagina carrega reCAPTCHA ({marca_recaptcha}), hoje sem desafio")
+        print("    na tela. Pode ser invisivel ou acionado so no envio: se o portal")
+        print("    recusar o login sem dizer por que, esta e a primeira suspeita.")
     ligacoes = pagina.query_selector_all("a[href]")
     interessantes = []
     for a in ligacoes:
