@@ -4879,3 +4879,77 @@ def test_o_caminho_antigo_continua_para_quem_tem_campo_de_codigo():
     antigo = fonte.split("elif campo is None:")[1].split("else:")[0]
     assert "A tela do segundo fator nao apareceu" in antigo
     assert "NAO repita o comando antes de conferir" in antigo
+
+
+# ==========================================================================
+# Rota de aplicacao de pagina unica e caminho, nao ancora
+#
+# IdServerJus do Tribunal de Justica do Rio de Janeiro, 06/10/2026. O login
+# terminou em `#/selecao-sistemas`, a tela que diz para onde ir, e o relato
+# saiu sem um caminho sequer: `caminhos_de_navegacao` descartava tudo que
+# comecava por `#`. Descobrir isso custaria outra tentativa de login.
+# ==========================================================================
+
+class _SoHref:
+    """Ligacao que tem endereco e mais nada: e o endereco que vira caminho."""
+
+    def __init__(self, href):
+        self.href = href
+
+    def get_attribute(self, _):
+        return self.href
+
+
+def test_rota_de_pagina_unica_vira_caminho():
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    achados = caminhos_de_navegacao([_SoHref("#/selecao-sistemas")])
+    assert achados == ["#/selecao-sistemas"]
+
+
+def test_ancora_na_propria_pagina_continua_fora():
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    assert caminhos_de_navegacao(
+        [_SoHref("#"), _SoHref("#conteudo"), _SoHref("#top")]) == []
+
+
+def test_parametro_da_rota_nao_entra_no_relato():
+    """A regra de nao imprimir parametro vale aqui igual: e nele que viajam
+    identificador de cliente e numero de processo."""
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    achados = caminhos_de_navegacao([_SoHref("#/processo?id=12345&parte=Fulano")])
+    assert achados == ["#/processo"]
+
+
+def test_rota_repetida_aparece_uma_vez_so():
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    achados = caminhos_de_navegacao(
+        [_SoHref("#/consulta"), _SoHref("#/consulta?x=1")])
+    assert achados == ["#/consulta"]
+
+
+def test_endereco_comum_continua_funcionando():
+    from justica_mcp.portal import caminhos_de_navegacao
+
+    achados = caminhos_de_navegacao(
+        [_SoHref("https://www3.tjrj.jus.br/portal/index.html?a=1"),
+         _SoHref("javascript:void(0)"), _SoHref("mailto:x@y.z")])
+    assert achados == ["https://www3.tjrj.jus.br/portal/index.html"]
+
+
+def test_relato_de_chegada_mostra_caminhos_e_estrutura():
+    """Campo e botao nao descrevem tela de escolha: ali o que leva adiante sao
+    ligacoes e blocos com identificador."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("ESTRUTURA DA TELA ONDE PAROU")[1]
+    assert "caminhos_de_navegacao(" in trecho
+    assert "_relatar_estrutura_de_dados(pagina)" in trecho
+    # Caminho sem texto e sem parametro: a promessa do relato nao muda.
+    assert "sem texto" in trecho

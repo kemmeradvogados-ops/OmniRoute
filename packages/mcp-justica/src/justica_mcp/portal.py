@@ -2915,6 +2915,21 @@ def autenticar(
             for b in botoes[:20]:
                 print(f"    {b.linha()}")
 
+            # Campo e botao nao descrevem tela de escolha: ali o que leva
+            # adiante sao ligacoes e blocos com identificador. O relato parava
+            # nos dois primeiros e saia vazio justamente na tela que diz para
+            # onde ir, e descobrir isso custava outra tentativa de login.
+            try:
+                caminhos = caminhos_de_navegacao(pagina.query_selector_all("a[href]"))
+            except Exception:
+                caminhos = []
+            if caminhos:
+                print(f"\n  CAMINHOS DE NAVEGACAO ({len(caminhos)}), sem texto "
+                      "e sem parametros:")
+                for caminho in caminhos[:40]:
+                    print(f"    {caminho}")
+            _relatar_estrutura_de_dados(pagina)
+
             print("\n  RELATO DA TRAVA:")
             for linha in guarda.relato():
                 print(f"    {linha}")
@@ -3621,7 +3636,21 @@ def caminhos_de_navegacao(ligacoes) -> list[str]:
             href = (ligacao.get_attribute("href") or "").strip()
         except Exception:
             continue
-        if not href or href.startswith(("javascript:", "#", "mailto:")):
+        if not href or href.startswith(("javascript:", "mailto:")):
+            continue
+        # `#` sozinho, ou `#secao`, e ancora na propria pagina e nao leva a
+        # lugar nenhum. Mas `#/rota` e caminho de aplicacao de pagina unica, e
+        # e ali que mora o menu inteiro desses portais. Descartar os dois
+        # juntos fazia o relato do IdServerJus do Tribunal de Justica do Rio de
+        # Janeiro, lido em 06/10/2026, sair sem um caminho sequer, bem na tela
+        # de escolha do sistema. A regra de nao imprimir parametro continua
+        # valendo: o que vem depois da interrogacao fica de fora.
+        if href.startswith("#"):
+            if not href.startswith("#/"):
+                continue
+            caminho = href.split("?", 1)[0]
+            if caminho not in vistos:
+                vistos.append(caminho)
             continue
         pedaco = urlparse(href)
         caminho = pedaco.path or "/"
