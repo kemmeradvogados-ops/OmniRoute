@@ -707,6 +707,31 @@ def reconhecer(url: str, *, oculto: bool = False, segundos: int = 30) -> int:
 
 
 
+def abas_abertas(navegador, teto: int = 10) -> list[str]:
+    """Endereco de cada aba viva, sem parametros, para o relato.
+
+    Portal que abre janela propria e depois devolve a aba de origem para outro
+    lugar faz o programa e o operador olharem telas diferentes sem perceber.
+    Listar as abas mostra isso de uma vez, em vez de uma deducao por rodada.
+
+    Sem parametros, pela regra de sempre: e neles que viajam identificador de
+    cliente e numero de processo.
+    """
+    saida = []
+    try:
+        abas = [a for a in (getattr(navegador, "pages", None) or [])
+                if not a.is_closed()]
+    except Exception:
+        return saida
+    for i, aba in enumerate(abas[:teto], 1):
+        try:
+            endereco = (aba.url or "").split("?")[0]
+        except Exception:
+            endereco = "(ilegivel)"
+        saida.append(f"{i}: {endereco[:100]}")
+    return saida
+
+
 def _aba_em_foco(navegador, inicial):
     """A aba que o operador esta vendo, que nem sempre e a que o programa abriu.
 
@@ -824,6 +849,15 @@ def acompanhar(url: str, *, segundos: int = 30, teto: int = 20) -> int:
                     pass
                 registradas += 1
                 print()
+                # Antes da tela: quais abas existem. Portal que abre janela
+                # propria e devolve a aba de origem para outro lugar faz o
+                # programa e o operador olharem telas diferentes sem perceber.
+                lista = abas_abertas(navegador)
+                if lista:
+                    print(f"    ABAS ABERTAS ({len(lista)}), sem parametros:")
+                    for linha in lista:
+                        print(f"      {linha}")
+                    print(f"    Lendo a aba {len(lista)} (a ultima aberta e viva).")
                 try:
                     _relatar_tela(alvo, f"TELA {registradas}")
                     _relatar_estrutura_de_dados(alvo)

@@ -523,7 +523,11 @@ def achar_aba_do_portal(pagina: Any, segundos: int = 20) -> Optional[Any]:
             abas = [a for a in (contexto.pages or []) if not a.is_closed()]
         except Exception:
             abas = []
-        for aba in abas:
+        # De tras para frente: janela nova e acrescentada ao fim da lista, e a
+        # aba de ORIGEM pode exibir o endereco do portal por um instante
+        # durante a entrega, antes de voltar para a pagina publica. Pegando a
+        # primeira, o programa ficava com a aba que ia embora.
+        for aba in reversed(abas):
             try:
                 if MARCA_DO_PORTAL in (aba.url or ""):
                     return aba

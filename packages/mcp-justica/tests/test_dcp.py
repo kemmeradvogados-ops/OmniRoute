@@ -1247,3 +1247,15 @@ def test_clique_que_nao_leva_a_consulta_e_denunciado():
     with pytest.raises(ConsultaIndisponivel, match="nao chegou a consulta"):
         buscar(portal, _Guarda(), parse_numero(PROCESSO), LOGIN, 1)
     assert quadro.cliques == []
+
+
+def test_a_janela_do_portal_e_a_mais_RECENTE():
+    """Janela nova e acrescentada ao fim da lista, e a aba de ORIGEM pode
+    exibir o endereco do portal por um instante durante a entrega, antes de
+    voltar para a pagina publica. Pegando a primeira, o programa ficava com a
+    aba que ia embora."""
+    origem = _AbaNova()
+    origem.url = "https://www3.tjrj.jus.br/portalservicos/"
+    nova = _AbaNova()
+    tela = _TelaDeSelecao(outras_abas=[origem, nova])
+    assert achar_aba_do_portal(tela, 2) is nova

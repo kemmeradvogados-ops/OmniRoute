@@ -5943,3 +5943,63 @@ def test_campo_ausente_distingue_tela_que_nao_montou():
     etapa = fonte.split("etapa 1: credencial")[1].split("etapa 2")[0]
     assert "esperar_tela_montar(pagina" in etapa
     assert "repetir o comando e o certo" in etapa
+
+
+# ==========================================================================
+# Quais abas existem
+#
+# Portal que abre janela propria e depois devolve a aba de origem para outro
+# lugar faz o programa e o operador olharem telas diferentes sem perceber.
+# Listar as abas mostra isso de uma vez, em vez de uma deducao por rodada.
+# ==========================================================================
+
+def test_as_abas_vivas_sao_listadas():
+    from justica_mcp.portal import abas_abertas
+
+    class _Aba:
+        def __init__(self, url, fechada=False):
+            self.url, self.fechada = url, fechada
+
+        def is_closed(self):
+            return self.fechada
+
+    class _Nav:
+        pages = [_Aba("https://www.tjrj.jus.br/"),
+                 _Aba("https://www3.tjrj.jus.br/portalservicos/#/dashboard"),
+                 _Aba("https://x/morta", fechada=True)]
+
+    assert abas_abertas(_Nav()) == [
+        "1: https://www.tjrj.jus.br/",
+        "2: https://www3.tjrj.jus.br/portalservicos/#/dashboard"]
+
+
+def test_o_parametro_nao_entra_na_lista_de_abas():
+    """E neles que viajam identificador de cliente e numero de processo."""
+    from justica_mcp.portal import abas_abertas
+
+    class _Aba:
+        url = "https://www3.tjrj.jus.br/consulta?processo=0045025&parte=Fulano"
+
+        def is_closed(self):
+            return False
+
+    class _Nav:
+        pages = [_Aba()]
+
+    assert abas_abertas(_Nav()) == ["1: https://www3.tjrj.jus.br/consulta"]
+
+
+def test_navegador_sem_abas_nao_quebra():
+    from justica_mcp.portal import abas_abertas
+
+    assert abas_abertas(object()) == []
+
+
+def test_o_acompanhamento_lista_as_abas_antes_da_tela():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    assert "abas_abertas(navegador)" in fonte
+    assert fonte.index("abas_abertas(navegador)") < fonte.index("_relatar_tela(alvo")
