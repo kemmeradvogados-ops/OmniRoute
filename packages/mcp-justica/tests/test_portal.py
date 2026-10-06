@@ -5575,3 +5575,81 @@ def test_o_caminho_de_sucesso_exige_a_declaracao_explicita():
     sucesso = fonte.split("campo is None and campo_codigo == SEM_SEGUNDO_FATOR")[1]
     sucesso = sucesso.split("elif campo is None:")[0]
     assert "este portal nao tem segundo fator" in sucesso
+
+
+# ==========================================================================
+# Botao de icone, achado pelo rotulo acessivel
+#
+# A barra do Visualizador de Processos do Tribunal de Justica do Rio de
+# Janeiro nao da identificador a nenhum botao, e o texto visivel de cada um e
+# o nome do icone (`download_for_offline`). Quem diz o que ele faz e o
+# `aria-label`, que no navegador aparece como a dica ao passar o mouse.
+# ==========================================================================
+
+class _BotaoComRotulo:
+    def __init__(self, rotulo, visivel=True):
+        self.rotulo, self.visivel = rotulo, visivel
+
+    def get_attribute(self, nome):
+        return self.rotulo if nome == "aria-label" else None
+
+    def is_visible(self):
+        return self.visivel
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 40, "height": 40}
+
+
+class _BarraDeIcones:
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, botoes):
+        self.botoes = botoes
+
+    def query_selector_all(self, seletor):
+        return list(self.botoes) if seletor.startswith("[aria-label") else []
+
+
+def test_o_botao_de_baixar_e_achado_pelo_rotulo():
+    from justica_mcp.portal import elemento_por_rotulo
+
+    barra = _BarraDeIcones([
+        _BotaoComRotulo("Ocultar Menu"),
+        _BotaoComRotulo("Baixar o processo atual em PDF"),
+    ])
+    achado = elemento_por_rotulo(barra, "Baixar o processo atual em PDF")
+    assert achado is not None and achado.rotulo == "Baixar o processo atual em PDF"
+
+
+def test_a_comparacao_do_rotulo_e_exata():
+    """Dois rotulos podem comecar igual, e aqui um deles e o de baixar."""
+    from justica_mcp.portal import elemento_por_rotulo
+
+    barra = _BarraDeIcones([_BotaoComRotulo("Baixar o processo atual em PDF e imprimir")])
+    assert elemento_por_rotulo(barra, "Baixar o processo atual em PDF") is None
+
+
+def test_o_acento_nao_decide_o_rotulo():
+    from justica_mcp.portal import elemento_por_rotulo
+
+    barra = _BarraDeIcones([_BotaoComRotulo("Exibir caixa de seleção")])
+    assert elemento_por_rotulo(barra, "Exibir caixa de selecao") is not None
+
+
+def test_botao_invisivel_nao_e_entregue():
+    from justica_mcp.portal import elemento_por_rotulo
+
+    barra = _BarraDeIcones([_BotaoComRotulo("Dados do processo", visivel=False)])
+    assert elemento_por_rotulo(barra, "Dados do processo") is None
+
+
+def test_barra_ilegivel_nao_quebra():
+    from justica_mcp.portal import elemento_por_rotulo
+
+    class _Muda:
+        viewport_size = {"width": 800, "height": 600}
+
+        def query_selector_all(self, _):
+            raise RuntimeError("janela fechada")
+
+    assert elemento_por_rotulo(_Muda(), "qualquer") is None

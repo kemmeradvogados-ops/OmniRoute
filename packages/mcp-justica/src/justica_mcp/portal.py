@@ -1659,6 +1659,40 @@ def _por_texto_exato(pagina: Any, texto: str) -> Optional[Any]:
     return None
 
 
+def elemento_por_rotulo(pagina: Any, rotulo: str) -> Optional[Any]:
+    """Elemento visivel cujo ROTULO ACESSIVEL e exatamente este.
+
+    Botao de icone nao tem texto: o que ele mostra e o nome do icone
+    (`download_for_offline`), e quem diz o que ele faz e o `aria-label`, que no
+    navegador aparece como a dica ao passar o mouse. Procurar pelo texto nao
+    acha nada, e procurar por identificador tambem nao, porque o Visualizador
+    de Processos do Tribunal de Justica do Rio de Janeiro nao da identificador
+    a nenhum botao da barra.
+
+    Comparacao exata e sem acento, como em `_por_texto_exato`, e pela mesma
+    razao: dois rotulos podem comecar igual, e aqui um deles e o de baixar.
+    """
+    alvo = sem_acento(rotulo).strip()
+    janela = janela_de(pagina)
+    for atributo in ("aria-label", "title", "alt"):
+        try:
+            achados = pagina.query_selector_all(f"[{atributo}]")
+        except Exception:
+            continue
+        for elemento in achados:
+            try:
+                escrito = sem_acento(
+                    elemento.get_attribute(atributo) or "").strip()
+                if escrito != alvo:
+                    continue
+                if elemento.is_visible() and _na_tela(
+                        elemento, janela["width"], janela["height"]):
+                    return elemento
+            except Exception:
+                continue
+    return None
+
+
 def elemento_visivel(pagina: Any, seletor: str) -> Optional[Any]:
     """Devolve a primeira ocorrencia do seletor que esteja de fato na tela.
 
