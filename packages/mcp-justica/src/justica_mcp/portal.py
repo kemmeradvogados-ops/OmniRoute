@@ -418,6 +418,14 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
     largura, altura = janela["width"], janela["height"]
     campos: list[Campo] = []
     for elemento in pagina.query_selector_all("input, select, textarea"):
+      # Um elemento que some no meio da leitura nao pode custar o relato
+      # inteiro. Aplicacao de pagina unica remonta a tela sozinha, e o
+      # identificador que ja tinha sido pego vira referencia morta: o
+      # Playwright levanta erro no proximo toque. Em 06/10/2026 isso derrubou
+      # a leitura do visualizador de processos do Tribunal de Justica do Rio
+      # de Janeiro, que era justamente a tela que importava, e o relato saiu
+      # com uma linha de erro no lugar de tudo.
+      try:
         marcador = elemento.evaluate("e => e.tagName.toLowerCase()")
         tipo = (elemento.get_attribute("type") or marcador or "").lower()
         # Botoes aparecem na outra lista; repetir aqui so polui.
@@ -460,11 +468,14 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             formulario=elemento.evaluate("e => e.form ? (e.form.id || e.form.name || 'sem-nome') : null"),
             extras=extras,
         ))
+      except Exception:
+        continue
 
     botoes: list[Campo] = []
     for elemento in pagina.query_selector_all(
         "button, input[type=submit], input[type=button], a[role=button]"
     ):
+      try:
         texto = (elemento.inner_text() or elemento.get_attribute("value") or "").strip()
         # Botao de icone nao tem texto. Sem o rotulo acessivel, ele aparece no
         # relato como `(sem id)  ''` e nao serve para nada. Foi assim que a tela
@@ -490,6 +501,8 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             formulario=elemento.evaluate("e => e.form ? (e.form.id || e.form.name || 'sem-nome') : null"),
             extras={},
         ))
+      except Exception:
+        continue
     return campos, botoes
 
 
@@ -3865,6 +3878,42 @@ def caminhos_de_navegacao(ligacoes) -> list[str]:
     return vistos
 
 
+def quadros_do_mesmo_portal(pagina, teto: int = 3) -> list:
+    """Quadros embutidos que pertencem ao PROPRIO portal, nunca a terceiros.
+
+    O Portal de Servicos do Tribunal de Justica do Rio de Janeiro poe a
+    consulta processual inteira dentro de um `iframe`. Lido em 06/10/2026, o
+    relato da tela dizia "0 campos de 10" e listava campos de um formulario de
+    fale-conosco: o formulario que importa estava no quadro, e o relato nao
+    descia ate la. Para quem le o relato, a tela parecia vazia.
+
+    So quadro do mesmo servidor entra. A pagina inicial do tribunal embute um
+    video do YouTube, e ler dentro dele nao diz nada sobre o portal e manda o
+    programa a um lugar que nao e do tribunal.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        casa = urlparse(pagina.url).netloc
+        quadros = list(pagina.frames or [])[1:]
+    except Exception:
+        return []
+    escolhidos = []
+    for quadro in quadros:
+        try:
+            endereco = quadro.url or ""
+        except Exception:
+            continue
+        if not endereco or endereco.startswith("about:"):
+            continue
+        if urlparse(endereco).netloc != casa:
+            continue
+        escolhidos.append(quadro)
+        if len(escolhidos) >= teto:
+            break
+    return escolhidos
+
+
 def _relatar_tela(pagina, titulo: str) -> None:
     """Descreve a tela atual, sem tocar em nada.
 
@@ -3883,7 +3932,8 @@ def _relatar_tela(pagina, titulo: str) -> None:
     try:
         campos, botoes = _coletar(pagina)
     except Exception as exc:
-        print(f"    Nao foi possivel ler a estrutura: {type(exc).__name__}: {exc}")
+        primeira = " ".join(str(exc).split("\n")[0].split())[:160]
+        print(f"    Nao foi possivel ler a estrutura: {type(exc).__name__}: {primeira}")
         return
     visiveis = [b for b in botoes if b.na_tela]
     # Os campos vinham sendo coletados e NUNCA impressos. O relato existe para
@@ -3928,6 +3978,30 @@ def _relatar_tela(pagina, titulo: str) -> None:
                 print(f"      src={(q.get_attribute('src') or '(sem src)')[:90]}")
     except Exception:
         pass
+    # Antes do resto: numa tela cujo conteudo mora em quadro, o relato do
+    # documento de fora descreve a moldura e nada mais.
+    for quadro in quadros_do_mesmo_portal(pagina):
+        try:
+            dentro, acoes = _coletar(quadro)
+        except Exception as exc:
+            print(f"    QUADRO {quadro.url[:90]}: ilegivel "
+                  f"({type(exc).__name__})")
+            continue
+        print(f"\n    ----- DENTRO DO QUADRO {quadro.url[:90]} -----")
+        a_vista = [c for c in dentro if c.na_tela] or dentro[:20]
+        print(f"    CAMPOS NO QUADRO ({len(a_vista)} de {len(dentro)}):")
+        for c in a_vista:
+            print(f"      {c.linha()}")
+        if not dentro:
+            print("      (nenhum)")
+        visiveis_no_quadro = [b for b in acoes if b.na_tela] or acoes[:20]
+        print(f"    BOTOES NO QUADRO ({len(visiveis_no_quadro)} de {len(acoes)}):")
+        for b in visiveis_no_quadro:
+            print(f"      {b.linha()}")
+        if not acoes:
+            print("      (nenhum)")
+        print(f"    ----- FIM DO QUADRO -----\n")
+
     print(f"    Desafio de verificacao humana detectado: "
           f"{'sim' if _ha_desafio_humano(pagina) else 'nao'}")
     marca_recaptcha = recaptcha_na_pagina(pagina)

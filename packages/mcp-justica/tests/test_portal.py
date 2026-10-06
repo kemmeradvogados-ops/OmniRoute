@@ -5159,3 +5159,139 @@ def test_o_acompanhamento_promete_o_que_o_relato_cumpre():
     assert "_relatar_tela(" in fonte and "_relatar_estrutura_de_dados(" in fonte
     assert "NAO traz texto de celula" in fonte
     assert "quem decide qual tela registrar e voce" in fonte
+
+
+# ==========================================================================
+# O conteudo que mora dentro de um quadro
+#
+# Portal de Servicos do Tribunal de Justica do Rio de Janeiro, 06/10/2026. O
+# relato disse "CAMPOS NA TELA (0 de 10)" e listou campos de um formulario de
+# fale-conosco. A consulta processual inteira estava dentro de um `iframe`, e
+# o relato nao descia ate la: para quem le, a tela parecia vazia.
+# ==========================================================================
+
+class _QuadroEmbutido:
+    def __init__(self, url):
+        self.url = url
+
+
+class _PaginaComQuadrosEmbutidos:
+    def __init__(self, url, quadros):
+        self.url = url
+        # O primeiro da lista e o proprio documento, como no Playwright.
+        self.frames = [_QuadroEmbutido(url)] + quadros
+
+
+def test_quadro_do_mesmo_portal_entra():
+    from justica_mcp.portal import quadros_do_mesmo_portal
+
+    pagina = _PaginaComQuadrosEmbutidos(
+        "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal",
+        [_QuadroEmbutido("https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal")])
+    achados = quadros_do_mesmo_portal(pagina)
+    assert [q.url for q in achados] == [
+        "https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal"]
+
+
+def test_video_de_terceiro_fica_de_fora():
+    """Ler dentro de um video embutido nao diz nada sobre o portal e manda o
+    programa a um lugar que nao e do tribunal."""
+    from justica_mcp.portal import quadros_do_mesmo_portal
+
+    pagina = _PaginaComQuadrosEmbutidos(
+        "https://www.tjrj.jus.br/",
+        [_QuadroEmbutido("https://www.youtube.com/embed/MwGivujGg5g")])
+    assert quadros_do_mesmo_portal(pagina) == []
+
+
+def test_quadro_em_branco_nao_conta():
+    from justica_mcp.portal import quadros_do_mesmo_portal
+
+    pagina = _PaginaComQuadrosEmbutidos(
+        "https://www3.tjrj.jus.br/x", [_QuadroEmbutido("about:blank"),
+                                       _QuadroEmbutido("")])
+    assert quadros_do_mesmo_portal(pagina) == []
+
+
+def test_o_proprio_documento_nao_se_conta_como_quadro():
+    from justica_mcp.portal import quadros_do_mesmo_portal
+
+    pagina = _PaginaComQuadrosEmbutidos("https://www3.tjrj.jus.br/x", [])
+    assert quadros_do_mesmo_portal(pagina) == []
+
+
+def test_ha_teto_de_quadros():
+    from justica_mcp.portal import quadros_do_mesmo_portal
+
+    muitos = [_QuadroEmbutido(f"https://www3.tjrj.jus.br/q{i}") for i in range(9)]
+    pagina = _PaginaComQuadrosEmbutidos("https://www3.tjrj.jus.br/x", muitos)
+    assert len(quadros_do_mesmo_portal(pagina, teto=3)) == 3
+
+
+def test_pagina_que_nao_expoe_quadros_nao_quebra():
+    from justica_mcp.portal import quadros_do_mesmo_portal
+
+    assert quadros_do_mesmo_portal(object()) == []
+
+
+def test_o_relato_desce_ao_quadro_antes_do_resto():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._relatar_tela)
+    assert "quadros_do_mesmo_portal(pagina)" in fonte
+    assert "CAMPOS NO QUADRO" in fonte
+
+
+# ---------------- elemento que some no meio da leitura ----------------
+
+class _ElementoQueSome:
+    def __init__(self, bom):
+        self.bom = bom
+
+    def evaluate(self, _):
+        if not self.bom:
+            raise RuntimeError("Element is not attached to the DOM")
+        return "input"
+
+    def get_attribute(self, nome):
+        return {"type": "text", "id": "vivo"}.get(nome)
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 1, "y": 1, "width": 10, "height": 10}
+
+    def inner_text(self):
+        return ""
+
+
+class _TelaQueRemonta:
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, elementos):
+        self.elementos = elementos
+
+    def query_selector_all(self, seletor):
+        if "input" in seletor:
+            return list(self.elementos)
+        return []
+
+    def query_selector(self, _):
+        return None
+
+
+def test_elemento_morto_nao_derruba_o_relato_inteiro():
+    """Aplicacao de pagina unica remonta a tela sozinha, e o identificador que
+    ja tinha sido pego vira referencia morta. Em 06/10/2026 isso derrubou a
+    leitura do visualizador de processos, que era a tela que importava."""
+    from justica_mcp.portal import _coletar
+
+    campos, _ = _coletar(_TelaQueRemonta(
+        [_ElementoQueSome(False), _ElementoQueSome(True), _ElementoQueSome(False)]))
+    assert [c.identificador for c in campos] == ["vivo"]
