@@ -2481,6 +2481,44 @@ def _tem_formulario_de_login(pagina) -> bool:
     return any(c.e_senha and c.na_tela for c in campos)
 
 
+# Quanto tempo dar para a tela de login sumir depois do envio da credencial.
+ESPERA_PARA_SAIR_DO_LOGIN = 12
+
+
+def esperar_sair_do_login(pagina, segundos: int = ESPERA_PARA_SAIR_DO_LOGIN) -> bool:
+    """Espera, com teto, o formulario de login sair da tela. Diz se saiu.
+
+    Aplicacao de pagina unica troca de rota sem recarregar, e nessa troca o
+    formulario antigo fica no documento por um instante enquanto a tela nova e
+    montada. Olhar uma vez so, logo apos o clique, pega justamente esse
+    instante.
+
+    Foi o que aconteceu no DCP do Tribunal de Justica do Rio de Janeiro em
+    06/10/2026: a credencial FOI aceita, o portal ja estava indo para a tela de
+    selecao de sistemas, e o comando anunciou "a credencial e que nao passou",
+    com o conselho de nao repetir. Pior erro possivel nessa posicao, porque
+    manda conferir um cofre que esta certo e para o acesso que ja tinha
+    funcionado.
+
+    Mensagem de erro na tela encerra a espera na hora: credencial recusada o
+    portal diz, e dizer isso e justamente o que uma tela de login recusada faz.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    while True:
+        if not _tem_formulario_de_login(pagina):
+            return True
+        if _mensagens_de_erro(pagina):
+            return False
+        if _tempo.monotonic() >= limite:
+            return False
+        try:
+            pagina.wait_for_timeout(500)
+        except Exception:
+            _tempo.sleep(0.5)
+
+
 def autenticar(
     url: str,
     tribunal: str,
@@ -2910,7 +2948,11 @@ def autenticar(
                                          sistema=identidade.sistema,
                                          resultado="portal_fora_do_ar")
                         return 1
-                    if _tem_formulario_de_login(pagina):
+                    # Espera a tela sair, em vez de olhar uma vez so: a troca
+                    # de rota de uma aplicacao de pagina unica deixa o
+                    # formulario antigo no documento por um instante, e olhar
+                    # nesse instante acusa recusa onde houve sucesso.
+                    if not esperar_sair_do_login(pagina):
                         print("\n  [PARADO] O portal continua mostrando o formulario de login.")
                         for aviso in avisos_na_tela(pagina):
                             print(f"  AVISO NA TELA: {aviso}")

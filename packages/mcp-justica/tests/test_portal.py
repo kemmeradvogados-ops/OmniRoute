@@ -4877,9 +4877,9 @@ def test_portal_sem_campo_de_codigo_nao_e_tratado_como_falta_de_tela():
 
 def test_formulario_de_login_de_volta_continua_sendo_recusa():
     """Sem segundo fator, voltar ao formulario so pode ser a credencial: nao ha
-    codigo que possa estar faltando."""
+    codigo que possa estar faltando. Mas so depois de ESPERAR a tela sair."""
     trecho = _etapa_sem_codigo()
-    assert "_tem_formulario_de_login(pagina)" in trecho
+    assert "esperar_sair_do_login(pagina)" in trecho
     assert "a credencial e que nao passou" in trecho
     assert "queima tentativa da conta" in trecho
 
@@ -4889,9 +4889,9 @@ def test_as_duas_paginas_de_erro_vem_antes_de_culpar_a_credencial():
     dois casos repetir e justamente o certo."""
     trecho = _etapa_sem_codigo()
     assert trecho.index("pagina_de_erro_do_navegador") < trecho.index(
-        "_tem_formulario_de_login")
+        "esperar_sair_do_login")
     assert trecho.index("erro_do_servidor(pagina)") < trecho.index(
-        "_tem_formulario_de_login")
+        "esperar_sair_do_login")
     assert "Nao e recusa de credencial" in trecho
 
 
@@ -5720,3 +5720,103 @@ def test_o_acompanhamento_diz_o_que_a_pagina_tem_ao_abrir():
     assert "pagina.url" in abertura
     assert "pagina.title()" in abertura
     assert "Nao consegui ler a pagina" in abertura
+
+
+# ==========================================================================
+# A tela de login que ainda nao saiu nao e credencial recusada
+#
+# DCP do Tribunal de Justica do Rio de Janeiro, 06/10/2026. A credencial FOI
+# aceita, o portal ja estava indo para a tela de selecao de sistemas, e o
+# comando anunciou "a credencial e que nao passou", com o conselho de nao
+# repetir. Pior erro possivel nessa posicao: manda conferir um cofre que esta
+# certo e para o acesso que ja tinha funcionado.
+# ==========================================================================
+
+class _TelaQueTroca:
+    """Formulario de login que sai da tela depois de algumas olhadas."""
+
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, olhadas_ate_sair=None, erros=()):
+        self.olhadas = 0
+        # None quer dizer que NUNCA sai: contagem alta nao serve, porque o laco
+        # gira depressa e a conta acabaria antes do teto de tempo.
+        self.ate_sair = olhadas_ate_sair
+        self.erros = list(erros)
+        self.esperas = 0
+
+    def query_selector_all(self, seletor):
+        if "input" not in seletor:
+            return []
+        self.olhadas += 1
+        if self.ate_sair is not None and self.olhadas > self.ate_sair:
+            return []
+        return [_ElementoDeSenha(self)]
+
+    def query_selector(self, _):
+        return None
+
+    def wait_for_timeout(self, _):
+        self.esperas += 1
+
+
+class _ElementoDeSenha:
+    def __init__(self, pagina):
+        self.pagina = pagina
+
+    def evaluate(self, roteiro):
+        return "input" if "tagName" in roteiro else None
+
+    def get_attribute(self, nome):
+        return {"type": "password", "id": "senha"}.get(nome)
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 200, "height": 30}
+
+    def inner_text(self):
+        return ""
+
+
+def test_formulario_que_sai_logo_depois_conta_como_saida(monkeypatch):
+    from justica_mcp import portal
+
+    tela = _TelaQueTroca(olhadas_ate_sair=2)
+    monkeypatch.setattr(portal, "_mensagens_de_erro", lambda _: [])
+    assert portal.esperar_sair_do_login(tela, segundos=5) is True
+
+
+def test_formulario_que_nao_sai_conta_como_recusa(monkeypatch):
+    from justica_mcp import portal
+
+    tela = _TelaQueTroca()
+    monkeypatch.setattr(portal, "_mensagens_de_erro", lambda _: [])
+    assert portal.esperar_sair_do_login(tela, segundos=1) is False
+
+
+def test_mensagem_de_erro_encerra_a_espera_na_hora(monkeypatch):
+    """Credencial recusada o portal diz, e dizer isso e justamente o que uma
+    tela de login recusada faz."""
+    from justica_mcp import portal
+
+    tela = _TelaQueTroca()
+    monkeypatch.setattr(portal, "_mensagens_de_erro",
+                        lambda _: ["Usuario ou senha invalidos"])
+    assert portal.esperar_sair_do_login(tela, segundos=30) is False
+    assert tela.esperas == 0, "nao espera quando o portal ja respondeu"
+
+
+def test_a_recusa_so_e_anunciada_depois_da_espera():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("campo is None and campo_codigo == SEM_SEGUNDO_FATOR")[1]
+    assert "if not esperar_sair_do_login(pagina):" in trecho
+    assert "_tem_formulario_de_login(pagina):" not in trecho.split("elif campo is None")[0]
