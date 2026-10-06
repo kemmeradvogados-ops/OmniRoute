@@ -5653,3 +5653,68 @@ def test_barra_ilegivel_nao_quebra():
             raise RuntimeError("janela fechada")
 
     assert elemento_por_rotulo(_Muda(), "qualquer") is None
+
+
+# ==========================================================================
+# Janela em branco
+#
+# Relatado em 06/10/2026: a janela do acompanhamento abre e fica em branco, no
+# dia seguinte ao de o mesmo comando ter lido seis telas sem problema. Duas
+# causas se parecem na tela e exigem providencias opostas: a pagina carregou e
+# nao esta sendo desenhada, ou a pagina nao chegou.
+# ==========================================================================
+
+def test_sem_variavel_nenhuma_bandeira_e_passada():
+    from justica_mcp.portal import bandeiras_do_navegador
+
+    assert bandeiras_do_navegador() == []
+
+
+def test_bandeiras_vem_separadas_por_espaco(monkeypatch):
+    from justica_mcp.portal import bandeiras_do_navegador
+
+    monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--disable-gpu --no-sandbox")
+    assert bandeiras_do_navegador() == ["--disable-gpu", "--no-sandbox"]
+
+
+def test_variavel_vazia_nao_vira_bandeira_vazia(monkeypatch):
+    """`ARGS=` mandaria uma string vazia ao navegador."""
+    from justica_mcp.portal import bandeiras_do_navegador
+
+    monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "   ")
+    assert bandeiras_do_navegador() == []
+
+
+def test_espaco_a_mais_entre_bandeiras_nao_atrapalha(monkeypatch):
+    from justica_mcp.portal import bandeiras_do_navegador
+
+    monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--disable-gpu   --mute-audio")
+    assert bandeiras_do_navegador() == ["--disable-gpu", "--mute-audio"]
+
+
+def test_as_bandeiras_chegam_aos_dois_jeitos_de_abrir():
+    """Perfil persistente e perfil descartavel, para a saida de emergencia
+    valer nos dois."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.abrir_navegador)
+    assert fonte.count("args=bandeiras") == 2
+
+
+def test_o_acompanhamento_diz_o_que_a_pagina_tem_ao_abrir():
+    """Janela em branco com endereco e titulo certos quer dizer que a pagina
+    carregou e nao esta sendo desenhada, que e problema de maquina. Janela em
+    branco sem titulo e pagina que nao chegou. Sem esta linha, as duas se
+    parecem."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.acompanhar)
+    abertura = fonte.split("_assentar(pagina, segundos)")[1].split(
+        "while registradas < teto")[0]
+    assert "pagina.url" in abertura
+    assert "pagina.title()" in abertura
+    assert "Nao consegui ler a pagina" in abertura

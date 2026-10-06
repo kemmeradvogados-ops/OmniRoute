@@ -153,6 +153,28 @@ def _perfil_efemero() -> bool:
     return os.environ.get(VARIAVEL_PERFIL_EFEMERO, "").strip().lower() in ("1", "true", "sim")
 
 
+def bandeiras_do_navegador() -> list[str]:
+    """Bandeiras extras para o Chromium, vindas de `JUSTICA_NAVEGADOR_ARGS`.
+
+    Saida de emergencia da mesma familia do `JUSTICA_CHROMIUM`, e existe pelo
+    mesmo motivo: a maquina do operador as vezes precisa de um detalhe que o
+    programa nao tem como adivinhar.
+
+    O caso que a motivou, relatado em 06/10/2026: a janela abre e fica em
+    branco, com a pagina carregada por tras. Em Windows isso costuma ser a
+    composicao por placa de video, e a providencia conhecida e `--disable-gpu`.
+    Ligar isso por conta propria seria piorar o desempenho de todo mundo por
+    causa de uma maquina, entao fica na mao de quem precisa:
+
+        JUSTICA_NAVEGADOR_ARGS=--disable-gpu
+
+    Separadas por espaco. Vazio nao vira bandeira, para `ARGS=` nao mandar uma
+    string vazia ao navegador.
+    """
+    bruto = (os.environ.get("JUSTICA_NAVEGADOR_ARGS") or "").strip()
+    return [pedaco for pedaco in bruto.split(" ") if pedaco]
+
+
 def abrir_navegador(p, oculto: bool, executavel):
     """Abre o navegador com PERFIL PERSISTENTE e devolve (contexto, pagina).
 
@@ -174,9 +196,11 @@ def abrir_navegador(p, oculto: bool, executavel):
     preferir pagar o desafio toda vez.
     """
     descargas = str(pasta_de_descargas())
+    bandeiras = bandeiras_do_navegador()
     if _perfil_efemero():
         navegador = p.chromium.launch(
-            headless=oculto, executable_path=executavel, downloads_path=descargas
+            headless=oculto, executable_path=executavel,
+            downloads_path=descargas, args=bandeiras,
         )
         return navegador, navegador.new_page()
 
@@ -186,6 +210,7 @@ def abrir_navegador(p, oculto: bool, executavel):
         executable_path=executavel,
         accept_downloads=True,
         downloads_path=descargas,
+        args=bandeiras,
     )
     pagina = contexto.pages[0] if contexto.pages else contexto.new_page()
     return contexto, pagina
@@ -763,11 +788,22 @@ def acompanhar(url: str, *, segundos: int = 30, teto: int = 20) -> int:
     print("  deste programa ja aberta e feche-a: o perfil aceita so uma por vez.")
     with sync_playwright() as p:
         navegador, pagina = abrir_navegador(p, False, executavel)
-        print("  Janela aberta.\n")
+        print("  Janela aberta.")
         try:
             guarda.avaliar(Acao.NAVEGAR, url).exigir()
             _ir_para(pagina, url, segundos)
             _assentar(pagina, segundos)
+            # Dito agora, e nao so quando o operador pedir a primeira tela:
+            # janela em branco com endereco e titulo certos quer dizer que a
+            # pagina CARREGOU e nao esta sendo desenhada, que e problema de
+            # maquina; janela em branco sem titulo e pagina que nao chegou.
+            # Sem esta linha, as duas se parecem.
+            try:
+                print(f"  Endereco: {pagina.url}")
+                print(f"  Titulo: {pagina.title()!r}")
+            except Exception as exc:
+                print(f"  Nao consegui ler a pagina ({type(exc).__name__}).")
+            print()
 
             while registradas < teto:
                 _esvaziar_teclado()
