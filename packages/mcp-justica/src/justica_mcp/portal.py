@@ -1790,11 +1790,21 @@ def familia_da_tela(pagina) -> Optional[dict]:
     return None
 
 
+def sistema_tem_seletores(sistema: str) -> bool:
+    """Se a tela de entrada deste sistema ja foi lida e registrada aqui."""
+    return (sistema or "").lower().strip() in SELETORES_POR_SISTEMA
+
+
 def seletores_do_sistema(sistema: str) -> dict:
     """Seletores de entrada do sistema, ou os do eproc quando nao ha tabela.
 
     O eproc e o padrao historico do comando; manter esse desfecho evita que um
     sistema novo apareca sem seletor nenhum e o comando quebre por dentro.
+
+    O desfecho e seguro e MENTE no relato, e por isso quem chama tem de avisar
+    (ver `sistema_tem_seletores`). Procurar `#txtUsuario` num portal que nunca
+    foi lido termina em "campo de usuario nao encontrado", que manda o operador
+    procurar seletor que mudou quando nunca houve seletor nenhum.
     """
     return dict(SELETORES_POR_SISTEMA.get((sistema or "").lower().strip(),
                                           SELETORES_POR_SISTEMA["eproc"]))
@@ -2236,6 +2246,21 @@ def autenticar(
     print(f"Endereco: {url}")
     print(f"Credencial: {identidade.rotulo} (lida do cofre, nunca impressa)")
     print("Uma tentativa de credencial e uma de codigo. Nao marca dispositivo confiavel.\n")
+
+    if not sistema_tem_seletores(identidade.sistema):
+        print(f"  [PARADO] A tela de entrada do sistema {identidade.sistema!r} nunca")
+        print("           foi lida, e nao ha seletor registrado para ela. Seguir")
+        print("           daqui usaria os seletores de OUTRO sistema e terminaria")
+        print("           em 'campo de usuario nao encontrado', que mandaria voce")
+        print("           procurar seletor que mudou quando nunca houve seletor.")
+        print("  Nada foi enviado e nenhuma tentativa foi gasta.")
+        print("  Leia a tela primeiro, sem autenticar e sem gastar tentativa:")
+        print(f"    justica-portal mapear --portal {identidade.tribunal}/"
+              f"{identidade.sistema}")
+        estado.registrar(acao="login_etapa_credencial", tribunal=identidade.tribunal,
+                         sistema=identidade.sistema,
+                         resultado="sistema_sem_seletor_registrado")
+        return 1
 
     executavel = os.environ.get("JUSTICA_CHROMIUM") or None
     with sync_playwright() as p:

@@ -4592,3 +4592,50 @@ def test_portal_fora_do_ar_e_dito_antes_de_culpar_o_seletor():
     assert "portal esta fora do ar" in trecho
     assert "nenhuma" in trecho and "tentativa foi gasta" in trecho
     assert "Nao ha o que conferir no cofre" in trecho
+
+
+# ==========================================================================
+# Portal que nunca foi lido
+#
+# `seletores_do_sistema` cai nos seletores do eproc quando o sistema nao esta
+# na tabela. O desfecho e seguro, e mente no relato: procurar `#txtUsuario`
+# num portal que nunca foi lido termina em "campo de usuario nao encontrado",
+# que manda o operador procurar seletor que mudou quando nunca houve seletor.
+# ==========================================================================
+
+def test_sistemas_ja_lidos_sao_reconhecidos():
+    from justica_mcp.portal import sistema_tem_seletores
+
+    for sistema in ("eproc", "esaj", "pje", "cpe"):
+        assert sistema_tem_seletores(sistema), sistema
+
+
+def test_sistema_nunca_lido_nao_passa_por_registrado():
+    """O DCP do Tribunal de Justica do Rio tem credencial declarada e nenhuma
+    tela lida. Ate hoje ele herdava os seletores do eproc em silencio."""
+    from justica_mcp.portal import sistema_tem_seletores
+
+    assert sistema_tem_seletores("dcp") is False
+    assert sistema_tem_seletores("") is False
+
+
+def test_maiuscula_e_espaco_nao_mudam_o_veredicto():
+    from justica_mcp.portal import sistema_tem_seletores
+
+    assert sistema_tem_seletores("  EPROC ") is True
+
+
+def test_autenticar_para_antes_de_abrir_o_navegador():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("sistema_tem_seletores(identidade.sistema)")[1]
+    cabeca = trecho.split("executavel = os.environ")[0]
+    assert "nenhuma tentativa foi gasta" in cabeca
+    assert "justica-portal mapear" in cabeca
+    assert "return 1" in cabeca
+    # A recusa vem ANTES de abrir o navegador: nada de rede acontece.
+    # Compara com a CHAMADA, e nao com o nome: o import dela abre a funcao.
+    assert fonte.index("sistema_tem_seletores") < fonte.index("with sync_playwright()")
