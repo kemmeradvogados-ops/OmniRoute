@@ -4719,8 +4719,13 @@ def test_o_dcp_tem_os_seletores_lidos_em_campo():
     assert s["campo_senha"] == "#senha"
     # O botao "Entrar" do IdServerJus nao tem identificador.
     assert s["botao_entrar"] == "texto=Entrar"
-    # Sem segundo fator: o cofre confirma e a tela confirma.
-    assert s["campo_codigo"] == "" and s["botao_validar"] == ""
+    # Sem segundo fator, e DITO com todas as letras. Vazio aqui significaria
+    # "ainda nao foi lido", que e o caso da Central do Processo Eletronico do
+    # Superior Tribunal de Justica, e e o contrario do que vale no DCP.
+    from justica_mcp.portal import SEM_SEGUNDO_FATOR
+
+    assert s["campo_codigo"] == SEM_SEGUNDO_FATOR
+    assert s["botao_validar"] == ""
 
 
 def test_o_dcp_nao_herda_mais_os_seletores_do_eproc():
@@ -5504,3 +5509,69 @@ def test_o_acompanhamento_avisa_antes_de_abrir_o_navegador():
     # O aviso precisa sair ANTES da abertura, ou nao serve para nada.
     assert fonte.index("Abrindo o navegador no perfil") < fonte.index(
         "abrir_navegador(p, False, executavel)")
+
+
+# ==========================================================================
+# "Nao tem segundo fator" e "ainda nao sei" nao sao a mesma coisa
+#
+# Ate 06/10/2026 os dois eram o mesmo vazio. O caminho escrito para o DCP do
+# Tribunal de Justica do Rio de Janeiro, que de fato nao pede codigo, passava
+# a valer para a Central do Processo Eletronico do Superior Tribunal de
+# Justica, que PEDE. O comando anunciaria sessao aberta com o portal parado
+# pedindo um codigo, e tudo o que viesse depois seria lido como se a sessao
+# valesse.
+# ==========================================================================
+
+def test_quem_nao_pede_codigo_diz_isso_com_todas_as_letras():
+    from justica_mcp.portal import SEM_SEGUNDO_FATOR, seletores_do_sistema
+
+    assert seletores_do_sistema("dcp")["campo_codigo"] == SEM_SEGUNDO_FATOR
+
+
+def test_portal_ainda_nao_lido_continua_vazio():
+    """A Central do Processo Eletronico do Superior Tribunal de Justica pede
+    segundo fator, e o campo dele ainda nao foi lido."""
+    from justica_mcp.portal import SEM_SEGUNDO_FATOR, seletores_do_sistema
+
+    codigo = seletores_do_sistema("cpe")["campo_codigo"]
+    assert codigo == ""
+    assert codigo != SEM_SEGUNDO_FATOR
+
+
+def test_a_marca_nunca_chega_ao_navegador():
+    """Como o vazio, ela nao e seletor: entrega-la ao `query_selector` levanta
+    erro depois de a credencial ja ter sido enviada."""
+    from justica_mcp.portal import SEM_SEGUNDO_FATOR, achar_opcional
+
+    class _Recusa:
+        def query_selector(self, seletor):
+            raise AssertionError(f"nao devia procurar por {seletor!r}")
+
+    assert achar_opcional(_Recusa(), SEM_SEGUNDO_FATOR) is None
+
+
+def test_portal_nao_lido_nunca_e_dado_como_autenticado():
+    """O pior desfecho possivel deste programa e dizer 'autenticado' sem
+    estar."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("campo is None and not campo_codigo")[1].split(
+        "campo is None and campo_codigo == SEM_SEGUNDO_FATOR")[0]
+    assert "Nao sei se este portal pede segundo fator" in trecho
+    assert "NAO estou dizendo que a sessao abriu" in trecho
+    # Este ramo termina SEMPRE em parada: nunca cai no desfecho de sucesso.
+    assert "nao tem segundo fator, e a tela de" not in trecho
+
+
+def test_o_caminho_de_sucesso_exige_a_declaracao_explicita():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    sucesso = fonte.split("campo is None and campo_codigo == SEM_SEGUNDO_FATOR")[1]
+    sucesso = sucesso.split("elif campo is None:")[0]
+    assert "este portal nao tem segundo fator" in sucesso

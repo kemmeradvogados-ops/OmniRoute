@@ -1625,6 +1625,19 @@ def entrar(
 # palavra. Na tela do Superior Tribunal de Justica convivem "Entrar" e "Entrar
 # com gov.br": casar por inicio escolheria qualquer um dos dois, e entrar pelo
 # gov.br e outro caminho de autenticacao, que ninguem pediu.
+# Valor de `campo_codigo` para portal cuja tela FOI LIDA e nao pede segundo
+# fator. Precisa ser diferente de vazio, e a diferenca nao e de estilo.
+#
+# Ate 06/10/2026 os dois casos eram o mesmo vazio: "a tela foi lida e nao ha
+# campo de codigo" (o DCP do Tribunal de Justica do Rio de Janeiro) e "ainda
+# nao sei onde este portal pede o codigo" (a Central do Processo Eletronico do
+# Superior Tribunal de Justica, que PEDE codigo). Com os dois iguais, o
+# caminho escrito para o primeiro passava a valer para o segundo, e o comando
+# anunciaria sessao aberta com o portal parado pedindo um codigo. Dizer
+# "autenticado" sem estar e o pior desfecho possivel deste programa: tudo o
+# que vier depois seria lido como se a sessao valesse.
+SEM_SEGUNDO_FATOR = "sem-segundo-fator"
+
 PREFIXO_DE_TEXTO = "texto="
 ALVOS_CLICAVEIS = "button, input[type=submit], input[type=button], a"
 
@@ -1957,7 +1970,7 @@ SELETORES_POR_SISTEMA = {
         "campo_senha": "#senha",
         "campo_senha_oculto": "#senha",
         "botao_entrar": "texto=Entrar",
-        "campo_codigo": "",
+        "campo_codigo": SEM_SEGUNDO_FATOR,
         "botao_validar": "",
     },
     # O segundo fator nao aparece na tela de entrada.
@@ -2021,7 +2034,7 @@ FAMILIAS_DE_LOGIN = (
         "campo_senha": "#senha",
         "campo_senha_oculto": "#senha",
         "botao_entrar": "texto=Entrar",
-        "campo_codigo": "",
+        "campo_codigo": SEM_SEGUNDO_FATOR,
         "botao_validar": "",
     },
     {
@@ -2743,6 +2756,11 @@ def autenticar(
                 erros = _mensagens_de_erro(pagina)
                 campo = achar_opcional(pagina, campo_codigo)
                 if campo is None and not campo_codigo:
+                    # Vazio quer dizer "ainda nao sei ONDE este portal pede o
+                    # codigo", e NUNCA "este portal nao pede": quem nao pede diz
+                    # isso com SEM_SEGUNDO_FATOR. Este ramo termina sempre em
+                    # parada, porque daqui nao da para afirmar nem uma coisa nem
+                    # a outra.
                     a_vista = seletor_de_codigo_a_vista(pagina)
                     if a_vista:
                         print("\n  [PARADO] A tela PEDE um codigo de segundo fator, e este")
@@ -2769,13 +2787,39 @@ def autenticar(
                             resultado="campo_sem_seletor_registrado")
                         return 1
 
-                    # Daqui para baixo: portal cuja tabela NAO declara campo de
-                    # codigo, e cuja tela nao mostrou nenhum. Foi lido e nao tem
-                    # segundo fator, como o DCP do Tribunal de Justica do Rio de
-                    # Janeiro. Chegar aqui nele e o fim esperado do login, e nao
-                    # "a tela do segundo fator nao apareceu": essa frase mandaria
-                    # o operador desconfiar da credencial logo depois de ela ter
-                    # funcionado, e o conselho que vem junto e nao repetir.
+                    # Nao achou campo de codigo NESTE portal, que tambem nunca
+                    # declarou nao ter. Nao da para concluir coisa alguma: pode
+                    # nao haver segundo fator, pode haver um que o filtro nao
+                    # reconheceu, e pode a credencial ter sido recusada. Seguir
+                    # como autenticado seria o pior desfecho possivel, porque
+                    # tudo o que viesse depois seria lido como se a sessao
+                    # valesse.
+                    print("\n  [PARADO] Nao sei se este portal pede segundo fator.")
+                    print("  A tabela nao declara campo de codigo para ele, e isso aqui")
+                    print("  quer dizer 'ainda nao foi lido', nao 'nao pede'. Na tela")
+                    print("  tambem nao achei campo nenhum com cara de codigo.")
+                    print("  NAO estou dizendo que a sessao abriu: nao da para saber daqui.")
+                    for aviso in avisos_na_tela(pagina):
+                        print(f"  AVISO NA TELA: {aviso}")
+                    for recado in _mensagens_de_erro(pagina):
+                        print(f"  MENSAGEM NA TELA: {recado}")
+                    print("  Confira sem gastar tentativa:")
+                    print(f"    justica-portal sessao --tribunal {identidade.tribunal} "
+                          f"--sistema {identidade.sistema}")
+                    _relatar_tela(pagina, "TELA ONDE O LOGIN PAROU")
+                    estado.registrar(
+                        acao="login_etapa_segundo_fator",
+                        tribunal=identidade.tribunal, sistema=identidade.sistema,
+                        resultado="segundo_fator_indeterminado")
+                    return 1
+
+                if campo is None and campo_codigo == SEM_SEGUNDO_FATOR:
+                    # Portal cuja tela FOI LIDA e nao pede segundo fator, como o
+                    # DCP do Tribunal de Justica do Rio de Janeiro. Chegar aqui
+                    # nele e o fim esperado do login, e nao "a tela do segundo
+                    # fator nao apareceu": essa frase mandaria o operador
+                    # desconfiar da credencial logo depois de ela ter funcionado,
+                    # e o conselho que vem junto e nao repetir.
                     if pagina_de_erro_do_navegador(pagina.url):
                         print("\n  [PARADO] O navegador mostrou pagina de erro: o portal")
                         print("           nao respondeu. Nao e recusa de credencial, e")
@@ -3446,7 +3490,7 @@ def achar_opcional(pagina, seletor):
     no lugar da tela do portal. Foi o que quase aconteceu ao levar o PJe para
     o comando de autenticacao, onde nenhuma tela mostrou segundo fator ainda.
     """
-    if not seletor:
+    if not seletor or seletor == SEM_SEGUNDO_FATOR:
         return None
     if seletor.startswith(PREFIXO_DE_TEXTO):
         return _por_texto_exato(pagina, seletor[len(PREFIXO_DE_TEXTO):])
