@@ -4522,3 +4522,73 @@ def test_o_que_fica_guardado_e_a_janela_e_nunca_o_codigo():
     trecho = fonte.split("etapa 2: segundo fator")[1]
     assert "gravar_cache(chave_janela, cofre.janela_do_codigo()" in trecho
     assert "gravar_cache(chave_janela, codigo" not in trecho
+
+
+# ==========================================================================
+# Portal fora do ar nao e seletor mudado
+#
+# PJe do Rio, 06/10/2026: a tela veio com zero campo e titulo "503 Service
+# Temporarily Unavailable". O comando anunciou que o campo de usuario nao foi
+# encontrado. As duas frases sao verdadeiras e levam a lugares opostos: uma
+# manda procurar seletor que mudou, a outra manda esperar o portal voltar.
+# ==========================================================================
+
+class _TelaComTitulo:
+    def __init__(self, titulo):
+        self.titulo = titulo
+
+    def title(self):
+        return self.titulo
+
+
+def test_o_503_do_pje_do_rio_e_reconhecido():
+    from justica_mcp.portal import erro_do_servidor
+
+    tela = _TelaComTitulo("503 Service Temporarily Unavailable")
+    assert erro_do_servidor(tela) == "503 Service Temporarily Unavailable"
+
+
+def test_outros_erros_de_servidor_tambem():
+    from justica_mcp.portal import erro_do_servidor
+
+    for titulo in ("502 Bad Gateway", "504 Gateway Time-out",
+                   "500 Internal Server Error", "Portal em manutenção"):
+        assert erro_do_servidor(_TelaComTitulo(titulo)) == titulo
+
+
+def test_tela_de_login_de_verdade_nao_vira_pagina_de_erro():
+    from justica_mcp.portal import erro_do_servidor
+
+    assert erro_do_servidor(_TelaComTitulo("PJe - Processo Judicial Eletrônico")) is None
+    assert erro_do_servidor(_TelaComTitulo("")) is None
+
+
+def test_numero_no_meio_do_titulo_nao_transforma_a_tela_em_erro():
+    """Exigir o numero no COMECO e de proposito: um 503 solto no meio de um
+    titulo qualquer nao e pagina de erro."""
+    from justica_mcp.portal import erro_do_servidor
+
+    assert erro_do_servidor(_TelaComTitulo("Processo 503 do acervo")) is None
+
+
+def test_tela_que_nao_devolve_titulo_nao_quebra():
+    from justica_mcp.portal import erro_do_servidor
+
+    class _Mudo:
+        def title(self):
+            raise RuntimeError("janela fechada")
+
+    assert erro_do_servidor(_Mudo()) is None
+
+
+def test_portal_fora_do_ar_e_dito_antes_de_culpar_o_seletor():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    trecho = fonte.split("fora_do_ar = erro_do_servidor(pagina)")[1].split(
+        "_relatar_tela")[0]
+    assert "portal esta fora do ar" in trecho
+    assert "nenhuma" in trecho and "tentativa foi gasta" in trecho
+    assert "Nao ha o que conferir no cofre" in trecho

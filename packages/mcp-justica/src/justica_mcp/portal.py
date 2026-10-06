@@ -1083,6 +1083,47 @@ def pagina_de_erro_do_navegador(endereco: str) -> bool:
     return any(marca in baixo for marca in MARCAS_DE_PAGINA_DE_ERRO)
 
 
+# Pagina de erro do SERVIDOR, que nao e a mesma coisa que pagina de erro do
+# navegador. Ali o navegador nao chegou ao servidor; aqui o servidor respondeu,
+# e o que ele respondeu foi um erro dele.
+MARCAS_DE_ERRO_DO_SERVIDOR = (
+    "service temporarily unavailable", "service unavailable",
+    "temporarily unavailable", "bad gateway", "gateway time-out",
+    "gateway timeout", "internal server error",
+    "temporariamente indisponivel", "servico indisponivel",
+    "servidor indisponivel", "em manutencao", "manutencao programada",
+)
+
+CODIGOS_DE_ERRO_DO_SERVIDOR = ("500", "502", "503", "504")
+
+
+def erro_do_servidor(pagina) -> Optional[str]:
+    """O titulo da pagina de erro do portal, quando e isso que esta na tela.
+
+    Existe porque uma tela sem campo nenhum tinha uma explicacao so, e ela era
+    a errada. Em 06/10/2026 o PJe do Rio respondeu "503 Service Temporarily
+    Unavailable", e o comando anunciou que o campo de usuario nao foi
+    encontrado. As duas frases sao verdadeiras e levam a lugares opostos: uma
+    manda procurar seletor que mudou, a outra manda esperar o portal voltar.
+    """
+    try:
+        titulo = " ".join((pagina.title() or "").split())
+    except Exception:
+        return None
+    if not titulo:
+        return None
+    baixo = sem_acento(titulo)
+    if any(marca in baixo for marca in MARCAS_DE_ERRO_DO_SERVIDOR):
+        return titulo
+    # Titulo que COMECA com o numero do erro, como "503 Service ...". Exigir o
+    # comeco de proposito: um numero solto no meio de um titulo qualquer nao
+    # transforma a tela em pagina de erro.
+    primeiro = baixo.split(" ", 1)[0].strip(":-")
+    if primeiro in CODIGOS_DE_ERRO_DO_SERVIDOR:
+        return titulo
+    return None
+
+
 def senha_vencida(recados) -> bool:
     """Diz se algum recado da tela e de senha vencida.
 
@@ -2295,6 +2336,21 @@ def autenticar(
                             print("  Insistir nele seria digitar onde ninguem ve. Nada "
                                   "foi enviado.")
                         else:
+                            fora_do_ar = erro_do_servidor(pagina)
+                            if fora_do_ar:
+                                print(f"  [PARADO] O portal respondeu com pagina de erro: "
+                                      f"{fora_do_ar!r}.")
+                                print("  Nao e seletor mudado nem credencial recusada: o")
+                                print("  portal esta fora do ar. Nada foi enviado e nenhuma")
+                                print("  tentativa foi gasta. Nao ha o que conferir no cofre.")
+                                print("  Repita o comando mais tarde.")
+                                _relatar_tela(pagina, "TELA DE LOGIN")
+                                estado.registrar(
+                                    acao="login_etapa_credencial",
+                                    tribunal=identidade.tribunal,
+                                    sistema=identidade.sistema,
+                                    resultado="portal_fora_do_ar")
+                                return 1
                             print(f"  [FALHA] Campo de {rotulo} ({seletor}) nao "
                                   "encontrado. Nada enviado.")
                         _relatar_tela(pagina, "TELA DE LOGIN")
