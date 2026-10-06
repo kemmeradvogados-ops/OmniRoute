@@ -4820,3 +4820,62 @@ def test_nenhum_seletor_da_tabela_vai_cru_para_o_navegador():
              "campo_senha_oculto", "campo_codigo")
     padrao = re.compile(r"\bquery_selector\(\s*(" + "|".join(nomes) + r")\s*\)")
     assert padrao.search(fonte) is None, padrao.search(fonte).group(0)
+
+
+# ==========================================================================
+# Portal sem segundo fator
+#
+# O DCP do Tribunal de Justica do Rio de Janeiro nao tem segundo fator: o
+# cofre confirma e a tela confirma. Ate aqui, chegar ao fim do login nele
+# cairia em "[PARADO] A tela do segundo fator nao apareceu", acompanhado de
+# "NAO repita, pode ser recusa de credencial". O operador desconfiaria da
+# credencial no instante seguinte ao de ela ter funcionado.
+# ==========================================================================
+
+def _etapa_sem_codigo():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    return fonte.split("campo is None and not campo_codigo")[1].split(
+        "elif campo is None:")[0]
+
+
+def test_portal_sem_campo_de_codigo_nao_e_tratado_como_falta_de_tela():
+    trecho = _etapa_sem_codigo()
+    assert "este portal nao tem segundo fator" in trecho
+    assert "A tela do segundo fator nao apareceu" not in trecho
+
+
+def test_formulario_de_login_de_volta_continua_sendo_recusa():
+    """Sem segundo fator, voltar ao formulario so pode ser a credencial: nao ha
+    codigo que possa estar faltando."""
+    trecho = _etapa_sem_codigo()
+    assert "_tem_formulario_de_login(pagina)" in trecho
+    assert "a credencial e que nao passou" in trecho
+    assert "queima tentativa da conta" in trecho
+
+
+def test_as_duas_paginas_de_erro_vem_antes_de_culpar_a_credencial():
+    """Nem portal fora do ar nem portal que nao respondeu sao recusa, e nos
+    dois casos repetir e justamente o certo."""
+    trecho = _etapa_sem_codigo()
+    assert trecho.index("pagina_de_erro_do_navegador") < trecho.index(
+        "_tem_formulario_de_login")
+    assert trecho.index("erro_do_servidor(pagina)") < trecho.index(
+        "_tem_formulario_de_login")
+    assert "Nao e recusa de credencial" in trecho
+
+
+def test_o_caminho_antigo_continua_para_quem_tem_campo_de_codigo():
+    """A mudanca nao pode afrouxar o portal que TEM segundo fator: ali a
+    ausencia da tela continua sendo motivo para parar e nao repetir."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.autenticar)
+    antigo = fonte.split("elif campo is None:")[1].split("else:")[0]
+    assert "A tela do segundo fator nao apareceu" in antigo
+    assert "NAO repita o comando antes de conferir" in antigo

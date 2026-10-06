@@ -2543,7 +2543,59 @@ def autenticar(
                             tribunal=identidade.tribunal, sistema=identidade.sistema,
                             resultado="campo_sem_seletor_registrado")
                         return 1
-                if campo is None:
+
+                    # Daqui para baixo: portal cuja tabela NAO declara campo de
+                    # codigo, e cuja tela nao mostrou nenhum. Foi lido e nao tem
+                    # segundo fator, como o DCP do Tribunal de Justica do Rio de
+                    # Janeiro. Chegar aqui nele e o fim esperado do login, e nao
+                    # "a tela do segundo fator nao apareceu": essa frase mandaria
+                    # o operador desconfiar da credencial logo depois de ela ter
+                    # funcionado, e o conselho que vem junto e nao repetir.
+                    if pagina_de_erro_do_navegador(pagina.url):
+                        print("\n  [PARADO] O navegador mostrou pagina de erro: o portal")
+                        print("           nao respondeu. Nao e recusa de credencial, e")
+                        print("           nao ha o que conferir no cofre.")
+                        print("  Repita o comando.")
+                        estado.registrar(acao="login_resultado_credencial",
+                                         tribunal=identidade.tribunal,
+                                         sistema=identidade.sistema,
+                                         resultado="sem_resposta_do_portal")
+                        return 1
+                    fora_do_ar = erro_do_servidor(pagina)
+                    if fora_do_ar:
+                        print(f"\n  [PARADO] O portal respondeu com pagina de erro: "
+                              f"{fora_do_ar!r}.")
+                        print("  Esta fora do ar. Nao ha o que conferir no cofre.")
+                        estado.registrar(acao="login_resultado_credencial",
+                                         tribunal=identidade.tribunal,
+                                         sistema=identidade.sistema,
+                                         resultado="portal_fora_do_ar")
+                        return 1
+                    if _tem_formulario_de_login(pagina):
+                        print("\n  [PARADO] O portal continua mostrando o formulario de login.")
+                        for aviso in avisos_na_tela(pagina):
+                            print(f"  AVISO NA TELA: {aviso}")
+                        for recado in _mensagens_de_erro(pagina):
+                            print(f"  MENSAGEM NA TELA: {recado}")
+                        print("  Este portal nao tem segundo fator, entao nao e o codigo")
+                        print("  que esta faltando: a credencial e que nao passou.")
+                        print("  NAO repita antes de conferir o que ha acima: repetir uma")
+                        print("  credencial recusada queima tentativa da conta.")
+                        _relatar_tela(pagina, "TELA QUE APARECEU NO LUGAR")
+                        estado.registrar(acao="login_resultado_credencial",
+                                         tribunal=identidade.tribunal,
+                                         sistema=identidade.sistema,
+                                         resultado="formulario_de_login_de_volta")
+                        return 1
+                    print("  Etapa 2: este portal nao tem segundo fator, e a tela de")
+                    print("  login ficou para tras.")
+                    for aviso in avisos_na_tela(pagina):
+                        print(f"  AVISO NA TELA: {aviso}")
+                    estado.registrar(acao="login_etapa_segundo_fator",
+                                     tribunal=identidade.tribunal,
+                                     sistema=identidade.sistema,
+                                     resultado="sem_segundo_fator")
+                elif campo is None:
                     # Duas situacoes muito diferentes chegavam aqui com a mesma
                     # mensagem de uma linha: credencial recusada e portal que
                     # simplesmente nao pediu o segundo fator porque a sessao
