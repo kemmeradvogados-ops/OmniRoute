@@ -3643,10 +3643,50 @@ def _relatar_estrutura_de_dados(pagina, teto: int = 40) -> None:
     # celular.
     teto_ids = 500
     if nomes:
-        print(f"    ELEMENTOS COM IDENTIFICADOR ({len(nomes)}"
-              + (f", mostrando {teto_ids}" if len(nomes) > teto_ids else "") + "):")
-        for nome in nomes[:teto_ids]:
-            print(f"      {nome}")
+        # Agrupa ANTES do corte: sem isso, oitocentos irmaos numerados ocupavam
+        # as quinhentas linhas e empurravam para fora justamente o que
+        # distingue a tela.
+        linhas = agrupar_identificadores(nomes)
+        print(f"    ELEMENTOS COM IDENTIFICADOR ({len(nomes)} em "
+              f"{len(linhas)} familia(s)"
+              + (f", mostrando {teto_ids}" if len(linhas) > teto_ids else "") + "):")
+        for linha in linhas[:teto_ids]:
+            print(f"      {linha}")
+
+
+# A partir de quantos irmaos numerados a familia vira uma linha so.
+TETO_DE_IRMAOS_NUMERADOS = 3
+
+_FINAL_NUMERADO = re.compile(r"^(.*?)(\d+)$")
+
+
+def agrupar_identificadores(nomes: list[str]) -> list[str]:
+    """Junta numa linha so a familia de identificadores que so muda de numero.
+
+    O indice do Visualizador de Processos do Tribunal de Justica do Rio de
+    Janeiro, lido em 06/10/2026, tem 1633 elementos com identificador, dos
+    quais mais de oitocentos sao `div#node-1`, `div#node-2` e assim por diante.
+    O relato gastava quinhentas linhas com eles, empurrava para fora do corte o
+    que de fato distingue a tela e tornava a leitura penosa de colar e de ler.
+
+    Numero de irmao nao e informacao: a familia e. Uma linha diz o padrao e
+    quantos sao, e quem precisar de um deles sabe como escreve-lo.
+    """
+    from collections import OrderedDict
+
+    familias: "OrderedDict[str, list[str]]" = OrderedDict()
+    for nome in nomes:
+        casado = _FINAL_NUMERADO.match(nome)
+        chave = casado.group(1) + "<n>" if casado else nome
+        familias.setdefault(chave, []).append(nome)
+
+    saida = []
+    for chave, membros in familias.items():
+        if len(membros) > TETO_DE_IRMAOS_NUMERADOS:
+            saida.append(f"{chave} x{len(membros)}")
+        else:
+            saida.extend(membros)
+    return saida
 
 
 def _listar_ligacoes(pagina, teto: int = 60) -> None:

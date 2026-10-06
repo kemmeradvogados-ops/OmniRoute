@@ -1738,12 +1738,28 @@ def test_pagina_ilegivel_nao_derruba_o_relato(capsys):
 def test_identificadores_nao_sao_cortados_em_quarenta(capsys):
     """Identificador e estrutura pura, nao dado de processo. Cortar em 40
     escondeu o `tbody` das movimentacoes do e-SAJ e custou uma execucao
-    autenticada inteira: uma tentativa e um codigo lido no celular."""
-    p = _PaginaComTabelas(marcados=[_Marcado("tbody", f"t{i}") for i in range(120)])
+    autenticada inteira: uma tentativa e um codigo lido no celular.
+
+    Nomes distintos, como eram os do e-SAJ: cada um e uma familia de um so, e
+    nenhum pode cair fora."""
+    distintos = [_Marcado("tbody", f"bloco{i}_movimentacoes") for i in range(120)]
+    p = _PaginaComTabelas(marcados=distintos)
     _relatar_estrutura_de_dados(p, teto=40)
     saida = capsys.readouterr().out
-    assert "tbody#t100" in saida
-    assert "ELEMENTOS COM IDENTIFICADOR (120)" in saida
+    assert "tbody#bloco100_movimentacoes" in saida
+    assert "ELEMENTOS COM IDENTIFICADOR (120" in saida
+
+
+def test_familia_numerosa_nao_empurra_o_resto_para_fora_do_corte(capsys):
+    """O caso oposto, e o que motivou o agrupamento: oitocentos nos de arvore
+    ocupavam as linhas todas e escondiam a barra de ferramentas."""
+    marcados = [_Marcado("div", f"node-{i}") for i in range(809)]
+    marcados.append(_Marcado("div", "toolbar-idx"))
+    _relatar_estrutura_de_dados(_PaginaComTabelas(marcados=marcados), teto=40)
+    saida = capsys.readouterr().out
+    assert "div#node-<n> x809" in saida
+    assert "div#toolbar-idx" in saida
+    assert "node-500" not in saida
 
 
 def test_o_navegador_escreve_os_downloads_em_pasta_conhecida(tmp_path, monkeypatch):
@@ -5417,3 +5433,57 @@ def test_a_linha_do_campo_tambem_e_limpa():
                   rotulo="Processo 0096102-52.2018.8.19.0001", texto_visivel=None,
                   e_senha=False, extras={})
     assert "0096102" not in campo.linha()
+
+
+# ==========================================================================
+# Numero de irmao nao e informacao; a familia e
+#
+# O indice do Visualizador de Processos tem 1633 elementos com identificador,
+# dos quais mais de oitocentos sao `div#node-1`, `div#node-2` e assim por
+# diante. O relato gastava quinhentas linhas com eles e empurrava para fora do
+# corte o que de fato distingue a tela.
+# ==========================================================================
+
+def test_familia_numerosa_vira_uma_linha():
+    from justica_mcp.portal import agrupar_identificadores
+
+    achados = agrupar_identificadores([f"div#node-{i}" for i in range(1, 810)])
+    assert achados == ["div#node-<n> x809"]
+
+
+def test_identificador_unico_fica_como_esta():
+    from justica_mcp.portal import agrupar_identificadores
+
+    achados = agrupar_identificadores(
+        ["div#toolbar-idx", "div#div-idx", "input#mat-slide-toggle-1-input"])
+    assert achados == ["div#toolbar-idx", "div#div-idx",
+                       "input#mat-slide-toggle-1-input"]
+
+
+def test_familia_pequena_nao_e_agrupada():
+    """Dois ou tres irmaos ainda cabem por extenso, e as vezes e justamente o
+    numero deles que importa."""
+    from justica_mcp.portal import agrupar_identificadores
+
+    achados = agrupar_identificadores(["input#parte1ProcCNJ", "input#parte2ProcCNJ"])
+    assert achados == ["input#parte1ProcCNJ", "input#parte2ProcCNJ"]
+
+
+def test_o_que_distingue_a_tela_sobrevive_ao_lado_da_familia():
+    """O ponto do agrupamento: o botao e a barra nao podem ser empurrados para
+    fora do corte por oitocentos nos de arvore."""
+    from justica_mcp.portal import agrupar_identificadores
+
+    nomes = [f"div#node-{i}" for i in range(1, 810)] + ["div#toolbar-idx"]
+    achados = agrupar_identificadores(nomes)
+    assert "div#toolbar-idx" in achados
+    assert len(achados) == 2
+
+
+def test_o_agrupamento_acontece_antes_do_corte():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._relatar_estrutura_de_dados)
+    assert fonte.index("agrupar_identificadores(nomes)") < fonte.index("[:teto_ids]")
