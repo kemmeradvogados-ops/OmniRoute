@@ -1799,6 +1799,50 @@ def _por_texto_exato(pagina: Any, texto: str) -> Optional[Any]:
     return None
 
 
+# Elementos que RECEBEM o que se digita. Custom element nao recebe: ele e so
+# a casca em volta de quem recebe.
+CONTROLES_DE_FORMULARIO = ("INPUT", "TEXTAREA", "SELECT")
+
+
+def _controle_preferido(candidatos: list) -> Any:
+    """Entre elementos com o MESMO rotulo, o que de fato recebe digitacao.
+
+    Lido no Portal de Servicos do Tribunal de Justica do Rio de Janeiro em
+    07/10/2026, com o componente aberto no console pelo advogado: o custom
+    element `app-dropdown#dropdownPerfil` carrega
+    `placeholder="Selecione perfil do usuario"` NO PROPRIO HOSPEDEIRO, e o
+    `input` de verdade, la dentro, carrega o mesmo `placeholder`.
+
+    `query_selector_all` devolve na ordem do documento, e o hospedeiro vem
+    antes. O programa pegava a casca: clicar nela nao aciona o que o Angular
+    escuta no `input`, e `type()` nela nao escreve em lugar nenhum, porque
+    custom element nao tem valor. Nada falhava, nada acontecia, e o relato
+    dizia "clicar" e "preencher" com toda a razao.
+
+    Foram tres corridas atribuindo isso a lista que nao abria, a posicao fora
+    da janela e a caixa somente de leitura. Nenhuma delas era o caso.
+    """
+    if not candidatos:
+        return None
+    for elemento in candidatos:
+        try:
+            tag = (elemento.evaluate("e => e.tagName") or "").upper()
+        except Exception:
+            continue
+        if tag in CONTROLES_DE_FORMULARIO:
+            return elemento
+    # Nenhum dos que casaram e controle: o rotulo pode estar so no hospedeiro.
+    # Entao procura o controle DENTRO dele, que e onde a digitacao entraria.
+    for elemento in candidatos:
+        try:
+            dentro = elemento.query_selector("input, textarea, select")
+            if dentro is not None and dentro.is_visible():
+                return dentro
+        except Exception:
+            continue
+    return candidatos[0]
+
+
 def elemento_por_rotulo(pagina: Any, rotulo: str) -> Optional[Any]:
     """Elemento visivel cujo ROTULO ACESSIVEL e exatamente este.
 
@@ -1824,6 +1868,7 @@ def elemento_por_rotulo(pagina: Any, rotulo: str) -> Optional[Any]:
             achados = pagina.query_selector_all(f"[{atributo}]")
         except Exception:
             continue
+        candidatos = []
         for elemento in achados:
             try:
                 escrito = sem_acento(
@@ -1832,9 +1877,11 @@ def elemento_por_rotulo(pagina: Any, rotulo: str) -> Optional[Any]:
                     continue
                 if elemento.is_visible() and _na_tela(
                         elemento, janela["width"], janela["height"]):
-                    return elemento
+                    candidatos.append(elemento)
             except Exception:
                 continue
+        if candidatos:
+            return _controle_preferido(candidatos)
     return None
 
 

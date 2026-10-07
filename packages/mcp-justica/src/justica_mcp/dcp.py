@@ -840,6 +840,25 @@ def perfis_oferecidos(pagina: Any) -> list[str]:
 # lista eu separo as duas perguntas, e a recusa passa a dizer qual das duas
 # falhou em vez de deixar o operador tentar de novo as cegas.
 CAIXA_DO_PERFIL = "app-dropdown#dropdownPerfil"
+# O `input` DE VERDADE, dentro do custom element. Lido no console do navegador
+# pelo advogado em 07/10/2026, e e a chave do que travou tres corridas:
+#
+#   <app-dropdown id="dropdownPerfil" placeholder="Selecione perfil do usuario"
+#                 aria-haspopup="true" aria-expanded="false">
+#     ...
+#     <input type="text" role="combobox" aria-autocomplete="both"
+#            class="autocomplete-serventia" placeholder="Selecione perfil do usuario">
+#
+# O MESMO `placeholder` esta nos dois, e `query_selector_all` devolve na ordem
+# do documento, entao o hospedeiro vinha primeiro. O programa clicava e
+# digitava na casca: nao aciona o que o Angular escuta no `input`, e custom
+# element nao tem valor para receber texto. Nada falhava e nada acontecia.
+CAMPO_DO_PERFIL = "app-dropdown#dropdownPerfil input[role=combobox]"
+# A seta, segundo jeito de abrir a mesma lista.
+SETA_DO_PERFIL = "app-dropdown#dropdownPerfil .botao-dropdown i"
+# A lista existe SEMPRE no documento, com `style="display: none"`, e os dois
+# itens ja estao dentro dela fechada. "Abrir" aqui quer dizer ficar visivel, e
+# nao passar a existir, e por isso a conferencia e de visibilidade.
 LISTA_DE_RESULTADOS = "ul#resultados"
 ITEM_DA_LISTA = "li[id^=itemAutocomplete]"
 
@@ -1186,7 +1205,7 @@ def perfil_assumido_pelo_controle(pagina: Any, perfil: str) -> bool:
     Vale para os dois jeitos de a tela montar a escolha, porque a pergunta e a
     mesma nos dois: o que o controle mostra agora.
     """
-    from .portal import elemento_por_rotulo, sem_acento
+    from .portal import elemento_por_rotulo, elemento_visivel, sem_acento
 
     alvo = sem_acento(perfil).strip()
 
@@ -1202,7 +1221,8 @@ def perfil_assumido_pelo_controle(pagina: Any, perfil: str) -> bool:
             if sem_acento(str(escrito)).strip() == alvo:
                 return True
 
-    caixa = elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL)
+    caixa = (elemento_visivel(pagina, CAMPO_DO_PERFIL)
+             or elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL))
     if caixa is not None:
         for ler in (lambda e: e.evaluate("e => e.value || ''"),
                     lambda e: e.inner_text()):
@@ -1277,12 +1297,14 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         descricao=f"escolha do tipo de usuario {perfil.strip()!r}",
         conferido_em="execucao atual",
         seletores_clicaveis=(alvo_da_opcao, alvo_do_entrar,
-                             SELETOR_DA_CAIXA_DE_PERFIL),
+                             SELETOR_DA_CAIXA_DE_PERFIL, CAMPO_DO_PERFIL,
+                             SETA_DO_PERFIL),
         # A caixa entra nos DOIS: ela e clicada para abrir a lista e, quando a
         # lista nao abre, recebe o nome digitado. Liberar so `select` deixava o
         # caminho de digitar barrado pela propria trava, e o comando terminava
         # em traceback no meio da escolha do perfil.
-        seletores_preenchiveis=("select", SELETOR_DA_CAIXA_DE_PERFIL),
+        seletores_preenchiveis=("select", SELETOR_DA_CAIXA_DE_PERFIL,
+                                CAMPO_DO_PERFIL),
     ))
 
     from .portal import esperar_tela_montar
@@ -1304,11 +1326,15 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         # tela mostra e clica na opcao que o OPERADOR nomeou, por texto exato.
         # A caixa e `input[type=text]`, e nao botao: o unico rotulo dela e o
         # texto cinza que mostra. Procurar por texto de botao nao acha nada.
-        caixa = elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL)
+        # O seletor conferido PRIMEIRO, o rotulo como reserva. Identificacao
+        # positiva vale mais que deducao por rotulo, e foi a deducao por
+        # rotulo que entregou a casca em lugar do campo.
+        caixa = (elemento_visivel(pagina, CAMPO_DO_PERFIL)
+                 or elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL))
         if caixa is None:
             raise PerfilNaoInformado(
-                f"A tela do tipo de usuario nao tem lista nem "
-                f"{ROTULO_DA_LISTA_DE_PERFIL!r}. Nada foi escolhido.")
+                f"A tela do tipo de usuario nao tem lista, nem {CAMPO_DO_PERFIL}, "
+                f"nem {ROTULO_DA_LISTA_DE_PERFIL!r}. Nada foi escolhido.")
         guarda.pode_executar(Acao.CLICAR, SELETOR_DA_CAIXA_DE_PERFIL,
                              url=pagina.url)
         # A caixa pode estar abaixo da dobra: o clique do Playwright rola ate
@@ -1410,7 +1436,9 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         # corrida custou uma tentativa de login para contar menos que a
         # anterior. Relato que depende de QUAL recusa foi nao e relato.
         try:
-            caixa_agora = elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL)
+            caixa_agora = (elemento_visivel(pagina, CAMPO_DO_PERFIL)
+                           or elemento_por_rotulo(pagina,
+                                                  ROTULO_DA_LISTA_DE_PERFIL))
         except Exception:
             caixa_agora = None
         recado += relato_da_escolha(pagina, caixa_agora, perfil.strip(),

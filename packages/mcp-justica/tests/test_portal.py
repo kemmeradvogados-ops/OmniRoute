@@ -6231,3 +6231,124 @@ def test_a_rede_de_seguranca_do_main_continua_estreita():
     assert '"has been closed" not in str(exc)' in fonte
     # O `raise` que deixa passar todo o resto continua la.
     assert "            raise\n" in fonte
+
+
+# ==========================================================================
+# A casca e o campo carregam o MESMO rotulo
+#
+# Lido no console do navegador pelo advogado em 07/10/2026, e e a causa que
+# travou tres corridas. No Portal de Servicos do Tribunal de Justica do Rio
+# de Janeiro:
+#
+#   <app-dropdown id="dropdownPerfil" placeholder="Selecione perfil do usuario"
+#                 aria-haspopup="true" aria-expanded="false">
+#     <div class="select-autocomplete">
+#       <input type="text" role="combobox" aria-autocomplete="both"
+#              class="autocomplete-serventia"
+#              placeholder="Selecione perfil do usuario">
+#
+# `query_selector_all` devolve na ordem do documento, e o hospedeiro vem
+# antes. O programa clicava e digitava na CASCA: nao aciona o que o Angular
+# escuta no `input`, e custom element nao tem valor para receber texto. Nada
+# falhava e nada acontecia, e o relato dizia "clicar" e "preencher" com toda
+# a razao.
+#
+# As tres explicacoes que eu dei antes disso estavam todas erradas: a lista
+# que nao abria, a posicao fora da janela, e a caixa somente de leitura.
+# ==========================================================================
+
+class _ElementoComRotulo:
+    def __init__(self, tag, rotulos, dentro=None, visivel=True):
+        self.tag, self.rotulos, self.dentro = tag, rotulos, dentro
+        self._visivel = visivel
+
+    def get_attribute(self, nome):
+        return self.rotulos.get(nome)
+
+    def evaluate(self, codigo):
+        return self.tag if "tagName" in codigo else None
+
+    def is_visible(self):
+        return self._visivel
+
+    def bounding_box(self):
+        return {"x": 10, "y": 10, "width": 300, "height": 38}
+
+    def query_selector(self, seletor):
+        if self.dentro is not None and "input" in seletor:
+            return self.dentro
+        return None
+
+
+def _tela_com(elementos):
+    class _Tela:
+        viewport_size = {"width": 1280, "height": 800}
+
+        def query_selector_all(self, seletor):
+            atributo = seletor.strip("[]")
+            return [e for e in elementos if e.get_attribute(atributo) is not None]
+
+        def evaluate(self, _c):
+            return self.viewport_size
+
+    return _Tela()
+
+
+ROTULO = "Selecione perfil do usuário"
+
+
+def test_o_campo_vence_a_casca_que_tem_o_mesmo_rotulo():
+    from justica_mcp.portal import elemento_por_rotulo
+
+    campo = _ElementoComRotulo("INPUT", {"placeholder": ROTULO})
+    casca = _ElementoComRotulo("APP-DROPDOWN", {"placeholder": ROTULO}, dentro=campo)
+
+    # Na ordem do documento a casca vem PRIMEIRO, como no portal real.
+    assert elemento_por_rotulo(_tela_com([casca, campo]), ROTULO) is campo
+
+
+def test_o_campo_de_dentro_serve_quando_so_a_casca_tem_o_rotulo():
+    """Ha componente que poe o rotulo so no hospedeiro. O texto digitado
+    continua tendo de ir para o controle de dentro."""
+    from justica_mcp.portal import elemento_por_rotulo
+
+    campo = _ElementoComRotulo("INPUT", {})
+    casca = _ElementoComRotulo("APP-DROPDOWN", {"placeholder": ROTULO}, dentro=campo)
+
+    assert elemento_por_rotulo(_tela_com([casca]), ROTULO) is campo
+
+
+def test_botao_de_icone_continua_sendo_achado_pelo_rotulo():
+    """O caminho que ja existia nao pode regredir: o botao de baixar do
+    Visualizador de Processos nao tem texto, so `aria-label`, e botao nao e
+    controle de formulario nem tem `input` dentro."""
+    from justica_mcp.portal import elemento_por_rotulo
+
+    botao = _ElementoComRotulo(
+        "BUTTON", {"aria-label": "Baixar o processo atual em PDF"})
+
+    assert elemento_por_rotulo(
+        _tela_com([botao]), "Baixar o processo atual em PDF") is botao
+
+
+def test_sem_candidato_nenhum_continua_devolvendo_nada():
+    from justica_mcp.portal import elemento_por_rotulo
+
+    assert elemento_por_rotulo(_tela_com([]), ROTULO) is None
+
+
+def test_a_escolha_entre_candidatos_e_feita_por_uma_funcao_so():
+    """Guarda de fonte: o desempate mora num lugar, e nao espalhado."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.elemento_por_rotulo)
+    assert "_controle_preferido(candidatos)" in fonte
+    assert "return elemento" not in fonte
+
+
+def test_o_desempate_nao_quebra_com_lista_vazia():
+    from justica_mcp.portal import _controle_preferido
+
+    assert _controle_preferido([]) is None

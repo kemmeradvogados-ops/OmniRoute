@@ -875,10 +875,20 @@ class _TelaDePerfil:
                        _BotaoDoQuadro(self, "Cancelar")]
 
     def query_selector_all(self, seletor):
-        from justica_mcp.dcp import ITEM_DA_LISTA, LISTA_DE_RESULTADOS
+        from justica_mcp.dcp import (CAIXA_DO_PERFIL, CAMPO_DO_PERFIL,
+                                     ITEM_DA_LISTA, LISTA_DE_RESULTADOS,
+                                     SETA_DO_PERFIL)
 
         if seletor.startswith("select"):
             return [self.lista] if self.lista else []
+        # O `input` de verdade, dentro do custom element. No portal real o
+        # MESMO `placeholder` esta no hospedeiro e no campo, e ate 07/10/2026
+        # o programa pegava o hospedeiro. Aqui os dois seletores levam ao
+        # mesmo objeto: o que o teste exerce e o caminho, nao a casca.
+        if seletor == CAMPO_DO_PERFIL:
+            return [self.caixa] if self.caixa else []
+        if seletor in (CAIXA_DO_PERFIL, SETA_DO_PERFIL):
+            return []
         if seletor.startswith("[") and "placeholder" in seletor:
             return [self.caixa] if self.caixa else []
         if seletor.startswith("["):
