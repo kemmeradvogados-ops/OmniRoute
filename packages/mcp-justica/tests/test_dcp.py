@@ -2063,3 +2063,131 @@ def test_o_relato_nao_quebra_quando_a_caixa_sumiu():
     from justica_mcp.dcp import estado_da_caixa
 
     assert "nao foi encontrada" in estado_da_caixa(None, "Advogado")
+
+
+# ==========================================================================
+# "Entrar nao esta na tela", com "Entrar" na tela logo abaixo
+#
+# 07/10/2026. A escolha do perfil finalmente funcionou: a lista abriu, a
+# opcao foi clicada, a prova positiva passou. O comando entao recusou
+# dizendo que o botao de enviar nao estava na tela, e o relato impresso na
+# linha seguinte listava 'Entrar' entre os botoes visiveis.
+#
+# Nao havia contradicao, havia meio segundo: a escolha do perfil redesenha o
+# formulario, e `elemento_visivel` olha UMA vez. E a mesma classe de defeito
+# que ja apareceu neste projeto na tela de login, na de selecao de sistemas
+# e na da consulta, agora numa funcao nova.
+# ==========================================================================
+
+class _BotaoDeTela:
+    def __init__(self, texto, visivel=True, habilitado=True, dentro=True):
+        self.texto, self._visivel = texto, visivel
+        self._habilitado, self._dentro = habilitado, dentro
+        self.rolou = False
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, _n):
+        return None
+
+    def is_visible(self):
+        return self._visivel
+
+    def is_enabled(self):
+        return self._habilitado
+
+    def bounding_box(self):
+        return ({"x": 10, "y": 300, "width": 90, "height": 34} if self._dentro
+                else {"x": 10, "y": 3000, "width": 90, "height": 34})
+
+    def scroll_into_view_if_needed(self):
+        self.rolou = True
+
+
+class _TelaQueDemora:
+    """O botao so aparece depois de algumas olhadas, como o formulario que
+    esta sendo redesenhado."""
+
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, botao, olhadas_ate_aparecer):
+        self.botao, self.olhadas = botao, 0
+        self.ate_aparecer = olhadas_ate_aparecer
+
+    def query_selector_all(self, _seletor):
+        self.olhadas += 1
+        return [] if self.olhadas < self.ate_aparecer else [self.botao]
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def evaluate(self, _c):
+        return self.viewport_size
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_o_botao_que_demora_a_ser_redesenhado_e_esperado():
+    from justica_mcp.dcp import achar_o_entrar
+
+    botao = _BotaoDeTela("Entrar")
+    assert achar_o_entrar(_TelaQueDemora(botao, 4), segundos=5) is botao
+
+
+def test_o_botao_empurrado_para_baixo_da_dobra_e_alcancado():
+    """A lista aberta empurra o rodape do formulario para fora da janela. Um
+    botao fora da janela nao esta ausente: esta a um rolar de distancia."""
+    from justica_mcp.dcp import achar_o_entrar
+
+    botao = _BotaoDeTela("Entrar", dentro=False)
+    achado = achar_o_entrar(_TelaQueDemora(botao, 1), segundos=1)
+    assert achado is botao
+    assert botao.rolou is True
+
+
+def test_o_botao_que_nunca_aparece_devolve_nada():
+    from justica_mcp.dcp import achar_o_entrar
+
+    assert achar_o_entrar(_TelaQueDemora(_BotaoDeTela("Entrar"), 10**9),
+                          segundos=1) is None
+
+
+def test_a_recusa_do_entrar_lista_os_botoes_a_vista():
+    from justica_mcp.dcp import botoes_a_vista
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [_BotaoDeTela("Entrar", habilitado=False),
+                    _BotaoDeTela("Cancelar"),
+                    _BotaoDeTela("", visivel=True)]
+
+    lido = botoes_a_vista(_Tela())
+    assert "Entrar (desabilitado)" in lido
+    assert "Cancelar" in lido
+    # Botao mudo nao entra: nao diz nada a quem le.
+    assert "" not in lido
+
+
+def test_o_relato_dos_botoes_corta_texto_longo():
+    """Noutra tela, o rotulo de um botao e o proprio andamento do processo."""
+    from justica_mcp.dcp import botoes_a_vista
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [_BotaoDeTela("Alternar 45 - Juntada - Extrato - dia 27/04/2018")]
+
+    assert botoes_a_vista(_Tela()) == []
+
+
+def test_o_entrar_nao_e_mais_procurado_com_uma_olhada_so():
+    """Guarda de fonte contra a regressao exata de 07/10/2026."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.escolher_perfil)
+    assert "achar_o_entrar(pagina" in fonte
+    assert "elemento_visivel(pagina, alvo_do_entrar)" not in fonte

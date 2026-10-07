@@ -1235,6 +1235,79 @@ def perfil_assumido_pelo_controle(pagina: Any, perfil: str) -> bool:
     return False
 
 
+def botoes_a_vista(pagina: Any, teto: int = 12) -> list[str]:
+    """Texto dos botoes visiveis, para a recusa dizer o que havia na tela.
+
+    Sao rotulos de controle, nao dado de processo: "Entrar", "Cancelar". O
+    teto e o corte por tamanho ficam porque a mesma funcao, noutra tela,
+    encontraria botao cujo rotulo e o proprio andamento.
+    """
+    from .portal import ALVOS_CLICAVEIS
+
+    vistos, saida = set(), []
+    try:
+        achados = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
+    except Exception:
+        return saida
+    for elemento in achados:
+        if len(saida) >= teto:
+            break
+        try:
+            if not elemento.is_visible():
+                continue
+            texto = " ".join((elemento.inner_text() or "").split())
+            marca = "" if elemento.is_enabled() else " (desabilitado)"
+        except Exception:
+            continue
+        if texto and len(texto) <= 40 and texto not in vistos:
+            vistos.add(texto)
+            saida.append(texto + marca)
+    return saida
+
+
+def achar_o_entrar(pagina: Any, segundos: int = 15) -> Optional[Any]:
+    """O botao de enviar o perfil, esperando por ele e indo ate ele.
+
+    Conferido em campo em 07/10/2026, e e o mesmo defeito de sempre numa
+    funcao nova: o comando recusou dizendo que "Entrar" nao estava na tela, e
+    o relato impresso LOGO ABAIXO listava "Entrar" na tela. Nao havia
+    contradicao, havia meio segundo de diferenca: a escolha do perfil
+    redesenha o formulario, e `elemento_visivel` olha UMA vez.
+
+    Duas redes, nessa ordem:
+
+    1. Esperar, em vez de olhar uma vez.
+    2. Se ainda nao aparecer, procurar sem exigir que esteja DENTRO da janela,
+       e rolar ate ele. A lista aberta empurra o rodape do formulario para
+       baixo da dobra, e um botao fora da janela nao esta ausente: esta logo
+       ali, a um rolar de distancia.
+    """
+    from .portal import (ALVOS_CLICAVEIS, PREFIXO_DE_TEXTO, esperar_elemento,
+                         sem_acento)
+
+    achado = esperar_elemento(
+        pagina, f"{PREFIXO_DE_TEXTO}{BOTAO_ENTRAR_NO_PERFIL}", segundos)
+    if achado is not None:
+        return achado
+
+    alvo = sem_acento(BOTAO_ENTRAR_NO_PERFIL).strip()
+    try:
+        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
+    except Exception:
+        return None
+    for elemento in candidatos:
+        try:
+            escrito = sem_acento(
+                elemento.inner_text() or elemento.get_attribute("value") or "")
+            if escrito.strip() != alvo or not elemento.is_visible():
+                continue
+            elemento.scroll_into_view_if_needed()
+            return elemento
+        except Exception:
+            continue
+    return None
+
+
 def escolher_pelo_teclado(caixa: Any, pagina: Any) -> bool:
     """Seta para baixo e Enter, o caminho de teclado do combobox.
 
@@ -1445,11 +1518,15 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                                     "(a escolha nao passou pelo caminho da caixa)")
         raise PerfilNaoInformado(recado)
 
-    entrar = elemento_visivel(pagina, alvo_do_entrar)
+    entrar = achar_o_entrar(pagina, min(segundos, 15))
     if entrar is None:
+        a_vista = botoes_a_vista(pagina)
         raise PerfilNaoInformado(
             f"O botao {BOTAO_ENTRAR_NO_PERFIL!r} nao esta na tela do tipo de "
-            "usuario. O perfil foi escolhido e NAO foi enviado.")
+            "usuario, nem depois de esperado e procurado fora da janela. "
+            "O perfil foi escolhido e NAO foi enviado."
+            + ("\n    BOTOES A VISTA: " + "; ".join(a_vista) + "."
+               if a_vista else "\n    Nenhum botao visivel na tela."))
     guarda.pode_executar(Acao.CLICAR, alvo_do_entrar, url=pagina.url)
     entrar.click()
     try:
