@@ -1270,7 +1270,7 @@ def test_a_prova_vem_antes_do_clique_em_entrar():
 
     fonte = inspect.getsource(dcp.escolher_perfil)
     assert fonte.index("perfil_assumido_pelo_controle(") < fonte.index(
-        "entrar.click()")
+        "clicar_com_jeito(entrar)")
 
 
 # ==========================================================================
@@ -2094,6 +2094,7 @@ class _BotaoDeTela:
         self.texto, self._visivel = texto, visivel
         self._habilitado, self._dentro = habilitado, dentro
         self.rolou = False
+        self.clicado = False
 
     def inner_text(self):
         return self.texto
@@ -2113,6 +2114,9 @@ class _BotaoDeTela:
 
     def scroll_into_view_if_needed(self):
         self.rolou = True
+
+    def click(self):
+        self.clicado = True
 
 
 class _TelaQueDemora:
@@ -2265,34 +2269,34 @@ def test_o_entrar_e_aceito_quando_so_a_arvore_acessivel_o_acha():
 
 
 def test_entre_varios_candidatos_fica_o_visivel_e_nao_o_primeiro():
-    from justica_mcp.dcp import entrar_pela_arvore_acessivel
+    from justica_mcp.dcp import achar_pela_arvore_acessivel
 
     escondido = _BotaoDeTela("Entrar", visivel=False)
     aparente = _BotaoDeTela("Entrar")
 
-    achado = entrar_pela_arvore_acessivel(
-        _TelaComArvoreAcessivel([escondido, aparente]))
+    achado = achar_pela_arvore_acessivel(
+        _TelaComArvoreAcessivel([escondido, aparente]), "Entrar")
     assert achado is aparente
 
 
 def test_a_posicao_nao_desempata_na_arvore_acessivel():
     """Escolher pelo lugar na tela seria escolher no escuro."""
-    from justica_mcp.dcp import entrar_pela_arvore_acessivel
+    from justica_mcp.dcp import achar_pela_arvore_acessivel
 
     fora_da_janela = _BotaoDeTela("Entrar", dentro=False)
     dentro = _BotaoDeTela("Entrar")
 
     # O primeiro VISIVEL vence, mesmo estando fora da area util.
-    achado = entrar_pela_arvore_acessivel(
-        _TelaComArvoreAcessivel([fora_da_janela, dentro]))
+    achado = achar_pela_arvore_acessivel(
+        _TelaComArvoreAcessivel([fora_da_janela, dentro]), "Entrar")
     assert achado is fora_da_janela
 
 
 def test_navegador_sem_arvore_acessivel_nao_quebra():
     """Quadro embutido e os falsos dos testes nao tem `get_by_role`."""
-    from justica_mcp.dcp import entrar_pela_arvore_acessivel
+    from justica_mcp.dcp import achar_pela_arvore_acessivel
 
-    assert entrar_pela_arvore_acessivel(object()) is None
+    assert achar_pela_arvore_acessivel(object(), "Entrar") is None
 
 
 def test_a_busca_por_texto_continua_vindo_primeiro():
@@ -2302,13 +2306,13 @@ def test_a_busca_por_texto_continua_vindo_primeiro():
 
     from justica_mcp import dcp
 
-    fonte = inspect.getsource(dcp.achar_o_entrar)
+    fonte = inspect.getsource(dcp.achar_clicavel)
     assert fonte.index("esperar_elemento(") < fonte.index(
-        "entrar_pela_arvore_acessivel(pagina)")
+        "achar_pela_arvore_acessivel(pagina, nome)")
 
 
 def test_o_diagnostico_descreve_cada_candidato_ao_botao():
-    from justica_mcp.dcp import relato_dos_candidatos_a_entrar
+    from justica_mcp.dcp import relato_dos_candidatos
 
     class _ComAriaLabel(_BotaoDeTela):
         def __init__(self):
@@ -2324,7 +2328,7 @@ def test_o_diagnostico_descreve_cada_candidato_ao_botao():
         def query_selector_all(self, _s):
             return [_ComAriaLabel(), _BotaoDeTela("Cancelar")]
 
-    linhas = relato_dos_candidatos_a_entrar(_Tela())
+    linhas = relato_dos_candidatos(_Tela())
     assert len(linhas) == 1
     assert "tag='DIV'" in linhas[0]
     assert "aria-label='Entrar'" in linhas[0]
@@ -2333,13 +2337,13 @@ def test_o_diagnostico_descreve_cada_candidato_ao_botao():
 
 
 def test_o_diagnostico_diz_quando_nao_ha_candidato_nenhum():
-    from justica_mcp.dcp import relato_dos_candidatos_a_entrar
+    from justica_mcp.dcp import relato_dos_candidatos
 
     class _Vazia:
         def query_selector_all(self, _s):
             return []
 
-    assert "nenhum clicavel" in relato_dos_candidatos_a_entrar(_Vazia())[0]
+    assert "nenhum clicavel" in relato_dos_candidatos(_Vazia())[0]
 
 
 def test_a_autorizacao_da_trava_continua_sendo_por_texto():
@@ -2489,23 +2493,25 @@ def test_clicar_no_invisivel_so_vale_com_prova_depois():
     from justica_mcp import dcp
 
     fonte = inspect.getsource(dcp.escolher_perfil)
-    assert "candidato_sem_tamanho(pagina)" in fonte
-    assert "clicar_pelo_documento(entrar)" in fonte
+    assert "clicar_com_jeito(entrar)" in fonte
     assert "saiu_da_tela_de_perfil(pagina" in fonte
     # A prova vem DEPOIS do clique, e nao ha caminho que a pule.
-    assert fonte.index("clicar_pelo_documento(entrar)") < fonte.index(
+    assert fonte.index("clicar_com_jeito(entrar)") < fonte.index(
         "saiu_da_tela_de_perfil(pagina")
+    # E a busca geral ainda alcanca o elemento sem tamanho.
+    assert "candidato_sem_tamanho(pagina, nome)" in inspect.getsource(
+        dcp.achar_clicavel)
 
 
 def test_o_diagnostico_traz_a_marcacao_do_candidato():
     """E o que falta para entender POR QUE a caixa e de zero por zero."""
-    from justica_mcp.dcp import relato_dos_candidatos_a_entrar
+    from justica_mcp.dcp import relato_dos_candidatos
 
     class _Tela:
         def query_selector_all(self, _s):
             return [_AncoraSemTamanho()]
 
-    linha = relato_dos_candidatos_a_entrar(_Tela())[0]
+    linha = relato_dos_candidatos(_Tela())[0]
     assert "marcacao=" in linha
     assert "caixa=x460 y499 l0 a0" in linha
 
@@ -2522,3 +2528,122 @@ def test_o_envio_que_nao_tira_da_tela_de_perfil_e_recusado():
 
     with pytest.raises(PerfilNaoInformado, match="nao tirou a tela"):
         escolher_perfil(tela, _Guarda(), "Advogado", 2)
+
+
+# ==========================================================================
+# A sequencia foi descoberta TRES vezes antes de virar uma funcao so
+#
+#   06/10  a opcao do perfil        nao vinha em `option`, e sim em `li`
+#   07/10  o botao 'Entrar'         tinha caixa de zero por zero
+#   07/10  'Consultas Processuais'  estava fora da janela, com 26 outros
+#
+# Sao sintomas diferentes da mesma coisa: o elemento EXISTE e nao satisfaz
+# alguma exigencia da busca. Cada exigencia tem razao de ser, e nenhuma foi
+# removida das buscas gerais de `portal.py`, que protegem outras telas e
+# outros portais. O que mudou e que aqui se tenta mais de uma.
+# ==========================================================================
+
+def test_a_busca_geral_alcanca_o_que_esta_fora_da_janela():
+    from justica_mcp.dcp import achar_clicavel
+
+    item = _BotaoDeTela("Consultas Processuais", dentro=False)
+
+    class _Tela:
+        viewport_size = {"width": 1280, "height": 800}
+
+        def query_selector_all(self, _s):
+            return [item]
+
+        def query_selector(self, _s):
+            return None
+
+        def evaluate(self, _c):
+            return self.viewport_size
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    achado = achar_clicavel(_Tela(), "Consultas Processuais", segundos=1)
+    assert achado is item
+    assert item.rolou is True
+
+
+def test_a_busca_geral_alcanca_o_que_nao_tem_tamanho():
+    from justica_mcp.dcp import achar_clicavel
+
+    ancora = _AncoraSemTamanho(texto="Consultas Processuais")
+
+    class _Tela:
+        viewport_size = {"width": 1280, "height": 800}
+
+        def query_selector_all(self, _s):
+            return [ancora]
+
+        def query_selector(self, _s):
+            return None
+
+        def evaluate(self, _c):
+            return self.viewport_size
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    assert achar_clicavel(_Tela(), "Consultas Processuais", segundos=1) is ancora
+
+
+def test_o_clique_escolhe_o_jeito_e_diz_qual_foi():
+    """Dizer qual foi importa: clique de documento nao passa pelas mesmas
+    conferencias do navegador, e quem chama precisa relatar isso."""
+    from justica_mcp.dcp import clicar_com_jeito
+
+    comum = _BotaoDeTela("Entrar")
+    assert clicar_com_jeito(comum) == "mouse"
+
+    ancora = _AncoraSemTamanho()
+    assert clicar_com_jeito(ancora) == "documento"
+    assert ancora.clicado_pelo_documento is True
+
+
+def test_o_clique_que_nao_acontece_de_jeito_nenhum_e_declarado():
+    from justica_mcp.dcp import clicar_com_jeito
+
+    class _Teimoso:
+        def bounding_box(self):
+            return None
+
+        def evaluate(self, _c):
+            raise RuntimeError("sem suporte")
+
+    assert clicar_com_jeito(_Teimoso()) == "nenhum"
+
+
+def test_o_item_do_menu_usa_a_mesma_busca_que_o_entrar():
+    """Guarda de fonte contra o conserto pontual: as tres telas sao a mesma
+    pergunta, e eu a respondi tres vezes antes de perceber."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    menu = inspect.getsource(dcp.abrir_consulta_pelo_menu)
+    assert "achar_clicavel(pagina, ITEM_DA_CONSULTA" in menu
+    assert "clicar_com_jeito(item)" in menu
+    assert inspect.getsource(dcp.achar_o_entrar).count("achar_clicavel(") == 1
+
+
+def test_a_arvore_acessivel_tenta_botao_link_e_item_de_menu():
+    """Item de menu nao e `button`: no portal ele veio como `A`."""
+    from justica_mcp.dcp import PAPEIS_CLICAVEIS, achar_pela_arvore_acessivel
+
+    assert PAPEIS_CLICAVEIS == ("button", "link", "menuitem")
+
+    item = _BotaoDeTela("Consultas Processuais")
+    pedidos = []
+
+    class _So_Link:
+        def get_by_role(self, papel, name=None, exact=None):
+            pedidos.append(papel)
+            return _LocalizadorDePapel([item] if papel == "link" else [])
+
+    achado = achar_pela_arvore_acessivel(_So_Link(), "Consultas Processuais")
+    assert achado is item
+    assert pedidos == ["button", "link"]

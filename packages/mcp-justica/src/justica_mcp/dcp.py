@@ -288,15 +288,29 @@ def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> No
             f"se o endereco ainda for {TELA_DE_PERFIL}, a escolha do perfil e "
             "que nao chegou ao fim. Nada foi clicado.")
     guarda.pode_executar(Acao.CLICAR, MENU_DE_CONSULTAS, url=pagina.url)
-    menu.click()
+    clicar_com_jeito(menu)
 
-    item = esperar_elemento(pagina, alvo_do_item, min(segundos, 15))
+    # Pela busca geral, e nao por uma olhada estrita. Conferido em campo em
+    # 07/10/2026: o menu levou a `#/tela-menu`, e dos 30 clicaveis dela
+    # apenas 4 estavam DENTRO da janela. O item existia e estava abaixo da
+    # dobra, que e a terceira forma do mesmo defeito neste portal.
+    item = achar_clicavel(pagina, ITEM_DA_CONSULTA, min(segundos, 15))
     if item is None:
         raise ConsultaIndisponivel(
             f"O item {ITEM_DA_CONSULTA!r} nao apareceu depois de o menu ser "
-            "clicado. Nada mais foi clicado.")
+            f"clicado, por via nenhuma. Endereco atual: "
+            f"{endereco_sem_dado(pagina.url, 80)}. Nada mais foi clicado."
+            + "\n    CANDIDATOS AO ITEM:\n    "
+            + "\n    ".join(relato_dos_candidatos(pagina, ITEM_DA_CONSULTA)))
     guarda.pode_executar(Acao.CLICAR, alvo_do_item, url=pagina.url)
-    item.click()
+    jeito = clicar_com_jeito(item)
+    if jeito == "documento":
+        print(f"    [SEM TAMANHO] O item {ITEM_DA_CONSULTA!r} nao tem caixa "
+              "clicavel. O clique foi disparado no proprio elemento.")
+    elif jeito == "nenhum":
+        raise ConsultaIndisponivel(
+            f"O item {ITEM_DA_CONSULTA!r} foi encontrado e nao aceitou clique "
+            "de forma nenhuma. Nada mais foi clicado.")
 
     # Prova positiva de que o clique levou aonde devia, em vez de confiar nele.
     import time as _tempo
@@ -1265,7 +1279,95 @@ def botoes_a_vista(pagina: Any, teto: int = 12) -> list[str]:
     return saida
 
 
-def entrar_pela_arvore_acessivel(pagina: Any) -> Optional[Any]:
+# Como alcancar um clicavel pelo NOME, do jeito mais exato ao mais tolerante.
+# Esta sequencia foi descoberta tres vezes, em tres telas diferentes do mesmo
+# portal, e nas tres eu a escrevi de novo no lugar de generaliza-la:
+#
+#   06/10  a opcao do perfil        nao vinha em `option`, e sim em `li`
+#   07/10  o botao 'Entrar'         tinha caixa de zero por zero
+#   07/10  'Consultas Processuais'  estava fora da janela, com 26 outros
+#
+# Sao sintomas diferentes da mesma coisa: o elemento EXISTE e nao satisfaz
+# alguma exigencia da busca. Cada exigencia tem razao de ser, e por isso
+# nenhuma foi removida; elas passaram a ser tentadas em ordem.
+PAPEIS_CLICAVEIS = ("button", "link", "menuitem")
+
+
+def tem_caixa(elemento: Any) -> bool:
+    """Se o elemento ocupa algum espaco, e portanto pode ser clicado a mouse."""
+    try:
+        caixa = elemento.bounding_box()
+    except Exception:
+        return False
+    return bool(caixa and caixa.get("width") and caixa.get("height"))
+
+
+def clicar_com_jeito(elemento: Any) -> str:
+    """Clica do jeito que este elemento aceita, e DIZ qual foi.
+
+    Devolve "mouse", "documento" ou "nenhum". Dizer qual foi importa: clique
+    de documento nao passa pelas mesmas conferencias do navegador, entao quem
+    chama precisa saber que usou esse caminho para relata-lo ao operador.
+    """
+    if tem_caixa(elemento):
+        try:
+            elemento.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        try:
+            elemento.click()
+            return "mouse"
+        except Exception:
+            pass
+    return "documento" if clicar_pelo_documento(elemento) else "nenhum"
+
+
+def achar_clicavel(pagina: Any, nome: str, segundos: int = 15) -> Optional[Any]:
+    """O clicavel com este NOME EXATO, por todas as vias, na ordem.
+
+    1. Esperar pela busca estrita, que exige visivel e dentro da janela.
+    2. A arvore acessivel, que e como a PESSOA enxerga a tela: alcanca nome
+       vindo de `aria-label` e elemento com papel de botao que nao e `button`.
+    3. Por texto, sem exigir que esteja dentro da janela. Elemento abaixo da
+       dobra nao esta ausente: esta a um rolar de distancia.
+    4. Sem tamanho, exigindo HABILITADO. Clicar no desabilitado nao faz nada
+       e o comando seguiria como se tivesse clicado.
+
+    Nenhuma exigencia foi afrouxada nas buscas gerais de `portal.py`: elas
+    protegem outras telas e outros portais. O que mudou e que aqui se tenta
+    mais de uma, em vez de desistir na primeira.
+    """
+    from .portal import (ALVOS_CLICAVEIS, PREFIXO_DE_TEXTO, esperar_elemento,
+                         sem_acento)
+
+    achado = esperar_elemento(pagina, f"{PREFIXO_DE_TEXTO}{nome}", segundos)
+    if achado is not None:
+        return achado
+
+    pela_arvore = achar_pela_arvore_acessivel(pagina, nome)
+    if pela_arvore is not None:
+        return pela_arvore
+
+    alvo = sem_acento(nome).strip()
+    try:
+        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
+    except Exception:
+        return None
+    for elemento in candidatos:
+        try:
+            escrito = sem_acento(
+                elemento.inner_text() or elemento.get_attribute("value") or "")
+            if escrito.strip() != alvo or not elemento.is_visible():
+                continue
+            elemento.scroll_into_view_if_needed()
+            return elemento
+        except Exception:
+            continue
+
+    return candidato_sem_tamanho(pagina, nome)
+
+
+def achar_pela_arvore_acessivel(pagina: Any, nome: str) -> Optional[Any]:
     """O botao pelo NOME ACESSIVEL, que e como a pessoa o enxerga.
 
     Rede que as duas buscas por texto nao cobrem, e a diferenca nao e teorica:
@@ -1282,22 +1384,24 @@ def entrar_pela_arvore_acessivel(pagina: Any) -> Optional[Any]:
     obter = getattr(pagina, "get_by_role", None)
     if obter is None:
         return None
-    try:
-        alvos = obter("button", name=BOTAO_ENTRAR_NO_PERFIL, exact=True)
-        total = alvos.count()
-    except Exception:
-        return None
-    for i in range(total):
+    for papel in PAPEIS_CLICAVEIS:
         try:
-            candidato = alvos.nth(i)
-            if candidato.is_visible():
-                return candidato
+            alvos = obter(papel, name=nome, exact=True)
+            total = alvos.count()
         except Exception:
             continue
+        for i in range(total):
+            try:
+                candidato = alvos.nth(i)
+                if candidato.is_visible():
+                    return candidato
+            except Exception:
+                continue
     return None
 
 
-def relato_dos_candidatos_a_entrar(pagina: Any, teto: int = 8) -> list[str]:
+def relato_dos_candidatos(pagina: Any, nome: str = BOTAO_ENTRAR_NO_PERFIL,
+                          teto: int = 8) -> list[str]:
     """Cada botao que se parece com o de enviar, e como ele esta.
 
     Existe porque a recusa de 07/10/2026 dizia que o botao nao estava na tela
@@ -1307,7 +1411,7 @@ def relato_dos_candidatos_a_entrar(pagina: Any, teto: int = 8) -> list[str]:
     """
     from .portal import ALVOS_CLICAVEIS, sem_acento
 
-    alvo = sem_acento(BOTAO_ENTRAR_NO_PERFIL).strip()
+    alvo = sem_acento(nome).strip()
     linhas = []
     try:
         candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
@@ -1353,11 +1457,12 @@ def relato_dos_candidatos_a_entrar(pagina: Any, teto: int = 8) -> list[str]:
             pass
         linhas.append("; ".join(partes))
     if not linhas:
-        return [f"nenhum clicavel com o nome {BOTAO_ENTRAR_NO_PERFIL!r} na tela"]
+        return [f"nenhum clicavel com o nome {nome!r} na tela"]
     return linhas
 
 
-def candidato_sem_tamanho(pagina: Any) -> Optional[Any]:
+def candidato_sem_tamanho(pagina: Any,
+                          nome: str = BOTAO_ENTRAR_NO_PERFIL) -> Optional[Any]:
     """O 'Entrar' que EXISTE, esta habilitado, e tem caixa de zero por zero.
 
     Lido em campo em 07/10/2026, e e o unico candidato que a tela oferece:
@@ -1375,7 +1480,7 @@ def candidato_sem_tamanho(pagina: Any) -> Optional[Any]:
     """
     from .portal import ALVOS_CLICAVEIS, sem_acento
 
-    alvo = sem_acento(BOTAO_ENTRAR_NO_PERFIL).strip()
+    alvo = sem_acento(nome).strip()
     try:
         candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
     except Exception:
@@ -1438,53 +1543,14 @@ def saiu_da_tela_de_perfil(pagina: Any, segundos: int = 20) -> bool:
 
 
 def achar_o_entrar(pagina: Any, segundos: int = 15) -> Optional[Any]:
-    """O botao de enviar o perfil, esperando por ele e indo ate ele.
+    """O botao de enviar o perfil. Apelido da busca geral, pelo nome dele.
 
-    Conferido em campo em 07/10/2026, e e o mesmo defeito de sempre numa
-    funcao nova: o comando recusou dizendo que "Entrar" nao estava na tela, e
-    o relato impresso LOGO ABAIXO listava "Entrar" na tela. Nao havia
-    contradicao, havia meio segundo de diferenca: a escolha do perfil
-    redesenha o formulario, e `elemento_visivel` olha UMA vez.
-
-    Duas redes, nessa ordem:
-
-    1. Esperar, em vez de olhar uma vez.
-    2. Se ainda nao aparecer, procurar sem exigir que esteja DENTRO da janela,
-       e rolar ate ele. A lista aberta empurra o rodape do formulario para
-       baixo da dobra, e um botao fora da janela nao esta ausente: esta logo
-       ali, a um rolar de distancia.
+    Fica como funcao propria porque e assim que o caminho do perfil a nomeia,
+    e porque o nome diz o que se procura. A sequencia de tentativas, essa,
+    e a mesma de qualquer outro clicavel: foi escrita tres vezes antes de eu
+    perceber que era uma so.
     """
-    from .portal import (ALVOS_CLICAVEIS, PREFIXO_DE_TEXTO, esperar_elemento,
-                         sem_acento)
-
-    achado = esperar_elemento(
-        pagina, f"{PREFIXO_DE_TEXTO}{BOTAO_ENTRAR_NO_PERFIL}", segundos)
-    if achado is not None:
-        return achado
-
-    # Pela arvore acessivel, que e como a pessoa enxerga o botao. Alcanca o que
-    # as buscas por texto nao alcancam: nome vindo de `aria-label`, e elemento
-    # com `role=button` que nao e `<button>`.
-    pela_arvore = entrar_pela_arvore_acessivel(pagina)
-    if pela_arvore is not None:
-        return pela_arvore
-
-    alvo = sem_acento(BOTAO_ENTRAR_NO_PERFIL).strip()
-    try:
-        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
-    except Exception:
-        return None
-    for elemento in candidatos:
-        try:
-            escrito = sem_acento(
-                elemento.inner_text() or elemento.get_attribute("value") or "")
-            if escrito.strip() != alvo or not elemento.is_visible():
-                continue
-            elemento.scroll_into_view_if_needed()
-            return elemento
-        except Exception:
-            continue
-    return None
+    return achar_clicavel(pagina, BOTAO_ENTRAR_NO_PERFIL, segundos)
 
 
 def escolher_pelo_teclado(caixa: Any, pagina: Any) -> bool:
@@ -1697,17 +1763,10 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                                     "(a escolha nao passou pelo caminho da caixa)")
         raise PerfilNaoInformado(recado)
 
+    # A busca geral ja tenta, em ordem: esperar, arvore acessivel, texto fora
+    # da janela, e sem tamanho. A ultima e a que esta tela exige: o 'Entrar'
+    # existe, esta habilitado, e tem caixa de zero por zero.
     entrar = achar_o_entrar(pagina, min(segundos, 15))
-    sem_tamanho = False
-    if entrar is None:
-        # Ultima rede, e a que a tela de 07/10/2026 exige: o 'Entrar' existe,
-        # esta habilitado, e tem caixa de zero por zero. `is_visible()` do
-        # Playwright devolve falso para caixa vazia, e TODAS as buscas acima
-        # exigem `is_visible()`. Nenhuma delas estava errada sobre o que
-        # procurava; o elemento e que nao tem tamanho.
-        entrar = candidato_sem_tamanho(pagina)
-        sem_tamanho = entrar is not None
-
     if entrar is None:
         a_vista = botoes_a_vista(pagina)
         raise PerfilNaoInformado(
@@ -1718,23 +1777,15 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
             + ("\n    BOTOES A VISTA: " + "; ".join(a_vista) + "."
                if a_vista else "\n    Nenhum botao visivel na tela.")
             + "\n    CANDIDATOS AO BOTAO DE ENVIAR:\n    "
-            + "\n    ".join(relato_dos_candidatos_a_entrar(pagina)))
+            + "\n    ".join(relato_dos_candidatos(pagina)))
 
     guarda.pode_executar(Acao.CLICAR, alvo_do_entrar, url=pagina.url)
-    if sem_tamanho:
+    jeito = clicar_com_jeito(entrar)
+    if jeito == "documento":
         print(f"    [SEM TAMANHO] O botao {BOTAO_ENTRAR_NO_PERFIL!r} existe e "
               "esta habilitado, com caixa de zero por zero.")
         print("    O clique do Playwright mira o centro da caixa, e nao ha "
               "centro. Disparando o clique no proprio elemento.")
-        clicar_pelo_documento(entrar)
-    else:
-        # Rolar antes de clicar: a lista aberta empurra o rodape do formulario
-        # para baixo da dobra.
-        try:
-            entrar.scroll_into_view_if_needed()
-        except Exception:
-            pass
-        entrar.click()
     try:
         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
     except Exception:
@@ -1747,11 +1798,13 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         recado = (f"O perfil {perfil.strip()!r} foi escolhido e o clique em "
                   f"{BOTAO_ENTRAR_NO_PERFIL!r} nao tirou a tela do tipo de "
                   "usuario. Nada foi consultado.")
-        if sem_tamanho:
+        if jeito == "documento":
             recado += (" O clique foi disparado no proprio elemento, porque a "
                        "caixa dele e de zero por zero.")
+        elif jeito == "nenhum":
+            recado += " O botao nao aceitou clique de forma nenhuma."
         recado += ("\n    CANDIDATOS AO BOTAO DE ENVIAR:\n    "
-                   + "\n    ".join(relato_dos_candidatos_a_entrar(pagina)))
+                   + "\n    ".join(relato_dos_candidatos(pagina)))
         raise PerfilNaoInformado(recado)
 
 
