@@ -1816,3 +1816,136 @@ class _TelaPerfilSemLista(_TelaDePerfil):
         if seletor in (ITEM_DA_LISTA, LISTA_DE_RESULTADOS, "li", "[role=option]"):
             return []
         return super().query_selector_all(seletor)
+
+
+# ==========================================================================
+# `aria-expanded` e o caminho de teclado
+#
+# Sugestoes trazidas pelo advogado em 07/10/2026, de uma analise externa.
+# Duas delas acrescentam sinal que o relato nao tinha. Uma terceira partia de
+# premissa errada sobre este codigo (que a digitacao usava `fill`), e por
+# isso nao foi aplicada: a digitacao sempre foi tecla a tecla.
+# ==========================================================================
+
+class _CaixaQueAnotaTeclas:
+    def __init__(self, atributos=None, falha_em=None):
+        self.teclas = []
+        self.atributos = atributos or {}
+        self.falha_em = falha_em
+
+    def press(self, tecla):
+        if tecla == self.falha_em:
+            raise RuntimeError("sem suporte")
+        self.teclas.append(tecla)
+
+    def get_attribute(self, nome):
+        return self.atributos.get(nome)
+
+    def evaluate(self, _codigo):
+        return "INPUT"
+
+
+class _PaginaMuda:
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_o_teclado_tenta_seta_e_enter_nessa_ordem():
+    from justica_mcp.dcp import escolher_pelo_teclado
+
+    caixa = _CaixaQueAnotaTeclas()
+    assert escolher_pelo_teclado(caixa, _PaginaMuda()) is True
+    assert caixa.teclas == ["ArrowDown", "Enter"]
+
+
+def test_o_teclado_que_falha_nao_mente_que_escolheu():
+    from justica_mcp.dcp import escolher_pelo_teclado
+
+    caixa = _CaixaQueAnotaTeclas(falha_em="ArrowDown")
+    assert escolher_pelo_teclado(caixa, _PaginaMuda()) is False
+
+
+def test_o_estado_da_caixa_traz_o_aria_expanded():
+    """A leitura que separa 'o clique nao abriu' de 'o meu seletor esta errado'."""
+    from justica_mcp.dcp import estado_da_caixa
+
+    linha = estado_da_caixa(_CaixaQueAnotaTeclas(
+        {"aria-expanded": "true", "aria-controls": "resultados",
+         "role": "combobox"}))
+    assert "aria-expanded='true'" in linha
+    assert "aria-controls='resultados'" in linha
+    assert "role='combobox'" in linha
+
+
+def test_o_estado_da_caixa_nao_quebra_sem_caixa():
+    from justica_mcp.dcp import estado_da_caixa
+
+    assert "nao foi encontrada" in estado_da_caixa(None)
+
+
+def test_o_estado_da_caixa_nao_le_o_valor_digitado():
+    """Em tela de escolha de PROCESSO a mesma funcao leria dado de cliente."""
+    from justica_mcp.dcp import PERGUNTAS_A_CAIXA
+
+    assert "value" not in PERGUNTAS_A_CAIXA
+
+
+def test_a_marcacao_do_componente_e_relatada_e_limpa():
+    from justica_mcp.dcp import CAIXA_DO_PERFIL, envoltorio_da_caixa
+
+    class _Envoltorio:
+        def evaluate(self, _c):
+            return ('<app-dropdown id="dropdownPerfil" class="ng-star-inserted">'
+                    '\n   <input placeholder="Selecione perfil do usuario">'
+                    ' 0045025-93.2021.8.19.0002</app-dropdown>')
+
+    class _Tela:
+        def query_selector(self, seletor):
+            return _Envoltorio() if seletor == CAIXA_DO_PERFIL else None
+
+    lido = envoltorio_da_caixa(_Tela())
+    assert "app-dropdown" in lido
+    assert "ng-star-inserted" in lido
+    # Numero de processo nao viaja em relato, nem dentro de marcacao.
+    assert "0045025" not in lido
+
+
+def test_a_marcacao_diz_quando_o_componente_nao_existe():
+    from justica_mcp.dcp import CAIXA_DO_PERFIL, envoltorio_da_caixa
+
+    class _Vazia:
+        def query_selector(self, _s):
+            return None
+
+    assert CAIXA_DO_PERFIL in envoltorio_da_caixa(_Vazia())
+    assert "nao esta no documento" in envoltorio_da_caixa(_Vazia())
+
+
+def test_a_digitacao_do_perfil_e_tecla_a_tecla_e_nao_fill():
+    """Guarda de fonte, contra uma correcao que seria regressao.
+
+    A analise de 07/10/2026 apontou `fill()` como causa provavel, deduzindo-o
+    do rotulo 'preencher' do relato da trava. O rotulo e meu; a chamada sempre
+    foi `type(..., delay=40)`, que dispara keydown, keypress, input e keyup por
+    caractere. Se alguem "consertar" isto trocando por `fill`, o componente
+    deixa de receber os eventos e o defeito nasce de verdade.
+    """
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.escolher_perfil)
+    assert "caixa.type(" in fonte
+    assert "delay=" in fonte
+    assert "caixa.fill(" not in fonte
+
+
+def test_o_clique_na_opcao_so_acontece_quando_ha_opcao():
+    """O caminho de teclado nao tem opcao para clicar."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.escolher_perfil)
+    assert "if opcao is not None:" in fonte
+    assert fonte.index("if opcao is not None:") < fonte.index("opcao.click()")

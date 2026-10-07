@@ -946,6 +946,66 @@ def _estado_do_elemento(elemento: Any, janela: dict) -> str:
             f"{'dentro' if dentro else 'FORA'} da janela")
 
 
+# O que perguntar a propria caixa. `aria-expanded` e o decisivo: lido antes e
+# depois do clique, ele separa em um passo "o clique nao abriu o componente" de
+# "abriu e o meu seletor da lista e que esta errado". Sao os dois consertos que
+# ainda disputavam a mesma frase de recusa.
+PERGUNTAS_A_CAIXA = (
+    "aria-expanded",
+    "aria-controls",
+    "aria-owns",
+    "role",
+    "class",
+)
+
+
+def estado_da_caixa(caixa: Any) -> str:
+    """Como a caixa do perfil esta agora, numa linha.
+
+    Nenhum VALOR digitado e lido aqui: so o que descreve o componente. Em tela
+    de escolha de processo a mesma funcao leria dado de cliente.
+    """
+    if caixa is None:
+        return "a caixa nao foi encontrada"
+    partes = []
+    try:
+        partes.append(f"tag={caixa.evaluate('e => e.tagName')}")
+    except Exception:
+        pass
+    for nome in PERGUNTAS_A_CAIXA:
+        try:
+            lido = caixa.get_attribute(nome)
+        except Exception:
+            continue
+        if lido is not None:
+            texto = " ".join(str(lido).split())
+            partes.append(f"{nome}={texto[:60]!r}")
+    return "; ".join(partes) if partes else "sem atributo legivel"
+
+
+def envoltorio_da_caixa(pagina: Any, teto: int = 300) -> str:
+    """A marcacao do componente que contem a caixa, para identifica-lo.
+
+    Qual biblioteca o portal usa decide onde a lista nasce: ha componente que a
+    monta num `div` solto no fim do documento, e nesse caso procura-la perto da
+    caixa nunca a acharia. A marcacao responde isso de uma vez, e o relato
+    inteiro ate aqui nao respondia.
+    """
+    from .portal import sem_dado_de_processo
+
+    try:
+        envoltorio = pagina.query_selector(CAIXA_DO_PERFIL)
+    except Exception:
+        envoltorio = None
+    if envoltorio is None:
+        return f"{CAIXA_DO_PERFIL} nao esta no documento"
+    try:
+        marcacao = envoltorio.evaluate("e => e.outerHTML") or ""
+    except Exception:
+        return f"{CAIXA_DO_PERFIL} esta no documento e a marcacao nao pode ser lida"
+    return sem_dado_de_processo(" ".join(marcacao.split()))[:teto]
+
+
 def relatar_a_lista_de_perfil(pagina: Any, teto: int = 12) -> list[str]:
     """O que existe na tela do tipo de usuario, esteja a vista ou nao.
 
@@ -1084,6 +1144,36 @@ def perfil_assumido_pelo_controle(pagina: Any, perfil: str) -> bool:
     return False
 
 
+def escolher_pelo_teclado(caixa: Any, pagina: Any) -> bool:
+    """Seta para baixo e Enter, o caminho de teclado do combobox.
+
+    Padrao comum de caixa de completar: a lista existe para o teclado antes de
+    existir para o mouse, e ha componente que nem chega a desenha-la quando a
+    navegacao e por tecla.
+
+    Isto seria temerario em qualquer outro lugar deste programa, porque a seta
+    escolhe por POSICAO e nao por nome, e aqui ha duas opcoes: "Usuario Comum"
+    e "Advogado". Escolher a errada daria visao reduzida sem avisar, que e
+    exatamente o que `escolher_perfil` existe para impedir.
+
+    O que torna aceitavel e a conferencia que ja vem depois:
+    `perfil_assumido_pelo_controle` exige que o controle MOSTRE o perfil que o
+    operador nomeou, e recusa quando nao mostra. A seta nao decide nada: ela so
+    propoe, e quem decide e a prova positiva. Sem aquela conferencia no lugar,
+    este caminho nao poderia existir.
+    """
+    for tecla in ("ArrowDown", "Enter"):
+        try:
+            caixa.press(tecla)
+        except Exception:
+            return False
+        try:
+            pagina.wait_for_timeout(300)
+        except Exception:
+            pass
+    return True
+
+
 def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                     segundos: int = 45) -> None:
     """Escolhe o tipo de usuario que o OPERADOR nomeou e entra.
@@ -1158,6 +1248,7 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
             caixa.scroll_into_view_if_needed()
         except Exception:
             pass
+        antes_do_clique = estado_da_caixa(caixa)
         caixa.click()
         opcao = esperar_opcao_na_lista(pagina, perfil.strip(),
                                        min(segundos, ESPERA_DA_LISTA))
@@ -1194,7 +1285,20 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
                 print("    O comando seguiu. Avise-me: a regra de posicao e que "
                       "precisa ser corrigida, e nao a escolha do perfil.")
 
+        pelo_teclado = False
         if opcao is None:
+            # Ultimo caminho antes de desistir. A conferencia positiva logo
+            # abaixo e que o torna aceitavel: a seta propoe, ela decide.
+            guarda.pode_executar(Acao.PREENCHER, SELETOR_DA_CAIXA_DE_PERFIL,
+                                 url=pagina.url)
+            pelo_teclado = escolher_pelo_teclado(caixa, pagina)
+            if pelo_teclado:
+                print("    [TECLADO] A lista nao apareceu para o mouse. Tentei "
+                      "seta para baixo e Enter.")
+                print("    Se o perfil certo nao for assumido, o comando para "
+                      "aqui mesmo: a seta escolhe por posicao, nao por nome.")
+
+        if opcao is None and not pelo_teclado:
             a_vista = opcoes_a_vista(pagina)
             abriu = lista_de_opcoes_aberta(pagina)
             recado = (f"A opcao {perfil!r} nao apareceu na lista de tipos de "
@@ -1215,9 +1319,16 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
             if estado:
                 recado += ("\n    O QUE EXISTE NA TELA DO TIPO DE USUARIO:\n    "
                            + "\n    ".join(estado))
+            # `aria-expanded` antes e depois do clique: se nao mudar, o clique
+            # nao abriu o componente; se mudar para 'true', abriu e o seletor
+            # da lista e que esta errado. Dois consertos, uma leitura.
+            recado += (f"\n    A CAIXA ANTES DO CLIQUE: {antes_do_clique}"
+                       f"\n    A CAIXA DEPOIS:          {estado_da_caixa(caixa)}"
+                       f"\n    O COMPONENTE: {envoltorio_da_caixa(pagina)}")
             raise PerfilNaoInformado(recado + "\n    Nada foi escolhido.")
-        guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
-        opcao.click()
+        if opcao is not None:
+            guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
+            opcao.click()
 
     # Prova positiva antes de enviar. O botao "Entrar" nasce desabilitado e so
     # habilita depois de a caixa assumir o perfil: clicar nele antes nao faz
