@@ -326,6 +326,14 @@ class _BotaoDoQuadro:
 
     def click(self):
         self.quadro.cliques.append(self.texto)
+        # Clicar em "Entrar" na tela do tipo de usuario TIRA dela: e o que o
+        # portal faz, e desde 07/10/2026 e o que a prova positiva exige. Falso
+        # que fica parado na mesma tela estaria descrevendo um portal que nao
+        # existe, e reprovaria o programa por fazer a coisa certa.
+        if self.texto == "Entrar":
+            destino = getattr(self.quadro, "destino_do_entrar", None)
+            if destino is not None:
+                self.quadro.url = destino
 
 
 class _QuadroDaConsulta:
@@ -873,6 +881,8 @@ class _TelaDePerfil:
                       else _CaixaComRotulo(self, "Selecione perfil do usuário"))
         self.botoes = [_BotaoDoQuadro(self, "Entrar"),
                        _BotaoDoQuadro(self, "Cancelar")]
+        self.destino_do_entrar = (
+            "https://www3.tjrj.jus.br/portalservicos/#/dashboard")
 
     def query_selector_all(self, seletor):
         from justica_mcp.dcp import (CAIXA_DO_PERFIL, CAMPO_DO_PERFIL,
@@ -2342,3 +2352,173 @@ def test_a_autorizacao_da_trava_continua_sendo_por_texto():
     fonte = inspect.getsource(dcp.escolher_perfil)
     assert 'alvo_do_entrar = f"{PREFIXO_DE_TEXTO}{BOTAO_ENTRAR_NO_PERFIL}"' in fonte
     assert "pode_executar(Acao.CLICAR, alvo_do_entrar" in fonte
+
+
+# ==========================================================================
+# O 'Entrar' de zero por zero
+#
+# Diagnostico de 07/10/2026, trazido pelo proprio relato que eu tinha
+# acabado de construir:
+#
+#   tag='A'; visivel=False; habilitado=True; texto='Entrar';
+#   caixa=x460 y499 l0 a0
+#
+# Um `<a>` renderizado, no lugar certo da tela, com largura e altura zero.
+# `is_visible()` do Playwright devolve falso para caixa vazia, e TODAS as
+# tres buscas anteriores exigem `is_visible()`. Elas falharam juntas e
+# nenhuma estava errada sobre o que procurava.
+#
+# E corrige uma leitura minha do dia anterior: eu disse que o relato provava
+# que 'Entrar' estava NA TELA, logo era tempo. O relato filtra por POSICAO
+# (`na_tela`), nao por visibilidade, entao ele nunca disse isso.
+# ==========================================================================
+
+class _AncoraSemTamanho:
+    def __init__(self, texto="Entrar", habilitado=True):
+        self.texto, self._habilitado = texto, habilitado
+        self.clicado_pelo_documento = False
+        self.clicado_pelo_mouse = False
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, _n):
+        return None
+
+    def is_visible(self):
+        return False
+
+    def is_enabled(self):
+        return self._habilitado
+
+    def bounding_box(self):
+        return {"x": 460, "y": 499, "width": 0, "height": 0}
+
+    def evaluate(self, codigo):
+        if "click" in codigo:
+            self.clicado_pelo_documento = True
+            return None
+        if "tagName" in codigo:
+            return "A"
+        return "<a>Entrar</a>"
+
+    def click(self):
+        self.clicado_pelo_mouse = True
+
+    def scroll_into_view_if_needed(self):
+        pass
+
+
+def test_a_ancora_sem_tamanho_e_achada_quando_as_outras_redes_falham():
+    from justica_mcp.dcp import candidato_sem_tamanho
+
+    ancora = _AncoraSemTamanho()
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [_BotaoDeTela("Cancelar"), ancora]
+
+    assert candidato_sem_tamanho(_Tela()) is ancora
+
+
+def test_o_desabilitado_nao_serve_nem_sem_tamanho():
+    """Habilitado e a unica coisa que ainda se exige: clicar no desabilitado
+    nao faz nada e o comando seguiria como se tivesse entrado."""
+    from justica_mcp.dcp import candidato_sem_tamanho
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [_AncoraSemTamanho(habilitado=False)]
+
+    assert candidato_sem_tamanho(_Tela()) is None
+
+
+def test_o_nome_errado_nao_serve_nem_sem_tamanho():
+    from justica_mcp.dcp import candidato_sem_tamanho
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [_AncoraSemTamanho(texto="Cancelar")]
+
+    assert candidato_sem_tamanho(_Tela()) is None
+
+
+def test_o_clique_sem_tamanho_e_disparado_no_proprio_elemento():
+    """`click()` do Playwright mira o centro da caixa, e nao ha centro."""
+    from justica_mcp.dcp import clicar_pelo_documento
+
+    ancora = _AncoraSemTamanho()
+    assert clicar_pelo_documento(ancora) is True
+    assert ancora.clicado_pelo_documento is True
+    assert ancora.clicado_pelo_mouse is False
+
+
+def test_o_clique_pelo_documento_que_falha_nao_mente():
+    from justica_mcp.dcp import clicar_pelo_documento
+
+    class _Recusa:
+        def evaluate(self, _c):
+            raise RuntimeError("sem suporte")
+
+    assert clicar_pelo_documento(_Recusa()) is False
+
+
+def test_a_saida_da_tela_de_perfil_e_conferida_pelo_endereco():
+    from justica_mcp.dcp import saiu_da_tela_de_perfil
+
+    class _Tela:
+        def __init__(self, url):
+            self.url = url
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    assert saiu_da_tela_de_perfil(
+        _Tela("https://www3.tjrj.jus.br/portalservicos/#/dashboard"), 1) is True
+    assert saiu_da_tela_de_perfil(
+        _Tela("https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil"),
+        1) is False
+
+
+def test_clicar_no_invisivel_so_vale_com_prova_depois():
+    """Guarda de fonte. Clicar num elemento que o Playwright considera
+    invisivel e aceitavel SOMENTE porque a tela e conferida em seguida: sem
+    isso, seria uma acao declarada feita sem nada que a comprove."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.escolher_perfil)
+    assert "candidato_sem_tamanho(pagina)" in fonte
+    assert "clicar_pelo_documento(entrar)" in fonte
+    assert "saiu_da_tela_de_perfil(pagina" in fonte
+    # A prova vem DEPOIS do clique, e nao ha caminho que a pule.
+    assert fonte.index("clicar_pelo_documento(entrar)") < fonte.index(
+        "saiu_da_tela_de_perfil(pagina")
+
+
+def test_o_diagnostico_traz_a_marcacao_do_candidato():
+    """E o que falta para entender POR QUE a caixa e de zero por zero."""
+    from justica_mcp.dcp import relato_dos_candidatos_a_entrar
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [_AncoraSemTamanho()]
+
+    linha = relato_dos_candidatos_a_entrar(_Tela())[0]
+    assert "marcacao=" in linha
+    assert "caixa=x460 y499 l0 a0" in linha
+
+
+def test_o_envio_que_nao_tira_da_tela_de_perfil_e_recusado():
+    """A prova positiva do ENVIO, e nao so da escolha.
+
+    Clicar num elemento que o Playwright considera invisivel so se justifica
+    com conferencia depois. Sem ela, isto seria uma acao declarada feita sem
+    nada que a comprove, que e o oposto do que este programa faz.
+    """
+    tela = _TelaDePerfil(com_select=False)
+    tela.destino_do_entrar = None  # o portal nao sai da tela
+
+    with pytest.raises(PerfilNaoInformado, match="nao tirou a tela"):
+        escolher_perfil(tela, _Guarda(), "Advogado", 2)

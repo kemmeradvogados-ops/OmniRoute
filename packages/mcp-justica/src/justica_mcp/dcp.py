@@ -1346,10 +1346,95 @@ def relato_dos_candidatos_a_entrar(pagina: Any, teto: int = 8) -> list[str]:
             "caixa=nenhuma" if caixa is None else
             f"caixa=x{int(caixa['x'])} y{int(caixa['y'])} "
             f"l{int(caixa['width'])} a{int(caixa['height'])}")
+        try:
+            marcacao = " ".join((elemento.evaluate("e => e.outerHTML") or "").split())
+            partes.append(f"marcacao={marcacao[:200]!r}")
+        except Exception:
+            pass
         linhas.append("; ".join(partes))
     if not linhas:
         return [f"nenhum clicavel com o nome {BOTAO_ENTRAR_NO_PERFIL!r} na tela"]
     return linhas
+
+
+def candidato_sem_tamanho(pagina: Any) -> Optional[Any]:
+    """O 'Entrar' que EXISTE, esta habilitado, e tem caixa de zero por zero.
+
+    Lido em campo em 07/10/2026, e e o unico candidato que a tela oferece:
+
+        tag='A'; visivel=False; habilitado=True; texto='Entrar';
+        caixa=x460 y499 l0 a0
+
+    Um `<a>` renderizado, no lugar certo da tela, com largura e altura zero.
+    `is_visible()` do Playwright devolve falso para caixa vazia, e TODAS as
+    minhas buscas exigem `is_visible()`. Por isso as tres redes falharam
+    juntas: nenhuma delas estava errada sobre o que procurava.
+
+    Isto nao decide clicar: so devolve o candidato. Quem decide e quem chama,
+    e so depois de a prova positiva conferir que o clique levou a algum lugar.
+    """
+    from .portal import ALVOS_CLICAVEIS, sem_acento
+
+    alvo = sem_acento(BOTAO_ENTRAR_NO_PERFIL).strip()
+    try:
+        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
+    except Exception:
+        return None
+    for elemento in candidatos:
+        try:
+            nomes = (elemento.inner_text() or "",
+                     elemento.get_attribute("value") or "",
+                     elemento.get_attribute("aria-label") or "")
+            if not any(sem_acento(n).strip() == alvo for n in nomes if n):
+                continue
+            if not elemento.is_enabled():
+                continue
+        except Exception:
+            continue
+        return elemento
+    return None
+
+
+def clicar_pelo_documento(elemento: Any) -> bool:
+    """Clique disparado no proprio elemento, para quem nao tem tamanho.
+
+    `click()` do Playwright espera o elemento ficar acionavel, e elemento de
+    caixa vazia nunca fica: ele mira o centro da caixa, e nao ha centro. O
+    clique do documento nao mira lugar nenhum, aciona o que a pagina escuta
+    naquele elemento, que e o mesmo que o navegador faria.
+
+    Nao e um jeito de burlar protecao, e sim de alcancar um elemento que o
+    operador alcanca com o mouse todo dia. E nao dispensa prova: quem chama
+    confere depois se a tela mudou.
+    """
+    try:
+        elemento.evaluate("e => e.click()")
+        return True
+    except Exception:
+        return False
+
+
+def saiu_da_tela_de_perfil(pagina: Any, segundos: int = 20) -> bool:
+    """Prova positiva de que o envio do perfil levou a algum lugar.
+
+    Sem ela, clicar num elemento invisivel seria exatamente o tipo de acao
+    que este programa nao faz: a que se declara feita sem nada que a comprove.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    while True:
+        try:
+            if TELA_DE_PERFIL not in (pagina.url or ""):
+                return True
+        except Exception:
+            pass
+        if _tempo.monotonic() >= limite:
+            return False
+        try:
+            pagina.wait_for_timeout(400)
+        except Exception:
+            _tempo.sleep(0.4)
 
 
 def achar_o_entrar(pagina: Any, segundos: int = 15) -> Optional[Any]:
@@ -1613,28 +1698,61 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         raise PerfilNaoInformado(recado)
 
     entrar = achar_o_entrar(pagina, min(segundos, 15))
+    sem_tamanho = False
+    if entrar is None:
+        # Ultima rede, e a que a tela de 07/10/2026 exige: o 'Entrar' existe,
+        # esta habilitado, e tem caixa de zero por zero. `is_visible()` do
+        # Playwright devolve falso para caixa vazia, e TODAS as buscas acima
+        # exigem `is_visible()`. Nenhuma delas estava errada sobre o que
+        # procurava; o elemento e que nao tem tamanho.
+        entrar = candidato_sem_tamanho(pagina)
+        sem_tamanho = entrar is not None
+
     if entrar is None:
         a_vista = botoes_a_vista(pagina)
         raise PerfilNaoInformado(
             f"O botao {BOTAO_ENTRAR_NO_PERFIL!r} nao esta na tela do tipo de "
             "usuario, nem esperado, nem pela arvore acessivel, nem procurado "
-            "fora da janela. O perfil foi escolhido e NAO foi enviado."
+            "fora da janela, nem sem tamanho. O perfil foi escolhido e NAO foi "
+            "enviado."
             + ("\n    BOTOES A VISTA: " + "; ".join(a_vista) + "."
                if a_vista else "\n    Nenhum botao visivel na tela.")
             + "\n    CANDIDATOS AO BOTAO DE ENVIAR:\n    "
             + "\n    ".join(relato_dos_candidatos_a_entrar(pagina)))
+
     guarda.pode_executar(Acao.CLICAR, alvo_do_entrar, url=pagina.url)
-    # Rolar antes de clicar, venha ele de qual rede vier: a lista aberta
-    # empurra o rodape do formulario para baixo da dobra.
-    try:
-        entrar.scroll_into_view_if_needed()
-    except Exception:
-        pass
-    entrar.click()
+    if sem_tamanho:
+        print(f"    [SEM TAMANHO] O botao {BOTAO_ENTRAR_NO_PERFIL!r} existe e "
+              "esta habilitado, com caixa de zero por zero.")
+        print("    O clique do Playwright mira o centro da caixa, e nao ha "
+              "centro. Disparando o clique no proprio elemento.")
+        clicar_pelo_documento(entrar)
+    else:
+        # Rolar antes de clicar: a lista aberta empurra o rodape do formulario
+        # para baixo da dobra.
+        try:
+            entrar.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        entrar.click()
     try:
         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
     except Exception:
         pass
+
+    # Prova positiva do ENVIO, e nao so da escolha. Clicar num elemento que o
+    # Playwright considera invisivel so se justifica com conferencia depois:
+    # sem ela, isto seria uma acao declarada feita sem nada que a comprove.
+    if not saiu_da_tela_de_perfil(pagina, min(segundos, 20)):
+        recado = (f"O perfil {perfil.strip()!r} foi escolhido e o clique em "
+                  f"{BOTAO_ENTRAR_NO_PERFIL!r} nao tirou a tela do tipo de "
+                  "usuario. Nada foi consultado.")
+        if sem_tamanho:
+            recado += (" O clique foi disparado no proprio elemento, porque a "
+                       "caixa dele e de zero por zero.")
+        recado += ("\n    CANDIDATOS AO BOTAO DE ENVIAR:\n    "
+                   + "\n    ".join(relato_dos_candidatos_a_entrar(pagina)))
+        raise PerfilNaoInformado(recado)
 
 
 def reencontrar_o_portal(pagina: Any, segundos: int = 15) -> Any:
