@@ -1949,3 +1949,107 @@ def test_o_clique_na_opcao_so_acontece_quando_ha_opcao():
     fonte = inspect.getsource(dcp.escolher_perfil)
     assert "if opcao is not None:" in fonte
     assert fonte.index("if opcao is not None:") < fonte.index("opcao.click()")
+
+
+# ==========================================================================
+# Relato que depende de QUAL recusa foi nao e relato: e sorte
+#
+# 07/10/2026: o caminho de teclado deu certo o bastante para pular o ramo que
+# relatava, e a recusa que de fato aconteceu, a da prova positiva, nao
+# trazia diagnostico nenhum. A corrida custou uma tentativa de login e
+# contou MENOS que a anterior teria contado.
+# ==========================================================================
+
+def test_toda_recusa_da_escolha_de_perfil_carrega_o_diagnostico():
+    """Guarda de fonte, porque o defeito era uma recusa ter ficado de fora."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.escolher_perfil)
+    # As duas recusas que acontecem com a caixa na tela.
+    assert fonte.count("relato_da_escolha(pagina") == 2
+    # E a da prova positiva e uma delas.
+    prova = fonte.index("perfil_assumido_pelo_controle(pagina")
+    assert "relato_da_escolha(pagina" in fonte[prova:]
+
+
+def test_a_caixa_somente_de_leitura_e_denunciada():
+    """`type()` numa caixa somente de leitura NAO levanta erro e NAO escreve.
+
+    O relato dizia 'preencher' e nada acontecia, e a prova positiva recusava
+    porque o valor nunca chegou a existir. Sem esta pergunta, as duas coisas
+    ficavam indistinguiveis de digitacao que o componente ignorou.
+    """
+    from justica_mcp.dcp import estado_da_caixa
+
+    class _SomenteLeitura:
+        def evaluate(self, codigo):
+            if "tagName" in codigo:
+                return "INPUT"
+            return "readOnly" in codigo
+
+        def get_attribute(self, nome):
+            return "true" if nome == "readonly" else None
+
+        def inner_text(self):
+            return ""
+
+    linha = estado_da_caixa(_SomenteLeitura(), "Advogado")
+    assert "readonly='true'" in linha
+    assert "readOnly=True (propriedade)" in linha
+
+
+def test_a_propriedade_e_perguntada_mesmo_sem_o_atributo():
+    """Componente montado por script marca `readOnly` sem escrever o atributo."""
+    from justica_mcp.dcp import estado_da_caixa
+
+    class _SemAtributo:
+        def evaluate(self, codigo):
+            if "tagName" in codigo:
+                return "INPUT"
+            return "readOnly" in codigo
+
+        def get_attribute(self, _nome):
+            return None
+
+        def inner_text(self):
+            return ""
+
+    assert "readOnly=True (propriedade)" in estado_da_caixa(_SemAtributo(), "X")
+
+
+def test_o_relato_diz_se_o_que_foi_digitado_entrou_sem_imprimir_o_valor():
+    from justica_mcp.dcp import valor_da_caixa_frente_ao_pedido
+
+    class _Caixa:
+        def __init__(self, valor):
+            self.valor = valor
+
+        def evaluate(self, _c):
+            return self.valor
+
+    assert "VAZIO" in valor_da_caixa_frente_ao_pedido(_Caixa(""), "Advogado")
+    assert "IGUAL" in valor_da_caixa_frente_ao_pedido(_Caixa("Advogado"), "Advogado")
+    # Acento nao decide: "Usuário" e "Usuario" sao o mesmo nome.
+    assert "IGUAL" in valor_da_caixa_frente_ao_pedido(
+        _Caixa("Usuário Comum"), "Usuario Comum")
+
+
+def test_o_valor_diferente_e_contado_e_nao_impresso():
+    """A mesma caixa, noutra tela, teria numero de processo ou nome de parte."""
+    from justica_mcp.dcp import valor_da_caixa_frente_ao_pedido
+
+    class _Caixa:
+        def evaluate(self, _c):
+            return "0045025-93.2021.8.19.0002"
+
+    lido = valor_da_caixa_frente_ao_pedido(_Caixa(), "Advogado")
+    assert "0045025" not in lido
+    assert "25 caractere(s)" in lido
+
+
+def test_o_relato_nao_quebra_quando_a_caixa_sumiu():
+    from justica_mcp.dcp import estado_da_caixa
+
+    assert "nao foi encontrada" in estado_da_caixa(None, "Advogado")

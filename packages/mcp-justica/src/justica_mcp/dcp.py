@@ -954,16 +954,53 @@ PERGUNTAS_A_CAIXA = (
     "aria-expanded",
     "aria-controls",
     "aria-owns",
+    "aria-haspopup",
     "role",
+    # `readonly` virou a pergunta mais importante depois da corrida de
+    # 07/10/2026. Caixa de escolha costuma ser `input` somente de leitura, que
+    # abre no clique e nao aceita digitacao: nela, `type()` NAO levanta erro e
+    # NAO escreve nada. O relato dizia "preencher" e nada acontecia, e a prova
+    # positiva recusava porque o valor nunca chegou a existir.
+    "readonly",
+    "disabled",
     "class",
 )
 
 
-def estado_da_caixa(caixa: Any) -> str:
+def valor_da_caixa_frente_ao_pedido(caixa: Any, esperado: Optional[str]) -> str:
+    """Se o que esta na caixa e o perfil pedido, outra coisa, ou nada.
+
+    Diz o SUFICIENTE sem imprimir o valor. A mesma caixa, noutra tela, teria
+    numero de processo ou nome de parte, e um relato que imprime valor nao
+    serve para este programa. Aqui a pergunta nao e "o que esta escrito": e
+    "o que foi digitado chegou a entrar", e isso se responde comparando.
+    """
+    from .portal import sem_acento
+
+    escrito = None
+    for ler in (lambda e: e.evaluate("e => e.value"),
+                lambda e: e.inner_text()):
+        try:
+            lido = ler(caixa)
+        except Exception:
+            continue
+        if lido is not None:
+            escrito = str(lido)
+            break
+    if escrito is None:
+        return "valor ilegivel"
+    if not escrito.strip():
+        return "valor VAZIO (nada entrou na caixa)"
+    if esperado and sem_acento(escrito).strip() == sem_acento(esperado).strip():
+        return "valor IGUAL ao perfil pedido"
+    return f"valor diferente do pedido, com {len(escrito.strip())} caractere(s)"
+
+
+def estado_da_caixa(caixa: Any, esperado: Optional[str] = None) -> str:
     """Como a caixa do perfil esta agora, numa linha.
 
-    Nenhum VALOR digitado e lido aqui: so o que descreve o componente. Em tela
-    de escolha de processo a mesma funcao leria dado de cliente.
+    O valor digitado nao e impresso: so se ele e o pedido, outro, ou nenhum.
+    Em tela de escolha de processo a mesma funcao leria dado de cliente.
     """
     if caixa is None:
         return "a caixa nao foi encontrada"
@@ -980,7 +1017,41 @@ def estado_da_caixa(caixa: Any) -> str:
         if lido is not None:
             texto = " ".join(str(lido).split())
             partes.append(f"{nome}={texto[:60]!r}")
+    # Tambem pela propriedade, e nao so pelo atributo: componente que monta a
+    # caixa por script costuma marcar `readOnly` sem escrever o atributo, e
+    # perguntar so pelo atributo devolveria "nao e somente leitura" para uma
+    # caixa que e.
+    for nome, codigo in (("readOnly", "e => e.readOnly"),
+                         ("disabled", "e => e.disabled")):
+        try:
+            if caixa.evaluate(codigo):
+                partes.append(f"{nome}=True (propriedade)")
+        except Exception:
+            continue
+    partes.append(valor_da_caixa_frente_ao_pedido(caixa, esperado))
     return "; ".join(partes) if partes else "sem atributo legivel"
+
+
+def relato_da_escolha(pagina: Any, caixa: Any, perfil: str,
+                      antes: str) -> str:
+    """O bloco de diagnostico, para TODA recusa da escolha de perfil.
+
+    Ate 07/10/2026 ele saia so numa das recusas. Naquela corrida o caminho de
+    teclado deu certo o bastante para pular aquele ramo, e a recusa que de fato
+    aconteceu, a da prova positiva, nao trazia diagnostico nenhum: a corrida
+    custou uma tentativa de login e contou menos que a anterior.
+
+    Relato de recusa que depende de QUAL recusa foi nao e relato: e sorte.
+    """
+    linhas = relatar_a_lista_de_perfil(pagina)
+    bloco = ""
+    if linhas:
+        bloco += ("\n    O QUE EXISTE NA TELA DO TIPO DE USUARIO:\n    "
+                  + "\n    ".join(linhas))
+    bloco += (f"\n    A CAIXA ANTES DO CLIQUE: {antes}"
+              f"\n    A CAIXA AGORA:           {estado_da_caixa(caixa, perfil)}"
+              f"\n    O COMPONENTE: {envoltorio_da_caixa(pagina)}")
+    return bloco
 
 
 def envoltorio_da_caixa(pagina: Any, teto: int = 300) -> str:
@@ -1315,16 +1386,8 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
             # nao. Sem isto, "nao achei" cobre tres defeitos diferentes e nao
             # distingue nenhum, e cada rodada as cegas custa uma tentativa de
             # login ao advogado.
-            estado = relatar_a_lista_de_perfil(pagina)
-            if estado:
-                recado += ("\n    O QUE EXISTE NA TELA DO TIPO DE USUARIO:\n    "
-                           + "\n    ".join(estado))
-            # `aria-expanded` antes e depois do clique: se nao mudar, o clique
-            # nao abriu o componente; se mudar para 'true', abriu e o seletor
-            # da lista e que esta errado. Dois consertos, uma leitura.
-            recado += (f"\n    A CAIXA ANTES DO CLIQUE: {antes_do_clique}"
-                       f"\n    A CAIXA DEPOIS:          {estado_da_caixa(caixa)}"
-                       f"\n    O COMPONENTE: {envoltorio_da_caixa(pagina)}")
+            recado += relato_da_escolha(pagina, caixa, perfil.strip(),
+                                        antes_do_clique)
             raise PerfilNaoInformado(recado + "\n    Nada foi escolhido.")
         if opcao is not None:
             guarda.pode_executar(Acao.CLICAR, alvo_da_opcao, url=pagina.url)
@@ -1338,10 +1401,21 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
     except Exception:
         pass
     if not perfil_assumido_pelo_controle(pagina, perfil.strip()):
-        raise PerfilNaoInformado(
-            f"A opcao {perfil.strip()!r} foi escolhida e o controle nao passou "
-            "a mostra-la. O botao de entrar so habilita depois disso, entao "
-            "clicar nele nao faria nada. Nada foi enviado.")
+        recado = (f"A opcao {perfil.strip()!r} foi escolhida e o controle nao "
+                  "passou a mostra-la. O botao de entrar so habilita depois "
+                  "disso, entao clicar nele nao faria nada. Nada foi enviado.")
+        # O MESMO bloco das outras recusas. Em 07/10/2026 esta aqui era a unica
+        # sem diagnostico, e foi exatamente ela que aconteceu: o caminho de
+        # teclado deu certo o bastante para pular o ramo que relatava, e a
+        # corrida custou uma tentativa de login para contar menos que a
+        # anterior. Relato que depende de QUAL recusa foi nao e relato.
+        try:
+            caixa_agora = elemento_por_rotulo(pagina, ROTULO_DA_LISTA_DE_PERFIL)
+        except Exception:
+            caixa_agora = None
+        recado += relato_da_escolha(pagina, caixa_agora, perfil.strip(),
+                                    "(a escolha nao passou pelo caminho da caixa)")
+        raise PerfilNaoInformado(recado)
 
     entrar = elemento_visivel(pagina, alvo_do_entrar)
     if entrar is None:
