@@ -1460,6 +1460,45 @@ def senha_vencida(recados) -> bool:
     return False
 
 
+# Erro que o Playwright levanta quando a pagina troca de endereco no meio de
+# uma leitura. Nao e defeito: e o que acontece quando a tela que se esta lendo
+# some enquanto se le, e no fim do login isso e a REGRA, nao a excecao.
+MARCA_DE_NAVEGACAO = "execution context was destroyed"
+
+
+def leitura_perdida_para_navegacao(erro: Exception) -> bool:
+    """Se este erro e a pagina tendo navegado, e nao um defeito do programa."""
+    return MARCA_DE_NAVEGACAO in str(erro).lower()
+
+
+def elementos_tolerando_navegacao(pagina: Any, seletor: str) -> list:
+    """Os elementos deste seletor, ou lista vazia se a pagina navegou.
+
+    Conferido em campo em 07/10/2026: logo depois do login no Portal de
+    Servicos do Tribunal de Justica do Rio de Janeiro, a aba de origem volta
+    para a pagina publica do tribunal. O titulo lido naquele instante era
+    'Loading https://www.tjrj.jus.br/', ou seja, a tela estava indo embora
+    enquanto era lida, e a leitura seguinte terminou em traceback na cara do
+    advogado, com a autenticacao ja concluida e nada aproveitado.
+
+    Lista vazia e a resposta CERTA, e nao um engano tolerado: se a tela que
+    tinha a mensagem ja nao esta ali, nao ha mensagem naquela tela. Quem diz o
+    que ha agora e a leitura seguinte, na tela nova.
+    """
+    try:
+        return list(pagina.query_selector_all(seletor) or [])
+    except Exception:
+        return []
+
+
+def titulo_tolerando_navegacao(pagina: Any) -> str:
+    """O titulo da pagina, ou uma marca legivel quando ela esta navegando."""
+    try:
+        return pagina.title()
+    except Exception:
+        return "(a pagina mudou enquanto era lida)"
+
+
 def _mensagens_de_erro(pagina: Any) -> list[str]:
     saida = []
     # O Keycloak, que atende o PJe, escreve o recado em classe propria: sem
@@ -1474,10 +1513,15 @@ def _mensagens_de_erro(pagina: Any) -> list[str]:
                     "#input-error-otp-code", ".input-error",
                     ".rich-messages-label", ".rich-message-label", ".rf-msg-lbl",
                     ".rich-messages", ".msgError", ".msgInfo", ".msgWarn"):
-        for elemento in pagina.query_selector_all(seletor):
-            if not elemento.is_visible():
+        for elemento in elementos_tolerando_navegacao(pagina, seletor):
+            # Cada elemento tambem: a pagina pode navegar ENTRE dois deles, e
+            # ai a lista ja esta em maos e os elementos e que ficaram orfaos.
+            try:
+                if not elemento.is_visible():
+                    continue
+                texto = re.sub(r"\s+", " ", (elemento.inner_text() or "")).strip()
+            except Exception:
                 continue
-            texto = re.sub(r"\s+", " ", (elemento.inner_text() or "")).strip()
             if texto:
                 saida.append(texto[:160])
     return saida
@@ -3302,7 +3346,7 @@ def autenticar(
                 # ---------- resultado ----------
                 final = pagina.url
                 print(f"\n  Endereco final: {final}")
-                print(f"  Titulo: {pagina.title()!r}\n")
+                print(f"  Titulo: {titulo_tolerando_navegacao(pagina)!r}\n")
 
                 erros = _mensagens_de_erro(pagina)
                 if erros:
@@ -3353,7 +3397,17 @@ def autenticar(
                 print("  A leitura da tela foi interrompida.")
                 return 0
 
-            campos, botoes = _coletar(pagina)
+            # Tolerando navegacao, pela mesma razao da leitura das mensagens:
+            # logo depois do login a aba de origem pode estar indo embora, e
+            # nessa tela nao ha perfil para escolher mesmo. Lista vazia e a
+            # resposta certa; quem decide o que fazer e o passo seguinte.
+            try:
+                campos, botoes = _coletar(pagina)
+            except Exception as exc:
+                if not leitura_perdida_para_navegacao(exc):
+                    raise
+                print("  A tela mudou enquanto era lida: ela estava navegando.")
+                campos, botoes = [], []
             # ---------- etapa 3: perfil ----------
             # O eproc pode ter mais de uma inscricao ligada ao mesmo acesso, e
             # o perfil escolhido determina QUAIS PROCESSOS o sistema mostra.
@@ -6251,6 +6305,21 @@ def main(argv: list[str] | None = None) -> int:
         # isso subiu como traceback de Playwright no meio de uma autenticacao
         # que tinha dado certo, o que parece defeito grave e nao e. Qualquer
         # outro erro continua subindo inteiro: esconde-lo seria pior.
+        if leitura_perdida_para_navegacao(exc):
+            # Segundo caso, e pelo mesmo motivo do primeiro: nao e defeito
+            # grave e chegava como traceback de Playwright. Conferido em campo
+            # em 07/10/2026, com a autenticacao ja concluida: a aba de origem
+            # voltava para a pagina publica do tribunal enquanto era lida.
+            # A leitura morre, a sessao nao: por isso o recado diz que repetir
+            # o comando nao gasta credencial nova.
+            print("\n  [PARADO] A tela mudou de endereco enquanto era lida.",
+                  file=sys.stderr)
+            print("  Isto e defeito deste programa, nao do portal, e a sessao",
+                  file=sys.stderr)
+            print("  continua aberta neste navegador: repetir o comando nao",
+                  file=sys.stderr)
+            print("  recomeca a autenticacao do zero.", file=sys.stderr)
+            return 1
         if "has been closed" not in str(exc):
             raise
         print("\n  [PARADO] A janela do navegador nao esta mais aberta.", file=sys.stderr)

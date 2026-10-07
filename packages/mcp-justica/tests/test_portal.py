@@ -6128,3 +6128,106 @@ def test_nenhum_endereco_e_impresso_cru():
                 if cru in linha:
                     cruas.append(f"{arquivo.name}:{n}: {linha.strip()}")
     assert not cruas, "endereco impresso sem limpeza:\n" + "\n".join(cruas)
+
+
+# ==========================================================================
+# A pagina que navega enquanto esta sendo lida
+#
+# 07/10/2026, com a autenticacao JA CONCLUIDA: o titulo lido era
+# 'Loading https://www.tjrj.jus.br/', ou seja, a aba de origem estava indo
+# embora para a pagina publica do tribunal enquanto era lida. A leitura
+# seguinte terminou em traceback de Playwright na cara do advogado, com
+# quarenta linhas de pilha, e nada do trabalho ja feito foi aproveitado.
+#
+# No fim do login isso e a REGRA, nao a excecao: e quando o portal entrega a
+# sessao para outra janela e devolve a de origem para outro lugar.
+# ==========================================================================
+
+class _PaginaQueNavegou:
+    """Tudo o que se perguntar a ela morre como a pagina que trocou de tela."""
+
+    url = "https://www.tjrj.jus.br/"
+
+    @staticmethod
+    def _morrer():
+        raise RuntimeError(
+            "Page.query_selector_all: Execution context was destroyed, "
+            "most likely because of a navigation")
+
+    def query_selector_all(self, _seletor):
+        self._morrer()
+
+    def title(self):
+        self._morrer()
+
+
+def test_a_navegacao_e_reconhecida_e_nao_confundida_com_defeito():
+    from justica_mcp.portal import leitura_perdida_para_navegacao
+
+    assert leitura_perdida_para_navegacao(RuntimeError(
+        "Execution context was destroyed, most likely because of a navigation"))
+    # Maiusculas nao decidem nada: a mensagem vem do Playwright como vier.
+    assert leitura_perdida_para_navegacao(RuntimeError(
+        "execution context was destroyed"))
+    # E um erro de verdade continua sendo um erro de verdade.
+    assert not leitura_perdida_para_navegacao(RuntimeError("Unknown engine 'texto'"))
+    assert not leitura_perdida_para_navegacao(RuntimeError("Target closed"))
+
+
+def test_as_mensagens_de_erro_nao_derrubam_o_comando_quando_a_tela_vai_embora():
+    """Lista vazia e a resposta CERTA: se a tela que tinha a mensagem ja nao
+    esta ali, nao ha mensagem naquela tela."""
+    from justica_mcp.portal import _mensagens_de_erro
+
+    assert _mensagens_de_erro(_PaginaQueNavegou()) == []
+
+
+def test_o_elemento_que_fica_orfao_no_meio_da_lista_e_pulado():
+    """A pagina pode navegar ENTRE dois elementos, e ai a lista ja esta em maos
+    e os elementos e que ficaram orfaos."""
+    from justica_mcp.portal import _mensagens_de_erro
+
+    class _Orfao:
+        def is_visible(self):
+            raise RuntimeError("Execution context was destroyed")
+
+    class _Vivo:
+        def is_visible(self):
+            return True
+
+        def inner_text(self):
+            return "Senha invalida"
+
+    class _MeioAMeio:
+        def query_selector_all(self, seletor):
+            return [_Orfao(), _Vivo()] if seletor == ".alert" else []
+
+    assert _mensagens_de_erro(_MeioAMeio()) == ["Senha invalida"]
+
+
+def test_o_titulo_de_pagina_que_navegou_sai_legivel():
+    from justica_mcp.portal import titulo_tolerando_navegacao
+
+    assert "mudou" in titulo_tolerando_navegacao(_PaginaQueNavegou())
+
+
+def test_a_busca_de_elementos_devolve_lista_vazia_e_nao_levanta():
+    from justica_mcp.portal import elementos_tolerando_navegacao
+
+    assert elementos_tolerando_navegacao(_PaginaQueNavegou(), ".alert") == []
+    assert elementos_tolerando_navegacao(object(), ".alert") == []
+
+
+def test_a_rede_de_seguranca_do_main_continua_estreita():
+    """Guarda de fonte. A rede existente diz, em comentario, que esconder erro
+    em geral seria pior, e isso continua valendo: foram acrescentados UM caso
+    nomeado, nao um `except Exception` mudo."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.main)
+    assert "leitura_perdida_para_navegacao(exc)" in fonte
+    assert '"has been closed" not in str(exc)' in fonte
+    # O `raise` que deixa passar todo o resto continua la.
+    assert "            raise\n" in fonte
