@@ -2191,3 +2191,154 @@ def test_o_entrar_nao_e_mais_procurado_com_uma_olhada_so():
     fonte = inspect.getsource(dcp.escolher_perfil)
     assert "achar_o_entrar(pagina" in fonte
     assert "elemento_visivel(pagina, alvo_do_entrar)" not in fonte
+
+
+# ==========================================================================
+# O botao achado pela ARVORE ACESSIVEL
+#
+# Rede sugerida em 07/10/2026 e que as duas buscas por texto nao cobrem:
+# `_por_texto_exato` olha `inner_text` e `value` de uma lista fixa de
+# etiquetas, entao perde o botao cujo nome vem de `aria-label`, e perde
+# qualquer elemento com `role=button` que nao seja `<button>`.
+# ==========================================================================
+
+class _LocalizadorDePapel:
+    """O que `get_by_role` devolve: um localizador, nao um elemento."""
+
+    def __init__(self, candidatos):
+        self.candidatos = candidatos
+
+    def count(self):
+        return len(self.candidatos)
+
+    def nth(self, i):
+        return self.candidatos[i]
+
+
+class _TelaComArvoreAcessivel:
+    """Tela onde a busca por TEXTO nao acha nada e a por PAPEL acha."""
+
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, por_papel, pedidos=None):
+        self.por_papel = por_papel
+        self.pedidos = pedidos if pedidos is not None else []
+
+    def query_selector_all(self, _seletor):
+        return []
+
+    def query_selector(self, _seletor):
+        return None
+
+    def evaluate(self, _c):
+        return self.viewport_size
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+    def get_by_role(self, papel, name=None, exact=None):
+        self.pedidos.append((papel, name, exact))
+        return _LocalizadorDePapel(self.por_papel)
+
+
+def test_o_entrar_e_aceito_quando_so_a_arvore_acessivel_o_acha():
+    """O caso que esta rede existe para cobrir."""
+    from justica_mcp.dcp import achar_o_entrar
+
+    botao = _BotaoDeTela("Entrar")
+    tela = _TelaComArvoreAcessivel([botao])
+
+    assert achar_o_entrar(tela, segundos=1) is botao
+    # E foi pedido pelo nome exato, nao por prefixo: "Entrar" e "Entrar como
+    # convidado" sao escolhas diferentes.
+    assert tela.pedidos[0] == ("button", "Entrar", True)
+
+
+def test_entre_varios_candidatos_fica_o_visivel_e_nao_o_primeiro():
+    from justica_mcp.dcp import entrar_pela_arvore_acessivel
+
+    escondido = _BotaoDeTela("Entrar", visivel=False)
+    aparente = _BotaoDeTela("Entrar")
+
+    achado = entrar_pela_arvore_acessivel(
+        _TelaComArvoreAcessivel([escondido, aparente]))
+    assert achado is aparente
+
+
+def test_a_posicao_nao_desempata_na_arvore_acessivel():
+    """Escolher pelo lugar na tela seria escolher no escuro."""
+    from justica_mcp.dcp import entrar_pela_arvore_acessivel
+
+    fora_da_janela = _BotaoDeTela("Entrar", dentro=False)
+    dentro = _BotaoDeTela("Entrar")
+
+    # O primeiro VISIVEL vence, mesmo estando fora da area util.
+    achado = entrar_pela_arvore_acessivel(
+        _TelaComArvoreAcessivel([fora_da_janela, dentro]))
+    assert achado is fora_da_janela
+
+
+def test_navegador_sem_arvore_acessivel_nao_quebra():
+    """Quadro embutido e os falsos dos testes nao tem `get_by_role`."""
+    from justica_mcp.dcp import entrar_pela_arvore_acessivel
+
+    assert entrar_pela_arvore_acessivel(object()) is None
+
+
+def test_a_busca_por_texto_continua_vindo_primeiro():
+    """Guarda de fonte: a arvore e rede, nao substituicao. Afrouxar
+    `_por_texto_exato` ou `_na_tela` afetaria outros portais."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.achar_o_entrar)
+    assert fonte.index("esperar_elemento(") < fonte.index(
+        "entrar_pela_arvore_acessivel(pagina)")
+
+
+def test_o_diagnostico_descreve_cada_candidato_ao_botao():
+    from justica_mcp.dcp import relato_dos_candidatos_a_entrar
+
+    class _ComAriaLabel(_BotaoDeTela):
+        def __init__(self):
+            super().__init__("", dentro=False)
+
+        def get_attribute(self, nome):
+            return "Entrar" if nome == "aria-label" else None
+
+        def evaluate(self, _c):
+            return "DIV"
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [_ComAriaLabel(), _BotaoDeTela("Cancelar")]
+
+    linhas = relato_dos_candidatos_a_entrar(_Tela())
+    assert len(linhas) == 1
+    assert "tag='DIV'" in linhas[0]
+    assert "aria-label='Entrar'" in linhas[0]
+    assert "caixa=x10 y3000" in linhas[0]
+    assert "visivel=True" in linhas[0]
+
+
+def test_o_diagnostico_diz_quando_nao_ha_candidato_nenhum():
+    from justica_mcp.dcp import relato_dos_candidatos_a_entrar
+
+    class _Vazia:
+        def query_selector_all(self, _s):
+            return []
+
+    assert "nenhum clicavel" in relato_dos_candidatos_a_entrar(_Vazia())[0]
+
+
+def test_a_autorizacao_da_trava_continua_sendo_por_texto():
+    """A arvore acessivel muda como o botao e ACHADO, nao como ele e
+    autorizado: a trava segue nomeando `texto=Entrar`."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.escolher_perfil)
+    assert 'alvo_do_entrar = f"{PREFIXO_DE_TEXTO}{BOTAO_ENTRAR_NO_PERFIL}"' in fonte
+    assert "pode_executar(Acao.CLICAR, alvo_do_entrar" in fonte

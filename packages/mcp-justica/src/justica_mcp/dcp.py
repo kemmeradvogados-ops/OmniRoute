@@ -1265,6 +1265,93 @@ def botoes_a_vista(pagina: Any, teto: int = 12) -> list[str]:
     return saida
 
 
+def entrar_pela_arvore_acessivel(pagina: Any) -> Optional[Any]:
+    """O botao pelo NOME ACESSIVEL, que e como a pessoa o enxerga.
+
+    Rede que as duas buscas por texto nao cobrem, e a diferenca nao e teorica:
+    `_por_texto_exato` olha `inner_text` e `value` de uma lista fixa de
+    etiquetas, entao perde o botao cujo nome vem de `aria-label`, e perde
+    qualquer elemento com `role=button` que nao seja `<button>`.
+
+    `exact=True` pela mesma razao de sempre: "Entrar" e "Entrar como
+    convidado" sao coisas diferentes, e aceitar prefixo escolheria a errada.
+
+    Mais de um candidato nao e desempatado por posicao: fica o primeiro
+    VISIVEL. Escolher pelo lugar na tela seria escolher no escuro.
+    """
+    obter = getattr(pagina, "get_by_role", None)
+    if obter is None:
+        return None
+    try:
+        alvos = obter("button", name=BOTAO_ENTRAR_NO_PERFIL, exact=True)
+        total = alvos.count()
+    except Exception:
+        return None
+    for i in range(total):
+        try:
+            candidato = alvos.nth(i)
+            if candidato.is_visible():
+                return candidato
+        except Exception:
+            continue
+    return None
+
+
+def relato_dos_candidatos_a_entrar(pagina: Any, teto: int = 8) -> list[str]:
+    """Cada botao que se parece com o de enviar, e como ele esta.
+
+    Existe porque a recusa de 07/10/2026 dizia que o botao nao estava na tela
+    e o relato logo abaixo o listava. Quando as duas leituras discordam, o
+    util nao e repetir nenhuma delas: e descrever cada candidato por inteiro,
+    com tudo o que decide se ele serve.
+    """
+    from .portal import ALVOS_CLICAVEIS, sem_acento
+
+    alvo = sem_acento(BOTAO_ENTRAR_NO_PERFIL).strip()
+    linhas = []
+    try:
+        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
+    except Exception:
+        return ["nao foi possivel ler os clicaveis da tela"]
+    for elemento in candidatos:
+        if len(linhas) >= teto:
+            break
+        try:
+            texto = (elemento.inner_text() or "").strip()
+            valor = elemento.get_attribute("value")
+            rotulo = elemento.get_attribute("aria-label")
+        except Exception:
+            continue
+        nomes = [n for n in (texto, valor, rotulo) if n]
+        if not any(sem_acento(n).strip() == alvo for n in nomes):
+            continue
+        partes = []
+        for nome, ler in (("tag", lambda e: e.evaluate("e => e.tagName")),
+                          ("visivel", lambda e: e.is_visible()),
+                          ("habilitado", lambda e: e.is_enabled())):
+            try:
+                partes.append(f"{nome}={ler(elemento)!r}")
+            except Exception:
+                partes.append(f"{nome}=ilegivel")
+        partes.append(f"texto={texto[:40]!r}")
+        if valor:
+            partes.append(f"value={valor[:40]!r}")
+        if rotulo:
+            partes.append(f"aria-label={rotulo[:40]!r}")
+        try:
+            caixa = elemento.bounding_box()
+        except Exception:
+            caixa = None
+        partes.append(
+            "caixa=nenhuma" if caixa is None else
+            f"caixa=x{int(caixa['x'])} y{int(caixa['y'])} "
+            f"l{int(caixa['width'])} a{int(caixa['height'])}")
+        linhas.append("; ".join(partes))
+    if not linhas:
+        return [f"nenhum clicavel com o nome {BOTAO_ENTRAR_NO_PERFIL!r} na tela"]
+    return linhas
+
+
 def achar_o_entrar(pagina: Any, segundos: int = 15) -> Optional[Any]:
     """O botao de enviar o perfil, esperando por ele e indo ate ele.
 
@@ -1289,6 +1376,13 @@ def achar_o_entrar(pagina: Any, segundos: int = 15) -> Optional[Any]:
         pagina, f"{PREFIXO_DE_TEXTO}{BOTAO_ENTRAR_NO_PERFIL}", segundos)
     if achado is not None:
         return achado
+
+    # Pela arvore acessivel, que e como a pessoa enxerga o botao. Alcanca o que
+    # as buscas por texto nao alcancam: nome vindo de `aria-label`, e elemento
+    # com `role=button` que nao e `<button>`.
+    pela_arvore = entrar_pela_arvore_acessivel(pagina)
+    if pela_arvore is not None:
+        return pela_arvore
 
     alvo = sem_acento(BOTAO_ENTRAR_NO_PERFIL).strip()
     try:
@@ -1523,11 +1617,19 @@ def escolher_perfil(pagina: Any, guarda: Any, perfil: Optional[str],
         a_vista = botoes_a_vista(pagina)
         raise PerfilNaoInformado(
             f"O botao {BOTAO_ENTRAR_NO_PERFIL!r} nao esta na tela do tipo de "
-            "usuario, nem depois de esperado e procurado fora da janela. "
-            "O perfil foi escolhido e NAO foi enviado."
+            "usuario, nem esperado, nem pela arvore acessivel, nem procurado "
+            "fora da janela. O perfil foi escolhido e NAO foi enviado."
             + ("\n    BOTOES A VISTA: " + "; ".join(a_vista) + "."
-               if a_vista else "\n    Nenhum botao visivel na tela."))
+               if a_vista else "\n    Nenhum botao visivel na tela.")
+            + "\n    CANDIDATOS AO BOTAO DE ENVIAR:\n    "
+            + "\n    ".join(relato_dos_candidatos_a_entrar(pagina)))
     guarda.pode_executar(Acao.CLICAR, alvo_do_entrar, url=pagina.url)
+    # Rolar antes de clicar, venha ele de qual rede vier: a lista aberta
+    # empurra o rodape do formulario para baixo da dobra.
+    try:
+        entrar.scroll_into_view_if_needed()
+    except Exception:
+        pass
     entrar.click()
     try:
         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
