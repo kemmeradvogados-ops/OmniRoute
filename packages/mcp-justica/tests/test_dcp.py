@@ -194,8 +194,13 @@ def test_processo_grande_que_nao_baixa_diz_o_que_fazer(tmp_path):
     with pytest.raises(DownloadIndisponivel) as erro:
         baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
     recado = str(erro.value)
-    assert "nao baixar de uma vez" in recado
-    assert "caixa de selecao" in recado
+    assert "nao baixa de uma vez" in recado
+    # E a corrida gasta traz o indice junto, para que a proxima ja saiba
+    # marcar os documentos em vez de descobrir isso numa rodada so para isso.
+    assert "O INDICE DE DOCUMENTOS, para baixar em partes" in recado
+    # Neste falso nao ha o botao da caixa de selecao, e o relato diz isso em
+    # vez de calar: "nao li o indice" e diferente de "o indice esta vazio".
+    assert "Exibir caixa de seleção" in recado
 
 
 # ---------------- a trava ----------------
@@ -3327,3 +3332,137 @@ def test_o_aviso_permanente_nao_entra_na_recusa_como_se_fosse_erro():
     recados = _recados_do_quadro(_Quadro())
     # O aviso sai; o recado de verdade fica, uma vez so.
     assert recados == ["Senha provisoria obrigatoria"]
+
+
+# ==========================================================================
+# Baixar em PARTES: a leitura do indice
+#
+# 08/10/2026, com o Visualizador finalmente aberto e a integra nao baixando:
+# "o erro foi do proprio site. Nessas situacoes colocar duas opcoes, baixar
+# alguma peca especifica ou baixar de 300 em 300 paginas".
+#
+# As duas precisam MARCAR itens do indice, e o indice nunca foi lido com a
+# caixa de selecao aberta. Entao a corrida que falha passa a traze-lo, em vez
+# de so falhar: a tentativa ja foi gasta de qualquer jeito.
+# ==========================================================================
+
+def test_do_rotulo_do_item_so_o_NUMERO_e_aproveitado():
+    """O resto e o proprio andamento do processo, e foi o que vazou para uma
+    conversa em 06/10/2026."""
+    from justica_mcp.dcp import numero_do_item
+
+    assert numero_do_item(
+        "Alternar 45 - Juntada - Extrato da GRERJ - dia 27/04/2018") == "45"
+    assert numero_do_item("Alternar 7 - Peticao") == "7"
+    # Sem acento e sem depender de maiusculas.
+    assert numero_do_item("ALTERNAR 12 - algo") == "12"
+    # O que nao e item do indice nao vira numero nenhum.
+    assert numero_do_item("Baixar o processo atual em PDF") is None
+    assert numero_do_item("Alternar todos") is None
+    assert numero_do_item("") is None
+    assert numero_do_item(None) is None
+
+
+def test_o_relato_do_indice_nao_imprime_o_andamento():
+    """A regra que falhou uma vez e a que precisa de teste."""
+    from justica_mcp.dcp import relatar_o_indice
+
+    class _Item:
+        def __init__(self, rotulo):
+            self.rotulo = rotulo
+
+        def get_attribute(self, nome):
+            return self.rotulo if nome == "aria-label" else None
+
+        def query_selector_all(self, _s):
+            return []
+
+        def evaluate_handle(self, _js):
+            raise RuntimeError("sem pai")
+
+    class _Indice:
+        def query_selector_all(self, seletor):
+            if seletor != "[aria-label]":
+                return []
+            return [_Item("Alternar 45 - Juntada - Extrato da GRERJ - dia 27/04/2018"),
+                    _Item("Alternar 46 - Sentenca - dia 03/05/2019"),
+                    _Item("Baixar o processo atual em PDF")]
+
+    linhas = relatar_o_indice(_Indice())
+    texto = "\n".join(linhas)
+
+    assert "2 item(ns) no indice" in texto
+    assert "45, 46" in texto
+    # Nada do andamento sai, em linha nenhuma.
+    assert "Juntada" not in texto
+    assert "GRERJ" not in texto
+    assert "Sentenca" not in texto
+    assert "27/04/2018" not in texto
+
+
+def test_o_relato_diz_onde_esta_a_marca_de_selecao():
+    """E o que falta saber para marcar um documento especifico."""
+    from justica_mcp.dcp import relatar_o_indice
+
+    class _Marca:
+        pass
+
+    class _Item:
+        def get_attribute(self, nome):
+            return "Alternar 45 - algo" if nome == "aria-label" else None
+
+        def query_selector_all(self, seletor):
+            return [_Marca()] if seletor == "input[type=checkbox]" else []
+
+        def evaluate_handle(self, _js):
+            raise RuntimeError("sem pai")
+
+    class _Indice:
+        def query_selector_all(self, seletor):
+            return [_Item()] if seletor == "[aria-label]" else []
+
+    linhas = relatar_o_indice(_Indice())
+    assert any("input[type=checkbox] x1 dentro" in l for l in linhas)
+
+
+def test_o_relato_diz_quando_nao_ha_marca_nenhuma():
+    from justica_mcp.dcp import relatar_o_indice
+
+    class _Item:
+        def get_attribute(self, nome):
+            return "Alternar 45 - algo" if nome == "aria-label" else None
+
+        def query_selector_all(self, _s):
+            return []
+
+        def evaluate_handle(self, _js):
+            raise RuntimeError("sem pai")
+
+    class _Indice:
+        def query_selector_all(self, seletor):
+            return [_Item()] if seletor == "[aria-label]" else []
+
+    linhas = relatar_o_indice(_Indice())
+    assert any("nenhuma marca de selecao perto dele" in l for l in linhas)
+
+
+def test_indice_vazio_e_dito_com_todas_as_letras():
+    from justica_mcp.dcp import relatar_o_indice
+
+    class _Vazio:
+        def query_selector_all(self, _s):
+            return []
+
+    assert "nao tem item nenhum" in relatar_o_indice(_Vazio())[0]
+
+
+def test_a_falha_da_integra_traz_o_indice_junto():
+    """Guarda de fonte: a corrida ja foi gasta, e o mapa sai nela."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.baixar_integra)
+    assert "abrir_caixa_de_selecao(pagina, guarda)" in fonte
+    assert "relatar_o_indice(pagina)" in fonte
+    assert "O INDICE DE DOCUMENTOS, para baixar em partes" in fonte

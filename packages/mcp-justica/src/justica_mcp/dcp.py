@@ -62,6 +62,152 @@ def caixa_de_download_aberta(pagina: Any) -> bool:
             and achar_escolha(pagina, ESCOLHA_MARCADOS) is not None)
 
 
+# A caixa de selecao, e o indice de documentos atras dela.
+#
+# O advogado explicou em 06/10/2026: "o exibir caixa de selecao lhe permite
+# selecionar um documento especifico para download", e em 08/10/2026, depois
+# de a integra nao baixar: "nessas situacoes colocar duas opcoes, baixar
+# alguma peca especifica ou baixar de 300 em 300 paginas".
+#
+# As duas precisam marcar itens do indice, e o indice NUNCA foi lido com a
+# caixa de selecao aberta. O que se sabe dele veio do acompanhamento de
+# 06/10/2026: e feito de botoes cujo rotulo acessivel comeca por "Alternar ",
+# seguido do numero do documento e do proprio andamento. O numero e sequencia;
+# o resto e conteudo do processo e nao sai em relato nenhum.
+BOTAO_CAIXA_DE_SELECAO = "Exibir caixa de seleção"
+MARCA_DO_ITEM_DO_INDICE = "alternar "
+# Onde a marca de selecao costuma morar, do mais especifico ao mais frouxo.
+LUGARES_DE_MARCA = (
+    "input[type=checkbox]",
+    "[role=checkbox]",
+    "mat-checkbox",
+    "mat-pseudo-checkbox",
+)
+
+
+def numero_do_item(rotulo: str) -> Optional[str]:
+    """So o NUMERO do documento, de um rotulo que e todo dado de processo.
+
+    "Alternar 45 - Juntada - Extrato da GRERJ - dia 27/04/2018" devolve "45".
+    Sequencia de documento e estrutura; o andamento que vem depois nao e, e
+    foi exatamente ele que vazou para uma conversa em 06/10/2026.
+    """
+    from .portal import sem_acento
+
+    limpo = sem_acento(rotulo or "").strip()
+    if not limpo.startswith(MARCA_DO_ITEM_DO_INDICE):
+        return None
+    resto = limpo[len(MARCA_DO_ITEM_DO_INDICE):].strip()
+    numero = resto.split(" ")[0].split("-")[0].strip()
+    return numero if numero.isdigit() else None
+
+
+def itens_do_indice(pagina: Any) -> list:
+    """Os botoes do indice de documentos, na ordem da tela."""
+    saida = []
+    try:
+        candidatos = pagina.query_selector_all("[aria-label]") or []
+    except Exception:
+        return saida
+    for elemento in candidatos:
+        try:
+            rotulo = elemento.get_attribute("aria-label") or ""
+        except Exception:
+            continue
+        if numero_do_item(rotulo) is not None:
+            saida.append(elemento)
+    return saida
+
+
+def abrir_caixa_de_selecao(pagina: Any, guarda: Any) -> bool:
+    """Liga as marcas de selecao do indice, pelo botao da barra."""
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import elemento_por_rotulo, permissao_efemera
+
+    botao = elemento_por_rotulo(pagina, BOTAO_CAIXA_DE_SELECAO)
+    if botao is None:
+        return False
+    alvo = f'[aria-label="{BOTAO_CAIXA_DE_SELECAO}"]'
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="abrir a caixa de selecao do indice de documentos",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(alvo,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, alvo, url=pagina.url)
+    clicar_com_jeito(botao)
+    try:
+        pagina.wait_for_timeout(1200)
+    except Exception:
+        pass
+    return True
+
+
+def relatar_o_indice(pagina: Any, teto: int = 8) -> list[str]:
+    """A FORMA do indice de documentos, sem o conteudo dele.
+
+    Sai: quantos itens ha, o numero de cada um dos primeiros, e onde esta a
+    marca de selecao de cada um, com a etiqueta e o identificador.
+    NAO sai: o rotulo dos itens. Ele e o proprio andamento do processo, e foi
+    o que vazou para uma conversa em 06/10/2026.
+    """
+    itens = itens_do_indice(pagina)
+    if not itens:
+        return ["o indice nao tem item nenhum com rotulo 'Alternar <numero>'"]
+
+    numeros = []
+    for elemento in itens[:teto]:
+        try:
+            numeros.append(numero_do_item(
+                elemento.get_attribute("aria-label") or "") or "?")
+        except Exception:
+            numeros.append("?")
+    linhas = [f"{len(itens)} item(ns) no indice; "
+              f"os {len(numeros)} primeiros sao de numero: "
+              + ", ".join(numeros)]
+
+    # Onde esta a marca de selecao de cada item, que e o que falta saber para
+    # marcar um documento especifico.
+    for elemento in itens[:3]:
+        numero = None
+        try:
+            numero = numero_do_item(elemento.get_attribute("aria-label") or "")
+        except Exception:
+            pass
+        achou = []
+        for lugar in LUGARES_DE_MARCA:
+            for onde, alvo in (("dentro", elemento),
+                               ("no pai", _pai_de(elemento)),
+                               ("no avo", _pai_de(_pai_de(elemento)))):
+                if alvo is None:
+                    continue
+                try:
+                    marcas = alvo.query_selector_all(lugar) or []
+                except Exception:
+                    continue
+                if marcas:
+                    achou.append(f"{lugar} x{len(marcas)} {onde}")
+                    break
+            if achou:
+                break
+        linhas.append(
+            f"item {numero or '?'}: "
+            + ("; ".join(achou) if achou
+               else "nenhuma marca de selecao perto dele, "
+                    f"nos lugares {', '.join(LUGARES_DE_MARCA)}"))
+    return linhas
+
+
+def _pai_de(elemento: Any) -> Optional[Any]:
+    """O elemento acima deste, ou None."""
+    if elemento is None:
+        return None
+    try:
+        return elemento.evaluate_handle("e => e.parentElement").as_element()
+    except Exception:
+        return None
+
+
 def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
                    segundos: int = TETO_DO_DOWNLOAD) -> str:
     """Clica em baixar, escolhe o processo INTEGRAL e grava o arquivo.
@@ -127,11 +273,24 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
         with pagina.expect_download(timeout=segundos * 1000) as info:
             escolha.click()
     except Exception as exc:
+        # Em vez de so falhar, LE o indice. O advogado pediu em 08/10/2026 duas
+        # formas de baixar em partes, e as duas precisam marcar itens do
+        # indice, que nunca foi lido com a caixa de selecao aberta. Fazer essa
+        # leitura aqui aproveita a corrida que ja foi gasta.
+        mapa = []
+        try:
+            if abrir_caixa_de_selecao(pagina, guarda):
+                mapa = relatar_o_indice(pagina)
+            else:
+                mapa = [f"o botao {BOTAO_CAIXA_DE_SELECAO!r} nao esta na barra"]
+        except Exception as outra:
+            mapa = [f"nao foi possivel ler o indice ({type(outra).__name__})"]
         raise DownloadIndisponivel(
             f"A escolha {ESCOLHA_INTEGRAL!r} foi clicada e nenhum arquivo chegou "
-            f"em {segundos}s ({type(exc).__name__}). Processo grande pode nao "
-            "baixar de uma vez: confira na tela se o portal recusou e, se for o "
-            "caso, use a caixa de selecao para baixar em partes."
+            f"em {segundos}s ({type(exc).__name__}). Processo grande nao baixa "
+            "de uma vez, como o advogado ja havia informado em 06/10/2026."
+            + "\n    O INDICE DE DOCUMENTOS, para baixar em partes:\n    "
+            + "\n    ".join(mapa)
         ) from None
 
     baixado = info.value
