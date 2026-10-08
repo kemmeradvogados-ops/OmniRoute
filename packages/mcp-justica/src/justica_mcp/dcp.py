@@ -1174,6 +1174,41 @@ def achar_o_visualizar_processo(pagina: Any, campo: Any,
         "pelo nome, SEM desempate entre homonimos"
 
 
+# Marca da tela do processo, depois que a busca devolve. Enquanto o quadro
+# estiver em `#/consultaportal` ele ainda e o FORMULARIO de busca.
+MARCA_DA_TELA_DO_PROCESSO = "detalhes-processo"
+
+
+def esperar_a_tela_do_processo(pagina: Any, segundos: int = 45) -> tuple:
+    """Espera a busca devolver o processo, e devolve (quadro, botao).
+
+    Reconsulta o QUADRO a cada volta, e nao so o botao: quando a aplicacao
+    troca de rota, o quadro que se tinha em maos pode nao ser mais o que esta
+    na tela, e procurar nele e procurar no lugar certo de um instante que ja
+    passou.
+
+    Devolve o botao do Visualizador quando ele aparece. Devolve (quadro, None)
+    quando o prazo acaba, para que quem chama possa dizer EM QUE TELA parou.
+    """
+    import time as _tempo
+
+    from .portal import elemento_visivel
+
+    limite = _tempo.monotonic() + max(1, min(segundos, 30))
+    quadro = quadro_da_consulta(pagina)
+    while True:
+        quadro = quadro_da_consulta(pagina) or quadro
+        botao = elemento_visivel(quadro, f"texto={BOTAO_VISUALIZADOR}")
+        if botao is not None:
+            return quadro, botao
+        if _tempo.monotonic() >= limite:
+            return quadro, None
+        try:
+            pagina.wait_for_timeout(500)
+        except Exception:
+            _tempo.sleep(0.5)
+
+
 def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
                        motivo: Optional[str] = None) -> Any:
     """Clica em "Processo Eletronico - Visualizador" e devolve a JANELA NOVA.
@@ -1187,14 +1222,26 @@ def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
     o advogado pediu, e so entao o processo e aberto.
     """
     from .core.guarda_navegacao import Acao, Permissao
-    from .portal import elemento_visivel, pagina_de, permissao_efemera
+    from .portal import (elemento_visivel, endereco_sem_dado, pagina_de,
+                         permissao_efemera)
 
-    quadro = quadro_da_consulta(pagina)
-    botao = elemento_visivel(quadro, f"texto={BOTAO_VISUALIZADOR}")
+    # ESPERANDO, e nao numa olhada so. Em 08/10/2026 esta etapa, que ja tinha
+    # funcionado duas vezes, falhou com o quadro ainda em `#/consultaportal`
+    # em vez de `#/consultar/detalhes-processo`: a busca tinha sido enviada e
+    # a tela do processo ainda nao tinha chegado.
+    #
+    # E a mesma classe de defeito que ja apareceu na tela de login, na de
+    # selecao de sistemas, no menu e no botao de enviar o perfil. Eu disse
+    # mais de uma vez que ia generaliza-la, e aqui ela reapareceu numa funcao
+    # que eu mesmo mexi no mesmo dia.
+    quadro, botao = esperar_a_tela_do_processo(pagina, segundos)
     if botao is None:
         raise ConsultaIndisponivel(
-            f"O botao {BOTAO_VISUALIZADOR!r} nao esta na tela do processo. "
-            "Nada foi aberto.")
+            f"O botao {BOTAO_VISUALIZADOR!r} nao apareceu na tela do processo "
+            f"em {min(segundos, 30)}s. Endereco do quadro: "
+            f"{endereco_sem_dado(getattr(quadro, 'url', '') or '(sem)', 80)}. "
+            "Se ele ainda for a tela de busca, a pesquisa nao chegou a "
+            "devolver o processo. Nada foi aberto.")
 
     alvo = f"texto={BOTAO_VISUALIZADOR}"
     alvo_do_visualizar = f"texto={BOTAO_VISUALIZAR_PROCESSO}"

@@ -3947,3 +3947,113 @@ def test_o_nome_do_arquivo_de_lote_carrega_a_faixa_de_paginas(tmp_path):
     assert all("lote" in a and "paginas" in a for a in arquivos)
     # E nenhum deles se chama "integra".
     assert not any("integra" in a for a in arquivos)
+
+
+# ==========================================================================
+# A tela do processo que ainda nao chegou
+#
+# 08/10/2026. Esta etapa ja tinha funcionado DUAS vezes e falhou, com o
+# quadro ainda em `#/consultaportal` em vez de `#/consultar/detalhes-processo`:
+# a busca tinha sido enviada e a tela do processo ainda nao tinha chegado.
+#
+# E a mesma classe de defeito que ja apareceu na tela de login, na de selecao
+# de sistemas, no menu e no botao de enviar o perfil. Eu disse mais de uma
+# vez que ia generaliza-la, e aqui ela reapareceu numa funcao que eu mesmo
+# mexi no mesmo dia.
+# ==========================================================================
+
+class _QuadroQueDemora:
+    """O quadro que so vira a tela do processo depois de algumas olhadas."""
+
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, olhadas_ate_chegar):
+        self.olhadas = 0
+        self.ate_chegar = olhadas_ate_chegar
+        self.botao = _BotaoDeTela("Processo Eletrônico - Visualizador")
+
+    @property
+    def url(self):
+        return ("https://www3.tjrj.jus.br/consultaprocessual/#/consultar/"
+                "detalhes-processo" if self.olhadas >= self.ate_chegar
+                else "https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal")
+
+    def query_selector_all(self, _seletor):
+        self.olhadas += 1
+        return [self.botao] if self.olhadas >= self.ate_chegar else []
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def evaluate(self, _c):
+        return self.viewport_size
+
+
+class _PaginaDoQuadroLento:
+    url = "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal"
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, quadro):
+        self.quadro = quadro
+        self.frames = [self, quadro]
+
+    def query_selector_all(self, _s):
+        return []
+
+    def query_selector(self, _s):
+        return None
+
+    def evaluate(self, _c):
+        return self.viewport_size
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_a_tela_do_processo_e_esperada_e_nao_olhada_uma_vez():
+    from justica_mcp.dcp import esperar_a_tela_do_processo
+
+    quadro = _QuadroQueDemora(olhadas_ate_chegar=4)
+    _achado, botao = esperar_a_tela_do_processo(
+        _PaginaDoQuadroLento(quadro), segundos=5)
+
+    assert botao is quadro.botao
+
+
+def test_a_tela_que_nunca_chega_e_dita_com_o_endereco_do_quadro():
+    """Para que a recusa diga EM QUE TELA parou, em vez de so que nao achou."""
+    from justica_mcp.dcp import ConsultaIndisponivel, abrir_visualizador
+
+    quadro = _QuadroQueDemora(olhadas_ate_chegar=10**9)
+    with pytest.raises(ConsultaIndisponivel) as erro:
+        abrir_visualizador(_PaginaDoQuadroLento(quadro), _Guarda(), 1)
+
+    recado = str(erro.value)
+    assert "nao apareceu na tela do processo" in recado
+    assert "consultaportal" in recado
+    assert "a pesquisa nao chegou a devolver o processo" in recado
+
+
+def test_o_quadro_e_reconsultado_a_cada_volta():
+    """Quando a aplicacao troca de rota, o quadro que se tinha em maos pode
+    nao ser mais o que esta na tela."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.esperar_a_tela_do_processo)
+    # A reconsulta esta DENTRO do laco, e nao so antes dele.
+    corpo = fonte[fonte.index("while True:"):]
+    assert "quadro_da_consulta(pagina)" in corpo
+
+
+def test_o_visualizador_nao_olha_mais_uma_vez_so():
+    """Guarda de fonte contra a regressao exata de 08/10/2026."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.abrir_visualizador)
+    assert "esperar_a_tela_do_processo(pagina, segundos)" in fonte
+    assert 'elemento_visivel(quadro, f"texto={BOTAO_VISUALIZADOR}")' not in fonte
