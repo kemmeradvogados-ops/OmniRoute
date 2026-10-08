@@ -2343,7 +2343,19 @@ def test_o_diagnostico_diz_quando_nao_ha_candidato_nenhum():
         def query_selector_all(self, _s):
             return []
 
-    assert "nenhum clicavel" in relato_dos_candidatos(_Vazia())[0]
+    assert "nenhum elemento com o nome EXATO" in relato_dos_candidatos(_Vazia())[0]
+
+
+def test_o_diagnostico_separa_tela_vazia_de_tela_ilegivel():
+    """Sao respostas diferentes: a primeira diz que o item nao esta la, a
+    segunda que nao se sabe."""
+    from justica_mcp.dcp import relato_dos_candidatos
+
+    class _Ilegivel:
+        def query_selector_all(self, _s):
+            raise RuntimeError("Execution context was destroyed")
+
+    assert "nao foi possivel ler" in relato_dos_candidatos(_Ilegivel())[0]
 
 
 def test_a_autorizacao_da_trava_continua_sendo_por_texto():
@@ -2647,3 +2659,144 @@ def test_a_arvore_acessivel_tenta_botao_link_e_item_de_menu():
     achado = achar_pela_arvore_acessivel(_So_Link(), "Consultas Processuais")
     assert achado is item
     assert pedidos == ["button", "link"]
+
+
+# ==========================================================================
+# O menu deste portal NAO e feito de botoes
+#
+# 08/10/2026. A escolha do perfil passou pela SEGUNDA vez, e o diagnostico
+# do item do menu respondeu de uma vez:
+#
+#   CANDIDATOS AO ITEM:
+#   nenhum clicavel com o nome 'Consultas Processuais' na tela
+#
+# Verdade sobre botoes e ancoras, e falso sobre a tela. O acompanhamento de
+# 06/10 ja tinha mostrado `div#CONSULTAS`, `li#CONSULTAS` e `span#CONSULTAS`,
+# e eu li aquilo como detalhe do menu de primeiro nivel em vez de como a
+# forma do menu INTEIRO.
+#
+# Por isso a escolha do perfil funcionava e o item do menu nao: a escolha usa
+# a busca ampla desde 06/10, e as buscas de clicavel so olhavam `button` e
+# `a`. Eram duas buscas para a mesma pergunta, e so uma sabia a resposta.
+# ==========================================================================
+
+class _ItemEmEtiquetaMuda:
+    """O item como o portal o monta: `li`, sem semantica de clique.
+
+    Nome proprio porque `_ItemDeMenu` ja existe neste arquivo, com outra
+    assinatura. Falso novo que reusa nome de falso antigo o sobrescreve em
+    silencio e quebra os testes do outro, que foi o que aconteceu aqui.
+    """
+
+    def __init__(self, texto, dentro=True):
+        self.texto, self._dentro = texto, dentro
+        self.clicado = False
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, _n):
+        return None
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return ({"x": 20, "y": 200, "width": 180, "height": 32} if self._dentro
+                else {"x": 20, "y": 2600, "width": 180, "height": 32})
+
+    def evaluate(self, codigo):
+        if "tagName" in codigo:
+            return "LI"
+        return "LI#itemMenu@200,20"
+
+    def click(self):
+        self.clicado = True
+
+    def scroll_into_view_if_needed(self):
+        pass
+
+
+def _tela_de_menu(itens, so_em=("li",)):
+    class _Tela:
+        viewport_size = {"width": 1280, "height": 800}
+        url = "https://www3.tjrj.jus.br/portalservicos/#/tela-menu"
+
+        def query_selector_all(self, seletor):
+            return list(itens) if seletor in so_em else []
+
+        def query_selector(self, seletor):
+            achados = self.query_selector_all(seletor)
+            return achados[0] if achados else None
+
+        def evaluate(self, _c):
+            return self.viewport_size
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    return _Tela()
+
+
+def test_o_item_de_menu_em_li_e_alcancado():
+    from justica_mcp.dcp import achar_clicavel
+
+    item = _ItemEmEtiquetaMuda("Consultas Processuais")
+    achado = achar_clicavel(_tela_de_menu([item]), "Consultas Processuais", 1)
+    assert achado is item
+
+
+def test_o_item_de_menu_em_li_fora_da_janela_tambem():
+    from justica_mcp.dcp import achar_clicavel
+
+    item = _ItemEmEtiquetaMuda("Consultas Processuais", dentro=False)
+    achado = achar_clicavel(_tela_de_menu([item]), "Consultas Processuais", 1)
+    assert achado is item
+
+
+def test_o_item_em_div_tambem_e_alcancado():
+    """O acompanhamento de 06/10 mostrou `div#CONSULTAS` junto de `li` e
+    `span`: o portal monta o mesmo item em mais de uma etiqueta."""
+    from justica_mcp.dcp import achar_clicavel
+
+    item = _ItemEmEtiquetaMuda("Consultas Processuais")
+    achado = achar_clicavel(
+        _tela_de_menu([item], so_em=("div",)), "Consultas Processuais", 1)
+    assert achado is item
+
+
+def test_o_nome_diferente_continua_sendo_recusado():
+    """Ampliar onde se procura nao e afrouxar o QUE se procura: 'Consultas
+    Processuais' e 'Consultas Processuais Antigas' sao itens diferentes."""
+    from justica_mcp.dcp import achar_clicavel
+
+    item = _ItemEmEtiquetaMuda("Consultas Processuais Antigas")
+    assert achar_clicavel(
+        _tela_de_menu([item]), "Consultas Processuais", 1) is None
+
+
+def test_o_diagnostico_enxerga_o_item_que_nao_e_botao():
+    """A frase antiga mandava procurar no lugar errado."""
+    from justica_mcp.dcp import relato_dos_candidatos
+
+    item = _ItemEmEtiquetaMuda("Consultas Processuais")
+    linhas = relato_dos_candidatos(
+        _tela_de_menu([item]), "Consultas Processuais")
+    assert len(linhas) == 1
+    assert "tag='LI'" in linhas[0]
+
+
+def test_a_opcao_do_perfil_e_o_item_do_menu_usam_a_MESMA_busca():
+    """Guarda de fonte. Eram duas buscas para a mesma pergunta, e so uma
+    sabia a resposta."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    assert "achar_por_texto_em_qualquer_lugar(pagina, texto, exigir_posicao)" \
+        in inspect.getsource(dcp.achar_opcao_na_lista)
+    assert "achar_por_texto_em_qualquer_lugar(pagina, nome, exigir)" \
+        in inspect.getsource(dcp.achar_clicavel)

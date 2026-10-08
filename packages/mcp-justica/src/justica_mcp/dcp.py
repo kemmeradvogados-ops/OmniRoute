@@ -906,7 +906,18 @@ def lista_de_opcoes_aberta(pagina: Any) -> bool:
 
 def achar_opcao_na_lista(pagina: Any, texto: str,
                         exigir_posicao: bool = True) -> Optional[Any]:
-    """A opcao da lista cujo texto e EXATAMENTE este, onde quer que ela esteja.
+    """Apelido de `achar_por_texto_em_qualquer_lugar`, para quem procura opcao.
+
+    Fica porque e assim que o caminho do perfil nomeia o que procura. A busca
+    em si nao tem nada de particular a listas: e a mesma pergunta de qualquer
+    clicavel sem etiqueta propria.
+    """
+    return achar_por_texto_em_qualquer_lugar(pagina, texto, exigir_posicao)
+
+
+def achar_por_texto_em_qualquer_lugar(pagina: Any, texto: str,
+                                      exigir_posicao: bool = True) -> Optional[Any]:
+    """O elemento cujo texto e EXATAMENTE este, em qualquer etiqueta.
 
     `_por_texto_exato` procura so em elemento clicavel, porque foi escrito para
     botao. Lista montada por script costuma empilhar `li` ou `div`, que nao
@@ -1364,6 +1375,19 @@ def achar_clicavel(pagina: Any, nome: str, segundos: int = 15) -> Optional[Any]:
         except Exception:
             continue
 
+    # Em QUALQUER etiqueta, e nao so nas que tem semantica de clique.
+    # Conferido em campo em 07/10 e 08/10/2026: o menu deste portal e feito de
+    # `div`, `li` e `span`. O acompanhamento de 06/10 ja tinha mostrado
+    # `div#CONSULTAS`, `li#CONSULTAS` e `span#CONSULTAS`, e eu li aquilo como
+    # detalhe do menu de primeiro nivel em vez de como a forma do menu INTEIRO.
+    # Por isso a escolha do perfil funcionou, que usa esta busca ampla desde
+    # 06/10, e o item do menu nao: ele nao e `button` nem `a`, e as buscas de
+    # clicavel so olhavam para essas duas.
+    for exigir in (True, False):
+        achado = achar_por_texto_em_qualquer_lugar(pagina, nome, exigir)
+        if achado is not None:
+            return achado
+
     return candidato_sem_tamanho(pagina, nome)
 
 
@@ -1409,14 +1433,27 @@ def relato_dos_candidatos(pagina: Any, nome: str = BOTAO_ENTRAR_NO_PERFIL,
     util nao e repetir nenhuma delas: e descrever cada candidato por inteiro,
     com tudo o que decide se ele serve.
     """
-    from .portal import ALVOS_CLICAVEIS, sem_acento
+    from .portal import sem_acento
 
     alvo = sem_acento(nome).strip()
-    linhas = []
-    try:
-        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
-    except Exception:
-        return ["nao foi possivel ler os clicaveis da tela"]
+    linhas, vistos = [], set()
+    candidatos = []
+    # Em todas as etiquetas, e nao so nas clicaveis. Em 08/10/2026 este relato
+    # disse "nenhum clicavel com o nome 'Consultas Processuais' na tela", o que
+    # era verdade sobre botoes e ancoras e falso sobre a tela: o item estava
+    # la, noutra etiqueta, e a frase mandava procurar no lugar errado.
+    leu_alguma_coisa = False
+    for lugar in LUGARES_DE_OPCAO:
+        try:
+            achados = pagina.query_selector_all(lugar) or []
+        except Exception:
+            continue
+        # Tela vazia e tela ilegivel sao respostas diferentes: a primeira diz
+        # que o item nao esta la, a segunda que nao se sabe.
+        leu_alguma_coisa = True
+        candidatos.extend(achados)
+    if not leu_alguma_coisa:
+        return ["nao foi possivel ler os elementos da tela"]
     for elemento in candidatos:
         if len(linhas) >= teto:
             break
@@ -1429,6 +1466,18 @@ def relato_dos_candidatos(pagina: Any, nome: str = BOTAO_ENTRAR_NO_PERFIL,
         nomes = [n for n in (texto, valor, rotulo) if n]
         if not any(sem_acento(n).strip() == alvo for n in nomes):
             continue
+        # O mesmo elemento aparece em mais de um lugar da lista de etiquetas.
+        try:
+            marca = elemento.evaluate(
+                "e => e.tagName + '#' + (e.id || '') + '@' + "
+                "(e.getBoundingClientRect().top + ',' + "
+                "e.getBoundingClientRect().left)")
+        except Exception:
+            marca = None
+        if marca is not None:
+            if marca in vistos:
+                continue
+            vistos.add(marca)
         partes = []
         for nome, ler in (("tag", lambda e: e.evaluate("e => e.tagName")),
                           ("visivel", lambda e: e.is_visible()),
@@ -1457,7 +1506,8 @@ def relato_dos_candidatos(pagina: Any, nome: str = BOTAO_ENTRAR_NO_PERFIL,
             pass
         linhas.append("; ".join(partes))
     if not linhas:
-        return [f"nenhum clicavel com o nome {nome!r} na tela"]
+        return [f"nenhum elemento com o nome EXATO {nome!r} na tela, "
+                "em etiqueta nenhuma"]
     return linhas
 
 
