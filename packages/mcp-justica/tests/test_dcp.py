@@ -3349,18 +3349,18 @@ def test_o_aviso_permanente_nao_entra_na_recusa_como_se_fosse_erro():
 def test_do_rotulo_do_item_so_o_NUMERO_e_aproveitado():
     """O resto e o proprio andamento do processo, e foi o que vazou para uma
     conversa em 06/10/2026."""
-    from justica_mcp.dcp import numero_do_item
+    from justica_mcp.dcp import pagina_inicial_do_item
 
-    assert numero_do_item(
-        "Alternar 45 - Juntada - Extrato da GRERJ - dia 27/04/2018") == "45"
-    assert numero_do_item("Alternar 7 - Peticao") == "7"
+    assert pagina_inicial_do_item(
+        "Alternar 45 - Juntada - Extrato da GRERJ - dia 27/04/2018") == 45
+    assert pagina_inicial_do_item("Alternar 7 - Peticao") == 7
     # Sem acento e sem depender de maiusculas.
-    assert numero_do_item("ALTERNAR 12 - algo") == "12"
+    assert pagina_inicial_do_item("ALTERNAR 12 - algo") == 12
     # O que nao e item do indice nao vira numero nenhum.
-    assert numero_do_item("Baixar o processo atual em PDF") is None
-    assert numero_do_item("Alternar todos") is None
-    assert numero_do_item("") is None
-    assert numero_do_item(None) is None
+    assert pagina_inicial_do_item("Baixar o processo atual em PDF") is None
+    assert pagina_inicial_do_item("Alternar todos") is None
+    assert pagina_inicial_do_item("") is None
+    assert pagina_inicial_do_item(None) is None
 
 
 def test_o_relato_do_indice_nao_imprime_o_andamento():
@@ -3466,3 +3466,106 @@ def test_a_falha_da_integra_traz_o_indice_junto():
     assert "abrir_caixa_de_selecao(pagina, guarda)" in fonte
     assert "relatar_o_indice(pagina)" in fonte
     assert "O INDICE DE DOCUMENTOS, para baixar em partes" in fonte
+
+
+# ==========================================================================
+# O numero ao lado do documento e a PAGINA em que ele comeca
+#
+# Correcao do advogado em 08/10/2026, com a tela do indice: "ao lado do nome
+# do documento vem o numero da pagina que inicia o documento". Eu vinha
+# lendo aquele numero como SEQUENCIA, e nao e.
+#
+# A tela confirma, porque os numeros saltam: 3, 12, 13, 14, 15, 16, 23, 25,
+# 31, 33, 48, 66, 69, 70, 74, 75, 77, 92, 93. Sequencia nao salta de 16 para
+# 23; pagina inicial, sim.
+#
+# A diferenca decide tudo o que vem depois: com ela, "de 300 em 300 paginas"
+# vira conta exata, e nao chute por quantidade de documentos.
+# ==========================================================================
+
+# As paginas iniciais da tela que o advogado mandou em 08/10/2026.
+INDICE_REAL = [3, 12, 13, 14, 15, 16, 23, 25, 31, 33, 48, 66, 69, 70, 74, 75,
+               77, 92, 93]
+
+
+def test_a_pagina_inicial_sai_como_numero_e_nao_como_texto():
+    """E numero porque vai ser somado e comparado, nao exibido."""
+    from justica_mcp.dcp import pagina_inicial_do_item
+
+    assert pagina_inicial_do_item("Alternar 92 - Extrato da GRERJ") == 92
+    assert isinstance(pagina_inicial_do_item("Alternar 3 - algo"), int)
+
+
+def test_o_indice_inteiro_cabe_em_um_lote_de_300():
+    """O processo da tela vai da pagina 3 a 93: 300 paginas o cobrem."""
+    from justica_mcp.dcp import lotes_por_pagina
+
+    assert lotes_por_pagina(INDICE_REAL) == [list(range(len(INDICE_REAL)))]
+
+
+def test_os_lotes_sao_cortados_pela_distancia_entre_paginas():
+    from justica_mcp.dcp import lotes_por_pagina
+
+    # Com 30 paginas por lote, o corte cai onde a distancia chega a 30.
+    lotes = lotes_por_pagina(INDICE_REAL, 30)
+    assert [[INDICE_REAL[i] for i in lote] for lote in lotes] == [
+        [3, 12, 13, 14, 15, 16, 23, 25, 31],
+        [33, 48],
+        [66, 69, 70, 74, 75, 77, 92, 93],
+    ]
+
+
+def test_documento_que_nao_cabe_em_lote_nenhum_vai_sozinho():
+    """Acervo com buraco silencioso e pior que download que falha na cara do
+    operador."""
+    from justica_mcp.dcp import lotes_por_pagina
+
+    # Um salto maior que o lote inteiro.
+    assert lotes_por_pagina([1, 2, 900, 901], 100) == [[0, 1], [2, 3]]
+
+
+def test_lote_vazio_e_lote_de_um_nao_quebram():
+    from justica_mcp.dcp import lotes_por_pagina
+
+    assert lotes_por_pagina([]) == []
+    assert lotes_por_pagina(None) == []
+    assert lotes_por_pagina([7]) == [[0]]
+    # Tamanho absurdo nao divide por zero nem devolve lote vazio.
+    assert lotes_por_pagina([1, 2, 3], 0) == [[0], [1], [2]]
+
+
+def test_a_pagina_sem_numero_nao_entra_na_conta():
+    """Item cujo rotulo nao traz pagina nao pode deslocar os lotes."""
+    from justica_mcp.dcp import lotes_por_pagina
+
+    assert lotes_por_pagina([1, None, 2, "x", 3], 100) == [[0, 2, 4]]
+
+
+def test_o_relato_do_indice_ja_mostra_os_lotes():
+    """Para que a proxima corrida nao precise ser gasta so para contar."""
+    from justica_mcp.dcp import relatar_o_indice
+
+    class _Item:
+        def __init__(self, pagina):
+            self.pagina = pagina
+
+        def get_attribute(self, nome):
+            return (f"Alternar {self.pagina} - andamento que nao pode sair"
+                    if nome == "aria-label" else None)
+
+        def query_selector_all(self, _s):
+            return []
+
+        def evaluate_handle(self, _js):
+            raise RuntimeError("sem pai")
+
+    class _Indice:
+        def query_selector_all(self, seletor):
+            return ([_Item(p) for p in (1, 400, 800)]
+                    if seletor == "[aria-label]" else [])
+
+    texto = "\n".join(relatar_o_indice(_Indice()))
+    assert "comecam nas paginas: 1, 400, 800" in texto
+    assert "em lotes de 300 paginas dariam 3 download(s)" in texto
+    # E o andamento continua fora.
+    assert "andamento" not in texto

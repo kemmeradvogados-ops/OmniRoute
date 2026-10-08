@@ -85,12 +85,28 @@ LUGARES_DE_MARCA = (
 )
 
 
-def numero_do_item(rotulo: str) -> Optional[str]:
-    """So o NUMERO do documento, de um rotulo que e todo dado de processo.
+def pagina_inicial_do_item(rotulo: str) -> Optional[int]:
+    """A PAGINA em que o documento comeca, lida do rotulo do item do indice.
 
-    "Alternar 45 - Juntada - Extrato da GRERJ - dia 27/04/2018" devolve "45".
-    Sequencia de documento e estrutura; o andamento que vem depois nao e, e
-    foi exatamente ele que vazou para uma conversa em 06/10/2026.
+    Correcao de 08/10/2026, do proprio advogado: "ao lado do nome do documento
+    vem o numero da pagina que inicia o documento". Eu vinha lendo aquele
+    numero como SEQUENCIA do documento, e nao e.
+
+    A tela que ele mandou confirma, porque os numeros saltam:
+
+        3 - Peticao Inicial
+       12 - CPF
+       13 - CPF
+       ...
+       92 - Extrato da GRERJ
+       93 - Juntada - Certidao
+
+    Sequencia nao salta de 16 para 23; pagina inicial, sim. A diferenca decide
+    tudo o que vem depois: com ela, "de 300 em 300 paginas" e conta exata, e
+    nao chute por quantidade de documentos.
+
+    O resto do rotulo nao e aproveitado em lugar nenhum: e o proprio andamento
+    do processo, e foi o que vazou para uma conversa em 06/10/2026.
     """
     from .portal import sem_acento
 
@@ -99,7 +115,48 @@ def numero_do_item(rotulo: str) -> Optional[str]:
         return None
     resto = limpo[len(MARCA_DO_ITEM_DO_INDICE):].strip()
     numero = resto.split(" ")[0].split("-")[0].strip()
-    return numero if numero.isdigit() else None
+    return int(numero) if numero.isdigit() else None
+
+
+# De quantas em quantas paginas baixar, quando a integra nao vem de uma vez.
+# Numero dado pelo advogado em 08/10/2026: "baixar de 300 em 300 paginas".
+PAGINAS_POR_LOTE = 300
+
+
+def lotes_por_pagina(inicios: Any, tamanho: int = PAGINAS_POR_LOTE) -> list:
+    """Agrupa documentos em lotes de ate `tamanho` paginas.
+
+    Recebe as paginas iniciais, na ordem do indice, e devolve listas de
+    POSICOES. Um documento entra no lote enquanto a distancia entre a pagina
+    em que ele comeca e a do primeiro do lote for MENOR que o tamanho.
+
+    Um documento sozinho que ja passe do tamanho vai num lote so dele, em vez
+    de ser deixado de fora: documento que nao cabe em lote nenhum nunca seria
+    baixado, e um acervo com buraco silencioso e pior que um download que
+    falha na cara do operador.
+
+    O ULTIMO lote nao tem como ser medido: a pagina final do processo nao
+    aparece no indice, so a inicial de cada documento. Quem chama trata esse
+    lote como os outros e confere o arquivo que chegar.
+    """
+    posicoes = [(i, p) for i, p in enumerate(inicios or [])
+                if isinstance(p, int)]
+    if not posicoes:
+        return []
+    teto = max(1, int(tamanho))
+    lotes, atual, base = [], [], None
+    for posicao, pagina in posicoes:
+        if base is None:
+            base, atual = pagina, [posicao]
+            continue
+        if pagina - base < teto:
+            atual.append(posicao)
+            continue
+        lotes.append(atual)
+        base, atual = pagina, [posicao]
+    if atual:
+        lotes.append(atual)
+    return lotes
 
 
 def itens_do_indice(pagina: Any) -> list:
@@ -114,7 +171,7 @@ def itens_do_indice(pagina: Any) -> list:
             rotulo = elemento.get_attribute("aria-label") or ""
         except Exception:
             continue
-        if numero_do_item(rotulo) is not None:
+        if pagina_inicial_do_item(rotulo) is not None:
             saida.append(elemento)
     return saida
 
@@ -155,23 +212,39 @@ def relatar_o_indice(pagina: Any, teto: int = 8) -> list[str]:
     if not itens:
         return ["o indice nao tem item nenhum com rotulo 'Alternar <numero>'"]
 
-    numeros = []
-    for elemento in itens[:teto]:
+    paginas = []
+    for elemento in itens:
         try:
-            numeros.append(numero_do_item(
-                elemento.get_attribute("aria-label") or "") or "?")
+            paginas.append(pagina_inicial_do_item(
+                elemento.get_attribute("aria-label") or ""))
         except Exception:
-            numeros.append("?")
-    linhas = [f"{len(itens)} item(ns) no indice; "
-              f"os {len(numeros)} primeiros sao de numero: "
-              + ", ".join(numeros)]
+            paginas.append(None)
+
+    mostradas = [str(p) if p is not None else "?" for p in paginas[:teto]]
+    linhas = [f"{len(itens)} item(ns) no indice; os {len(mostradas)} primeiros "
+              "comecam nas paginas: " + ", ".join(mostradas)]
+
+    # Os lotes que sairiam deste indice, ja calculados. E o que o advogado
+    # pediu em 08/10/2026, e agora e conta exata: a pagina inicial de cada
+    # documento esta no proprio rotulo.
+    lotes = lotes_por_pagina([p for p in paginas if p is not None])
+    if lotes:
+        resumo = []
+        for lote in lotes[:6]:
+            primeira = [p for p in paginas if p is not None][lote[0]]
+            ultima = [p for p in paginas if p is not None][lote[-1]]
+            resumo.append(f"paginas {primeira} a {ultima} ({len(lote)} doc.)")
+        linhas.append(
+            f"em lotes de {PAGINAS_POR_LOTE} paginas dariam {len(lotes)} "
+            "download(s): " + "; ".join(resumo)
+            + ("; ..." if len(lotes) > 6 else ""))
 
     # Onde esta a marca de selecao de cada item, que e o que falta saber para
     # marcar um documento especifico.
     for elemento in itens[:3]:
         numero = None
         try:
-            numero = numero_do_item(elemento.get_attribute("aria-label") or "")
+            numero = pagina_inicial_do_item(elemento.get_attribute("aria-label") or "")
         except Exception:
             pass
         achou = []
@@ -191,7 +264,7 @@ def relatar_o_indice(pagina: Any, teto: int = 8) -> list[str]:
             if achou:
                 break
         linhas.append(
-            f"item {numero or '?'}: "
+            f"documento da pagina {numero if numero is not None else '?'}: "
             + ("; ".join(achou) if achou
                else "nenhuma marca de selecao perto dele, "
                     f"nos lugares {', '.join(LUGARES_DE_MARCA)}"))
