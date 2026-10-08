@@ -2971,3 +2971,205 @@ def test_a_rede_sem_tamanho_tambem_olha_etiqueta_muda():
             return [item] if seletor == "li" else []
 
     assert candidato_sem_tamanho(_Tela(), "Consultas Processuais") is item
+
+
+# ==========================================================================
+# A tela de justificativa, entre o clique e o Visualizador
+#
+# Lida em campo em 08/10/2026. Clicar em "Processo Eletronico - Visualizador"
+# NAO abre janela: abre um formulario, no mesmo quadro:
+#
+#   <input type=password id=senhaProvisoria
+#          rotulo='Senha para visualizar o processo eletronico*'>
+#   <textarea id=motivo rotulo='Motivo*' maxlength=499>
+#   botao 'Visualizar Processo'
+#
+# Instrucao do advogado, por escrito: digitar 'consulta' no motivo, tecla a
+# tecla. A senha NAO e preenchida, e nem entra na lista de preenchiveis da
+# trava: e credencial de acesso aos autos, e inventa-la seria exatamente o
+# que este projeto nao faz.
+# ==========================================================================
+
+class _CampoDoMotivo:
+    def __init__(self, aceita=True):
+        self.digitado = ""
+        self.clicado = False
+        self.aceita = aceita
+        self.delays = []
+
+    def click(self):
+        self.clicado = True
+
+    def type(self, texto, delay=None):
+        if not self.aceita:
+            raise RuntimeError("somente leitura")
+        self.digitado += texto
+        self.delays.append(delay)
+
+    def is_visible(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 10, "y": 300, "width": 400, "height": 90}
+
+
+class _QuadroComJustificativa:
+    viewport_size = {"width": 1280, "height": 800}
+    url = "https://www3.tjrj.jus.br/consultaprocessual/#/consultar/detalhes-processo"
+
+    def __init__(self, com_senha=True, com_botao=True, campo=None):
+        self.campo = campo if campo is not None else _CampoDoMotivo()
+        self.com_senha = com_senha
+        self.botao = _BotaoDeTela("Visualizar Processo") if com_botao else None
+        self.visualizador = _BotaoDeTela("Processo Eletrônico - Visualizador")
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.dcp import (BOTAO_VISUALIZADOR, CAMPO_DA_SENHA_PROVISORIA,
+                                     CAMPO_DO_MOTIVO)
+        from justica_mcp.portal import PREFIXO_DE_TEXTO
+
+        if seletor == CAMPO_DO_MOTIVO:
+            return [self.campo]
+        if seletor == CAMPO_DA_SENHA_PROVISORIA:
+            return [_BotaoDeTela("")] if self.com_senha else []
+        if seletor.startswith(PREFIXO_DE_TEXTO):
+            return []
+        achados = []
+        if self.botao is not None:
+            achados.append(self.botao)
+        achados.append(self.visualizador)
+        return achados
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def evaluate(self, _c):
+        return self.viewport_size
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+class _PaginaComQuadro:
+    """A pagina de fora, que hospeda o quadro e a janela nova."""
+
+    url = "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal"
+    viewport_size = {"width": 1280, "height": 800}
+
+    def __init__(self, quadro, abre_na_confirmacao=True):
+        self.quadro = quadro
+        self.frames = [self, quadro]
+        self.abre_na_confirmacao = abre_na_confirmacao
+        self.context = self
+        self.janela = object()
+
+    def expect_page(self, timeout=None):
+        quadro = self.quadro
+        pagina = self
+
+        class _Espera:
+            def __enter__(_s):
+                return _s
+
+            def __exit__(_s, *a):
+                # A janela so abre na confirmacao, nunca no primeiro clique.
+                if not (pagina.abre_na_confirmacao and quadro.campo.digitado):
+                    raise RuntimeError("TimeoutError: nenhuma janela nova")
+                return False
+
+            @property
+            def value(_s):
+                return pagina.janela
+
+        return _Espera()
+
+    def query_selector_all(self, _s):
+        return []
+
+    def query_selector(self, _s):
+        return None
+
+    def evaluate(self, _c):
+        return self.viewport_size
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_o_motivo_e_digitado_tecla_a_tecla_e_o_processo_abre():
+    from justica_mcp.dcp import abrir_visualizador
+
+    quadro = _QuadroComJustificativa()
+    pagina = _PaginaComQuadro(quadro)
+
+    janela = abrir_visualizador(pagina, _Guarda(), 2, motivo="consulta")
+
+    assert janela is pagina.janela
+    assert quadro.campo.digitado == "consulta"
+    # Tecla a tecla, como o advogado pediu, e nao `fill`.
+    assert quadro.campo.delays and all(d for d in quadro.campo.delays)
+    assert quadro.botao.clicado is True
+
+
+def test_sem_motivo_o_comando_para_em_vez_de_inventar_um():
+    """Declarar o motivo do acesso aos autos e ato do advogado."""
+    from justica_mcp.dcp import MotivoNaoInformado, abrir_visualizador
+
+    quadro = _QuadroComJustificativa()
+    with pytest.raises(MotivoNaoInformado, match="--motivo"):
+        abrir_visualizador(_PaginaComQuadro(quadro), _Guarda(), 2, motivo="   ")
+    assert quadro.campo.digitado == ""
+
+
+def test_a_senha_provisoria_nao_entra_nos_preenchiveis_da_trava():
+    """Ela e credencial de acesso aos autos, dada ao titular. A trava barra o
+    proprio programa se algum caminho futuro tentar preenche-la."""
+    from justica_mcp.dcp import CAMPO_DA_SENHA_PROVISORIA, abrir_visualizador
+
+    quadro = _QuadroComJustificativa()
+    guarda = _Guarda()
+    abrir_visualizador(_PaginaComQuadro(quadro), guarda, 2, motivo="consulta")
+
+    for permissao in guarda.permissoes:
+        assert CAMPO_DA_SENHA_PROVISORIA not in (
+            permissao.seletores_preenchiveis or ())
+
+
+def test_o_programa_nunca_digita_na_senha_provisoria():
+    """Guarda de fonte, que e o que sobrevive a um refatoramento distraido."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp)
+    assert "CAMPO_DA_SENHA_PROVISORIA" in fonte
+    for linha in fonte.splitlines():
+        if "CAMPO_DA_SENHA_PROVISORIA" in linha:
+            assert ".type(" not in linha and ".fill(" not in linha
+
+
+def test_sem_o_botao_de_confirmar_o_comando_para_e_relata():
+    from justica_mcp.dcp import ConsultaIndisponivel, abrir_visualizador
+
+    quadro = _QuadroComJustificativa(com_botao=False)
+    with pytest.raises(ConsultaIndisponivel, match="CANDIDATOS AO BOTAO"):
+        abrir_visualizador(_PaginaComQuadro(quadro), _Guarda(), 2,
+                           motivo="consulta")
+
+
+def test_sem_justificativa_e_sem_janela_o_recado_diz_as_duas_coisas():
+    from justica_mcp.dcp import ConsultaIndisponivel, abrir_visualizador
+
+    class _QuadroSeco(_QuadroComJustificativa):
+        def query_selector_all(self, seletor):
+            from justica_mcp.dcp import CAMPO_DO_MOTIVO
+
+            if seletor == CAMPO_DO_MOTIVO:
+                return []
+            return super().query_selector_all(seletor)
+
+    quadro = _QuadroSeco()
+    with pytest.raises(ConsultaIndisponivel, match="nao pediu justificativa"):
+        abrir_visualizador(_PaginaComQuadro(quadro, abre_na_confirmacao=False),
+                           _Guarda(), 2, motivo="consulta")

@@ -5320,6 +5320,7 @@ def consultar_processo(
     documentos: str = "auto",
     confirmado: bool = False,
     aceitar_termo: bool = False,
+    motivo: Optional[str] = None,
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -5565,7 +5566,8 @@ def consultar_processo(
             return 0
 
         if identidade.sistema == "dcp":
-            from .dcp import (ConsultaIndisponivel, DownloadIndisponivel,
+            from .dcp import (MOTIVO_PADRAO, ConsultaIndisponivel,
+                              DownloadIndisponivel, MotivoNaoInformado,
                               PerfilNaoInformado, abrir_visualizador,
                               baixar_integra, entrar_no_portal_de_servicos,
                               escolher_perfil, na_tela_de_perfil,
@@ -5639,8 +5641,10 @@ def consultar_processo(
                 return 0
 
             try:
-                janela = abrir_visualizador(pagina, guarda, segundos)
-            except ConsultaIndisponivel as exc:
+                janela = abrir_visualizador(
+                    pagina, guarda, segundos,
+                    motivo=(motivo or "").strip() or MOTIVO_PADRAO)
+            except (ConsultaIndisponivel, MotivoNaoInformado) as exc:
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(pagina, "TELA DO PROCESSO")
                 return 1
@@ -6241,6 +6245,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="qual perfil usar quando o portal pergunta: a inscricao "
                          "no eproc (RJ168943) ou o tipo de usuario no DCP "
                          "(Advogado)")
+    cp.add_argument("--motivo", default=None,
+                    help="justificativa do acesso aos autos, quando o portal a "
+                         "pedir. O do Rio de Janeiro pede, no campo 'Motivo', "
+                         "antes de abrir o Visualizador. Padrao: 'consulta'")
     cp.add_argument("--documentos", default="auto",
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
                          "'integra', 'ultimos:N' ou 'nenhum'")
@@ -6311,7 +6319,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_senha_oculto=args.campo_senha_oculto, botao_entrar=args.botao_entrar,
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 documentos=args.documentos, confirmado=args.confirmado,
-                aceitar_termo=args.aceitar_termo,
+                aceitar_termo=args.aceitar_termo, motivo=args.motivo,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
             )

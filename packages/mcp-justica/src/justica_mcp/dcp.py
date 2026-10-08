@@ -498,12 +498,60 @@ def _so_digitos(elemento: Any) -> str:
         return ""
 
 
-def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45) -> Any:
+# A tela de justificativa, lida em campo em 08/10/2026. Clicar em
+# "Processo Eletronico - Visualizador" NAO abre janela: abre este formulario,
+# dentro do mesmo quadro, em `#/consultar/detalhes-processo`.
+#
+#   <input  type=password id=senhaProvisoria
+#           rotulo='Senha para visualizar o processo eletronico*'>
+#   <textarea id=motivo rotulo='Motivo*' maxlength=499>
+#   botao 'Visualizar Processo'
+#
+# A senha NAO e preenchida por este programa, e nem sequer entra na lista de
+# seletores preenchiveis da trava: ela e credencial de acesso a autos, dada ao
+# titular, e inventa-la seria exatamente o que este projeto nao faz. Se o
+# portal a exigir, o comando para e diz.
+CAMPO_DO_MOTIVO = "#motivo"
+CAMPO_DA_SENHA_PROVISORIA = "#senhaProvisoria"
+BOTAO_VISUALIZAR_PROCESSO = "Visualizar Processo"
+# Instrucao do advogado em 08/10/2026, por escrito. Fica como PADRAO, e nao
+# como texto fixo: declarar o motivo do acesso aos autos e ato dele, e o
+# comando imprime o que digitou para que haja registro do que foi declarado.
+MOTIVO_PADRAO = "consulta"
+
+
+class MotivoNaoInformado(RuntimeError):
+    """O portal pediu o motivo do acesso e nenhum foi informado."""
+
+
+def _janela_do_clique(hospedeira: Any, elemento: Any, segundos: int) -> Optional[Any]:
+    """Clica e devolve a janela nova, ou None se nenhuma abrir no prazo."""
+    try:
+        with hospedeira.context.expect_page(timeout=max(1, segundos) * 1000) as nova:
+            clicar_com_jeito(elemento)
+        return nova.value
+    except Exception:
+        return None
+
+
+def tela_de_justificativa(quadro: Any) -> Optional[Any]:
+    """O campo do motivo, quando o portal pede justificativa para abrir."""
+    from .portal import elemento_visivel
+
+    return elemento_visivel(quadro, CAMPO_DO_MOTIVO)
+
+
+def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
+                       motivo: Optional[str] = None) -> Any:
     """Clica em "Processo Eletronico - Visualizador" e devolve a JANELA NOVA.
 
     O visualizador abre em janela propria, com um endereco cifrado que nao se
     monta a partir do numero do processo: ele e gerado por este clique. Nao ha
     como pular esta etapa.
+
+    Entre o clique e a janela pode entrar o formulario de justificativa, lido
+    em campo em 08/10/2026. Nesse caso o motivo e digitado TECLA A TECLA, como
+    o advogado pediu, e so entao o processo e aberto.
     """
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import elemento_visivel, pagina_de, permissao_efemera
@@ -516,23 +564,93 @@ def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45) -> Any:
             "Nada foi aberto.")
 
     alvo = f"texto={BOTAO_VISUALIZADOR}"
+    alvo_do_visualizar = f"texto={BOTAO_VISUALIZAR_PROCESSO}"
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,
         descricao="abrir o Visualizador de Processos",
         conferido_em="execucao atual",
-        seletores_clicaveis=(alvo,),
+        seletores_clicaveis=(alvo, alvo_do_visualizar),
+        # `#senhaProvisoria` NAO entra aqui, de proposito: a trava barra o
+        # proprio programa se algum caminho futuro tentar preenche-la.
+        seletores_preenchiveis=(CAMPO_DO_MOTIVO,),
     ))
     guarda.pode_executar(Acao.CLICAR, alvo, url=pagina.url)
 
     hospedeira = pagina_de(pagina)
+    janela = _janela_do_clique(hospedeira, botao, min(segundos, 15))
+    if janela is not None:
+        return _assentar_a_janela(janela, segundos)
+
+    # Sem janela nova: o portal pode ter pedido justificativa.
+    quadro = quadro_da_consulta(pagina)
+    campo = tela_de_justificativa(quadro)
+    if campo is None:
+        raise ConsultaIndisponivel(
+            f"O visualizador nao abriu em {min(segundos, 15)}s, e a tela "
+            f"tambem nao pediu justificativa ({CAMPO_DO_MOTIVO} nao esta "
+            "nela). Nada foi lido.")
+
+    texto = (motivo or "").strip()
+    if not texto:
+        raise MotivoNaoInformado(
+            "O portal pediu o MOTIVO do acesso aos autos e nenhum foi "
+            "informado. Declarar o motivo e ato do advogado, nao do programa. "
+            "Repita o comando com --motivo.")
+
+    print(f"    [JUSTIFICATIVA] O portal pediu motivo para abrir os autos.")
+    print(f"    Digitando no campo {CAMPO_DO_MOTIVO}: {texto!r}")
+    print("    Este texto fica registrado no portal como a justificativa do "
+          "acesso.")
+    guarda.pode_executar(Acao.PREENCHER, CAMPO_DO_MOTIVO, url=pagina.url)
     try:
-        with hospedeira.context.expect_page(timeout=segundos * 1000) as nova:
-            botao.click()
-        janela = nova.value
+        campo.click()
+        campo.type(texto, delay=40)
     except Exception as exc:
         raise ConsultaIndisponivel(
-            f"O visualizador nao abriu em {segundos}s ({type(exc).__name__}). "
-            "Nada foi lido.") from None
+            f"O campo {CAMPO_DO_MOTIVO} nao aceitou o texto "
+            f"({type(exc).__name__}). Nada foi aberto.") from None
+
+    senha = elemento_visivel(quadro, CAMPO_DA_SENHA_PROVISORIA)
+    if senha is not None:
+        print(f"    A tela tambem mostra {CAMPO_DA_SENHA_PROVISORIA} "
+              "('Senha para visualizar o processo eletronico').")
+        print("    Ela NAO sera preenchida: e credencial de acesso aos autos, "
+              "e o programa nao a tem nem a inventa.")
+
+    confirmar = achar_clicavel(quadro, BOTAO_VISUALIZAR_PROCESSO,
+                               min(segundos, 15))
+    if confirmar is None:
+        raise ConsultaIndisponivel(
+            f"O motivo foi digitado e o botao {BOTAO_VISUALIZAR_PROCESSO!r} "
+            "nao esta na tela. Nada foi aberto."
+            + "\n    CANDIDATOS AO BOTAO:\n    "
+            + "\n    ".join(relato_dos_candidatos(
+                quadro, BOTAO_VISUALIZAR_PROCESSO)))
+    guarda.pode_executar(Acao.CLICAR, alvo_do_visualizar, url=pagina.url)
+    janela = _janela_do_clique(hospedeira, confirmar, segundos)
+    if janela is None:
+        recados = _recados_do_quadro(quadro)
+        raise ConsultaIndisponivel(
+            f"O motivo foi digitado e {BOTAO_VISUALIZAR_PROCESSO!r} foi "
+            f"clicado, e nenhuma janela abriu em {segundos}s. Nada foi lido."
+            + (" O portal disse: " + "; ".join(recados) if recados
+               else " O portal nao deixou mensagem na tela.")
+            + (f" Se faltou {CAMPO_DA_SENHA_PROVISORIA}, ela e credencial e "
+               "este programa nao a preenche." if senha is not None else ""))
+    return _assentar_a_janela(janela, segundos)
+
+
+def _recados_do_quadro(quadro: Any) -> list[str]:
+    """Mensagens que o portal deixou no quadro, para a recusa dizer o porque."""
+    from .portal import _mensagens_de_erro
+
+    try:
+        return _mensagens_de_erro(quadro)
+    except Exception:
+        return []
+
+
+def _assentar_a_janela(janela: Any, segundos: int) -> Any:
     try:
         janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
     except Exception:
