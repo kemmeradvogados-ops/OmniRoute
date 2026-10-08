@@ -541,6 +541,113 @@ def tela_de_justificativa(quadro: Any) -> Optional[Any]:
     return elemento_visivel(quadro, CAMPO_DO_MOTIVO)
 
 
+# A tela do processo tem DOIS botoes chamados "Visualizar Processo", lidos no
+# relato de 08/10/2026. A busca por nome devolve o primeiro do documento, e o
+# que vale e o do dialogo da justificativa. O advogado disse qual: "o botao
+# visualizar processo a ser clicado e o abaixo da caixa motivo".
+#
+# Duas formas de achar o mesmo botao, e a primeira nao depende de posicao:
+# subir do campo do motivo ate o PRIMEIRO antepassado que contenha exatamente
+# UM botao com aquele nome. Esse e o botao daquele dialogo, por estrutura.
+# A regra do advogado entra como reserva, quando a estrutura nao desempata.
+_JS_BOTAO_DO_DIALOGO = """
+(campo, alvo) => {
+  const normal = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const seletor = 'button, a, input[type=submit], input[type=button]';
+  let no = campo.parentElement;
+  while (no) {
+    const achados = Array.from(no.querySelectorAll(seletor)).filter(
+      (b) => normal(b.innerText || b.value) === alvo);
+    if (achados.length === 1) return achados[0];
+    if (achados.length > 1) return null;
+    no = no.parentElement;
+  }
+  return null;
+}
+"""
+
+
+def botao_do_mesmo_dialogo(campo: Any, nome: str) -> Optional[Any]:
+    """O botao com este nome que esta no MESMO dialogo do campo.
+
+    Por estrutura, e nao por posicao: sobe do campo ate o primeiro
+    antepassado que contenha exatamente um botao com aquele nome. Se o
+    primeiro antepassado que contem algum ja contiver dois, nao desempata e
+    devolve nada, porque chutar entre dois seria escolher no escuro.
+    """
+    try:
+        punho = campo.evaluate_handle(_JS_BOTAO_DO_DIALOGO, nome.strip().lower())
+    except Exception:
+        return None
+    try:
+        return punho.as_element()
+    except Exception:
+        return None
+
+
+def botao_abaixo_do_campo(pagina: Any, campo: Any, nome: str) -> Optional[Any]:
+    """O botao com este nome que fica LOGO ABAIXO do campo.
+
+    A regra e do advogado, dita em 08/10/2026: "o botao visualizar processo a
+    ser clicado e o abaixo da caixa motivo". Entra como reserva da busca por
+    estrutura, e nao antes dela: posicao e a ultima coisa em que confio para
+    desempatar, porque muda com o tamanho da janela.
+
+    "Logo abaixo" e o de menor distancia entre os que comecam abaixo do campo,
+    e nao qualquer um que esteja mais para baixo.
+    """
+    from .portal import ALVOS_CLICAVEIS, sem_acento
+
+    try:
+        caixa = campo.bounding_box()
+    except Exception:
+        caixa = None
+    if not caixa:
+        return None
+    base = caixa["y"]
+    alvo = sem_acento(nome).strip()
+
+    melhor, menor = None, None
+    try:
+        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
+    except Exception:
+        return None
+    for elemento in candidatos:
+        try:
+            escrito = sem_acento(
+                elemento.inner_text() or elemento.get_attribute("value") or "")
+            if escrito.strip() != alvo:
+                continue
+            dele = elemento.bounding_box()
+        except Exception:
+            continue
+        if not dele or dele["y"] < base:
+            continue
+        distancia = dele["y"] - base
+        if menor is None or distancia < menor:
+            melhor, menor = elemento, distancia
+    return melhor
+
+
+def achar_o_visualizar_processo(pagina: Any, campo: Any,
+                                segundos: int = 15) -> tuple:
+    """O botao certo entre os homonimos, e COMO ele foi escolhido.
+
+    Devolve (elemento, criterio). O criterio vai para o relato: escolher entre
+    homonimos nunca pode acontecer calado.
+    """
+    pelo_dialogo = botao_do_mesmo_dialogo(campo, BOTAO_VISUALIZAR_PROCESSO)
+    if pelo_dialogo is not None:
+        return pelo_dialogo, "pelo dialogo do campo do motivo"
+
+    abaixo = botao_abaixo_do_campo(pagina, campo, BOTAO_VISUALIZAR_PROCESSO)
+    if abaixo is not None:
+        return abaixo, "por ser o primeiro abaixo da caixa do motivo"
+
+    return achar_clicavel(pagina, BOTAO_VISUALIZAR_PROCESSO, segundos), \
+        "pelo nome, SEM desempate entre homonimos"
+
+
 def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
                        motivo: Optional[str] = None) -> Any:
     """Clica em "Processo Eletronico - Visualizador" e devolve a JANELA NOVA.
@@ -617,8 +724,10 @@ def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
         print("    Ela NAO sera preenchida: e credencial de acesso aos autos, "
               "e o programa nao a tem nem a inventa.")
 
-    confirmar = achar_clicavel(quadro, BOTAO_VISUALIZAR_PROCESSO,
-                               min(segundos, 15))
+    confirmar, criterio = achar_o_visualizar_processo(
+        quadro, campo, min(segundos, 15))
+    if confirmar is not None:
+        print(f"    Botao {BOTAO_VISUALIZAR_PROCESSO!r} escolhido {criterio}.")
     if confirmar is None:
         raise ConsultaIndisponivel(
             f"O motivo foi digitado e o botao {BOTAO_VISUALIZAR_PROCESSO!r} "
@@ -640,14 +749,36 @@ def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
     return _assentar_a_janela(janela, segundos)
 
 
+# Aviso que o portal mostra em TODA tela de processo, e que nao e erro nenhum.
+# Em 08/10/2026 ele saiu duas vezes dentro de uma recusa, depois de "O portal
+# disse:", como se fosse a explicacao da falha. Dizer "o portal disse" sobre um
+# rodape permanente e pior que nao dizer nada: manda procurar onde nao ha.
+AVISOS_PERMANENTES = (
+    "as informacoes aqui contidas nao produzem efeitos legais",
+)
+
+
 def _recados_do_quadro(quadro: Any) -> list[str]:
-    """Mensagens que o portal deixou no quadro, para a recusa dizer o porque."""
-    from .portal import _mensagens_de_erro
+    """Mensagens que o portal deixou no quadro, para a recusa dizer o porque.
+
+    Sem os avisos permanentes e sem repeticao: o mesmo texto sai uma vez.
+    """
+    from .portal import _mensagens_de_erro, sem_acento
 
     try:
-        return _mensagens_de_erro(quadro)
+        recados = _mensagens_de_erro(quadro)
     except Exception:
         return []
+    saida, vistos = [], set()
+    for recado in recados or []:
+        limpo = sem_acento(recado)
+        if any(marca in limpo for marca in AVISOS_PERMANENTES):
+            continue
+        if limpo in vistos:
+            continue
+        vistos.add(limpo)
+        saida.append(recado)
+    return saida
 
 
 def _assentar_a_janela(janela: Any, segundos: int) -> Any:

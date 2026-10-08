@@ -3173,3 +3173,157 @@ def test_sem_justificativa_e_sem_janela_o_recado_diz_as_duas_coisas():
     with pytest.raises(ConsultaIndisponivel, match="nao pediu justificativa"):
         abrir_visualizador(_PaginaComQuadro(quadro, abre_na_confirmacao=False),
                            _Guarda(), 2, motivo="consulta")
+
+
+# ==========================================================================
+# DOIS botoes chamados "Visualizar Processo"
+#
+# Relato de 08/10/2026: a tela do processo tem dois botoes com esse nome
+# exato. A busca por nome devolve o primeiro do documento, e o que vale e o
+# do dialogo da justificativa. O advogado disse qual: "o botao visualizar
+# processo a ser clicado e o abaixo da caixa motivo".
+#
+# Duas formas de achar o mesmo botao, e a primeira nao depende de posicao.
+# ==========================================================================
+
+class _CampoComDialogo(_CampoDoMotivo):
+    """Campo que sabe responder qual botao esta no dialogo dele."""
+
+    def __init__(self, botao_do_dialogo=None, y=300):
+        super().__init__()
+        self._do_dialogo = botao_do_dialogo
+        self._y = y
+
+    def bounding_box(self):
+        return {"x": 10, "y": self._y, "width": 400, "height": 90}
+
+    def evaluate_handle(self, _js, _alvo=None):
+        dono = self._do_dialogo
+
+        class _Punho:
+            def as_element(self):
+                return dono
+
+        return _Punho()
+
+
+def test_o_botao_e_escolhido_pelo_dialogo_e_nao_pela_ordem():
+    from justica_mcp.dcp import BOTAO_VISUALIZAR_PROCESSO, botao_do_mesmo_dialogo
+
+    certo = _BotaoDeTela("Visualizar Processo")
+    campo = _CampoComDialogo(botao_do_dialogo=certo)
+
+    assert botao_do_mesmo_dialogo(campo, BOTAO_VISUALIZAR_PROCESSO) is certo
+
+
+def test_dialogo_que_nao_desempata_devolve_nada():
+    """Chutar entre dois seria escolher no escuro."""
+    from justica_mcp.dcp import BOTAO_VISUALIZAR_PROCESSO, botao_do_mesmo_dialogo
+
+    campo = _CampoComDialogo(botao_do_dialogo=None)
+    assert botao_do_mesmo_dialogo(campo, BOTAO_VISUALIZAR_PROCESSO) is None
+    # E campo que nem sabe responder tambem nao quebra.
+    assert botao_do_mesmo_dialogo(object(), BOTAO_VISUALIZAR_PROCESSO) is None
+
+
+def test_a_regra_do_advogado_escolhe_o_de_baixo():
+    """"O botao visualizar processo a ser clicado e o abaixo da caixa motivo"."""
+    from justica_mcp.dcp import BOTAO_VISUALIZAR_PROCESSO, botao_abaixo_do_campo
+
+    de_cima = _BotaoDeTela("Visualizar Processo")
+    de_cima.bounding_box = lambda: {"x": 10, "y": 120, "width": 160, "height": 34}
+    logo_abaixo = _BotaoDeTela("Visualizar Processo")
+    logo_abaixo.bounding_box = lambda: {"x": 10, "y": 420, "width": 160, "height": 34}
+    bem_abaixo = _BotaoDeTela("Visualizar Processo")
+    bem_abaixo.bounding_box = lambda: {"x": 10, "y": 900, "width": 160, "height": 34}
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [de_cima, bem_abaixo, logo_abaixo]
+
+    campo = _CampoComDialogo(y=300)
+    # "Logo abaixo" e o de menor distancia entre os que comecam abaixo, e nao
+    # qualquer um que esteja mais para baixo.
+    assert botao_abaixo_do_campo(_Tela(), campo,
+                                 BOTAO_VISUALIZAR_PROCESSO) is logo_abaixo
+
+
+def test_sem_nenhum_abaixo_a_regra_espacial_devolve_nada():
+    from justica_mcp.dcp import BOTAO_VISUALIZAR_PROCESSO, botao_abaixo_do_campo
+
+    acima = _BotaoDeTela("Visualizar Processo")
+    acima.bounding_box = lambda: {"x": 10, "y": 100, "width": 160, "height": 34}
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [acima]
+
+    assert botao_abaixo_do_campo(_Tela(), _CampoComDialogo(y=300),
+                                 BOTAO_VISUALIZAR_PROCESSO) is None
+
+
+def test_a_estrutura_vem_antes_da_posicao():
+    """Posicao e a ultima coisa em que se confia para desempatar: ela muda com
+    o tamanho da janela."""
+    from justica_mcp.dcp import achar_o_visualizar_processo
+
+    pelo_dialogo = _BotaoDeTela("Visualizar Processo")
+    outro = _BotaoDeTela("Visualizar Processo")
+    outro.bounding_box = lambda: {"x": 10, "y": 420, "width": 160, "height": 34}
+
+    class _Tela:
+        def query_selector_all(self, _s):
+            return [outro]
+
+    achado, criterio = achar_o_visualizar_processo(
+        _Tela(), _CampoComDialogo(botao_do_dialogo=pelo_dialogo), 1)
+    assert achado is pelo_dialogo
+    assert "dialogo" in criterio
+
+
+def test_a_escolha_entre_homonimos_nunca_e_calada():
+    """Guarda de fonte: o criterio vai para o relato."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.abrir_visualizador)
+    assert "achar_o_visualizar_processo(" in fonte
+    assert "escolhido {criterio}" in fonte
+
+
+# ==========================================================================
+# "O portal disse" sobre um rodape permanente
+# ==========================================================================
+
+def test_o_aviso_permanente_nao_entra_na_recusa_como_se_fosse_erro():
+    """Em 08/10/2026 ele saiu DUAS vezes dentro de uma recusa, depois de "O
+    portal disse:", como se fosse a explicacao da falha. Dizer isso sobre um
+    rodape permanente manda procurar onde nao ha."""
+    from justica_mcp.dcp import _recados_do_quadro
+
+    aviso = ("As informações aqui contidas não produzem efeitos legais. "
+             "Somente a publicação no DJERJ oficializa despachos e decisões.")
+
+    class _Quadro:
+        def query_selector_all(self, seletor):
+            if seletor != ".alert":
+                return []
+
+            class _Recado:
+                def __init__(self, texto):
+                    self.texto = texto
+
+                def is_visible(self):
+                    return True
+
+                def inner_text(self):
+                    return self.texto
+
+            return [_Recado(aviso), _Recado(aviso),
+                    _Recado("Senha provisoria obrigatoria"),
+                    _Recado("Senha provisoria obrigatoria")]
+
+    recados = _recados_do_quadro(_Quadro())
+    # O aviso sai; o recado de verdade fica, uma vez so.
+    assert recados == ["Senha provisoria obrigatoria"]
