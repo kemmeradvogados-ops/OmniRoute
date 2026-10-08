@@ -258,6 +258,59 @@ def ja_esta_na_consulta(pagina: Any) -> bool:
         return False
 
 
+# Classe que o portal poe no submenu fechado. Lida na marcacao em 08/10/2026:
+#
+#   <li class="collapse submenu ng-star-inserted">Consultas Processuais</li>
+#
+# `collapse` sem `show` quer dizer `display: none`, e por isso `bounding_box`
+# devolveu `nenhuma` em vez de uma caixa de zero por zero. Sao duas coisas
+# diferentes: o 'Entrar' da tela de perfil OCUPA lugar e nao tem tamanho; este
+# item nao esta sendo desenhado. O primeiro so precisa de outro jeito de
+# clique; este precisa que o grupo seja ABERTO.
+MARCA_DE_RECOLHIDO = "collapse"
+MARCAS_DE_ABERTO = ("show", "in")
+
+
+def esta_recolhido(elemento: Any) -> bool:
+    """Se o elemento esta dentro de um grupo fechado, e nao apenas invisivel."""
+    try:
+        classes = (elemento.get_attribute("class") or "").split()
+    except Exception:
+        return False
+    if MARCA_DE_RECOLHIDO not in classes:
+        return False
+    return not any(marca in classes for marca in MARCAS_DE_ABERTO)
+
+
+def abrir_o_grupo_do_menu(pagina: Any, guarda: Any, tentativas: int = 2,
+                          segundos: int = 8) -> bool:
+    """Clica no cabecalho do grupo ate o item ficar visivel.
+
+    O primeiro clique em `#CONSULTAS` LEVOU a `#/tela-menu`, e nessa tela o
+    grupo continua fechado. Abrir e o que o operador faz com o mouse, e e o
+    passo que faltava: ate aqui o programa procurava o item de um grupo que
+    nunca tinha sido aberto.
+    """
+    from .core.guarda_navegacao import Acao
+    from .portal import elemento_visivel
+
+    for _ in range(max(1, tentativas)):
+        cabecalho = elemento_visivel(pagina, MENU_DE_CONSULTAS)
+        if cabecalho is None:
+            return False
+        guarda.pode_executar(Acao.CLICAR, MENU_DE_CONSULTAS, url=pagina.url)
+        clicar_com_jeito(cabecalho)
+        try:
+            pagina.wait_for_timeout(600)
+        except Exception:
+            pass
+        achado = achar_por_texto_em_qualquer_lugar(
+            pagina, ITEM_DA_CONSULTA, exigir_posicao=False)
+        if achado is not None:
+            return True
+    return False
+
+
 def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> None:
     """Do painel ate a consulta processual, pelo menu lateral."""
     from .core.guarda_navegacao import Acao, Permissao
@@ -295,6 +348,17 @@ def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> No
     # apenas 4 estavam DENTRO da janela. O item existia e estava abaixo da
     # dobra, que e a terceira forma do mesmo defeito neste portal.
     item = achar_clicavel(pagina, ITEM_DA_CONSULTA, min(segundos, 15))
+
+    # O item pode existir e estar dentro de um grupo FECHADO. Abrir o grupo e
+    # o que o operador faz com o mouse, e e diferente de insistir no clique:
+    # ate 08/10/2026 o programa procurava o item de um grupo que nunca tinha
+    # sido aberto, e por isso o achava `display: none`.
+    if item is not None and esta_recolhido(item):
+        print(f"    [RECOLHIDO] O item {ITEM_DA_CONSULTA!r} esta num grupo "
+              "fechado. Abrindo o grupo antes de clicar nele.")
+        if abrir_o_grupo_do_menu(pagina, guarda, segundos=min(segundos, 8)):
+            item = achar_clicavel(pagina, ITEM_DA_CONSULTA, min(segundos, 10))
+
     if item is None:
         raise ConsultaIndisponivel(
             f"O item {ITEM_DA_CONSULTA!r} nao apareceu depois de o menu ser "
@@ -1487,6 +1551,8 @@ def relato_dos_candidatos(pagina: Any, nome: str = BOTAO_ENTRAR_NO_PERFIL,
             except Exception:
                 partes.append(f"{nome}=ilegivel")
         partes.append(f"texto={texto[:40]!r}")
+        if esta_recolhido(elemento):
+            partes.append("RECOLHIDO (grupo fechado)")
         if valor:
             partes.append(f"value={valor[:40]!r}")
         if rotulo:
@@ -1528,13 +1594,17 @@ def candidato_sem_tamanho(pagina: Any,
     Isto nao decide clicar: so devolve o candidato. Quem decide e quem chama,
     e so depois de a prova positiva conferir que o clique levou a algum lugar.
     """
-    from .portal import ALVOS_CLICAVEIS, sem_acento
+    from .portal import sem_acento
 
     alvo = sem_acento(nome).strip()
-    try:
-        candidatos = pagina.query_selector_all(ALVOS_CLICAVEIS) or []
-    except Exception:
-        return None
+    # Em todas as etiquetas. Ate 08/10/2026 esta rede olhava so `button` e `a`,
+    # e por isso nao alcancava o item do menu, que e `li`.
+    candidatos = []
+    for lugar in LUGARES_DE_OPCAO:
+        try:
+            candidatos.extend(pagina.query_selector_all(lugar) or [])
+        except Exception:
+            continue
     for elemento in candidatos:
         try:
             nomes = (elemento.inner_text() or "",

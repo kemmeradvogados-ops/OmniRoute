@@ -2800,3 +2800,174 @@ def test_a_opcao_do_perfil_e_o_item_do_menu_usam_a_MESMA_busca():
         in inspect.getsource(dcp.achar_opcao_na_lista)
     assert "achar_por_texto_em_qualquer_lugar(pagina, nome, exigir)" \
         in inspect.getsource(dcp.achar_clicavel)
+
+
+# ==========================================================================
+# O item nao estava invisivel: estava num grupo FECHADO
+#
+# 08/10/2026, com a marcacao finalmente no relato:
+#
+#   tag='LI'; visivel=False; habilitado=True; texto='Consultas Processuais';
+#   caixa=nenhuma;
+#   marcacao='<li class="collapse submenu ng-star-inserted">Consultas
+#             Processuais</li>'
+#
+# `collapse` sem `show` quer dizer `display: none`, e por isso a caixa veio
+# NENHUMA em vez de zero por zero. Sao coisas diferentes: o 'Entrar' da tela
+# de perfil ocupa lugar e nao tem tamanho; este item nao esta sendo
+# desenhado. O primeiro so precisa de outro jeito de clique; este precisa que
+# o grupo seja ABERTO, que e o que o operador faz com o mouse.
+# ==========================================================================
+
+class _ItemRecolhido:
+    def __init__(self, classes="collapse submenu ng-star-inserted"):
+        self.classes = classes
+
+    def get_attribute(self, nome):
+        return self.classes if nome == "class" else None
+
+    def inner_text(self):
+        return "Consultas Processuais"
+
+    def is_visible(self):
+        return "show" in self.classes.split()
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return None
+
+    def evaluate(self, codigo):
+        if "tagName" in codigo:
+            return "LI"
+        return "LI#@0,0"
+
+
+def test_o_grupo_fechado_e_reconhecido():
+    from justica_mcp.dcp import esta_recolhido
+
+    assert esta_recolhido(_ItemRecolhido()) is True
+    # Aberto nao e recolhido, nas duas marcas que as bibliotecas usam.
+    assert esta_recolhido(_ItemRecolhido("collapse submenu show")) is False
+    assert esta_recolhido(_ItemRecolhido("collapse submenu in")) is False
+    # E quem nao e de grupo nenhum tambem nao.
+    assert esta_recolhido(_ItemRecolhido("submenu")) is False
+    assert esta_recolhido(object()) is False
+
+
+def test_recolhido_nao_se_confunde_com_sem_tamanho():
+    """O 'Entrar' da tela de perfil OCUPA lugar e nao tem tamanho; o item do
+    menu nao esta sendo desenhado. Sao dois consertos diferentes."""
+    from justica_mcp.dcp import esta_recolhido
+
+    assert esta_recolhido(_AncoraSemTamanho()) is False
+
+
+def test_o_grupo_e_aberto_antes_de_o_item_ser_procurado_de_novo():
+    from justica_mcp.dcp import abrir_o_grupo_do_menu
+
+    class _MenuQueAbre:
+        viewport_size = {"width": 1280, "height": 800}
+        url = "https://www3.tjrj.jus.br/portalservicos/#/tela-menu"
+
+        def __init__(self):
+            self.aberto = False
+            self.cliques = 0
+            self.cabecalho = _BotaoDeTela("CONSULTAS")
+
+        def query_selector_all(self, seletor):
+            from justica_mcp.dcp import MENU_DE_CONSULTAS
+
+            if seletor == MENU_DE_CONSULTAS:
+                return [self.cabecalho]
+            if seletor == "li":
+                return [_ItemEmEtiquetaMuda("Consultas Processuais")] \
+                    if self.aberto else []
+            return []
+
+        def query_selector(self, seletor):
+            achados = self.query_selector_all(seletor)
+            return achados[0] if achados else None
+
+        def evaluate(self, _c):
+            return self.viewport_size
+
+        def wait_for_timeout(self, _ms):
+            self.cliques += 1
+            self.aberto = True
+
+    tela = _MenuQueAbre()
+    assert abrir_o_grupo_do_menu(tela, _Guarda(), segundos=1) is True
+    assert tela.cabecalho.clicado is True
+
+
+def test_o_grupo_que_nao_abre_e_declarado():
+    from justica_mcp.dcp import abrir_o_grupo_do_menu
+
+    class _MenuTeimoso:
+        viewport_size = {"width": 1280, "height": 800}
+        url = "https://www3.tjrj.jus.br/portalservicos/#/tela-menu"
+
+        def query_selector_all(self, seletor):
+            from justica_mcp.dcp import MENU_DE_CONSULTAS
+
+            return [_BotaoDeTela("CONSULTAS")] if seletor == MENU_DE_CONSULTAS else []
+
+        def query_selector(self, seletor):
+            achados = self.query_selector_all(seletor)
+            return achados[0] if achados else None
+
+        def evaluate(self, _c):
+            return self.viewport_size
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    assert abrir_o_grupo_do_menu(_MenuTeimoso(), _Guarda(), segundos=1) is False
+
+
+def test_sem_cabecalho_nao_ha_o_que_abrir():
+    from justica_mcp.dcp import abrir_o_grupo_do_menu
+
+    class _SemMenu:
+        viewport_size = {"width": 1280, "height": 800}
+        url = "https://www3.tjrj.jus.br/portalservicos/#/tela-menu"
+
+        def query_selector_all(self, _s):
+            return []
+
+        def query_selector(self, _s):
+            return None
+
+        def evaluate(self, _c):
+            return self.viewport_size
+
+    assert abrir_o_grupo_do_menu(_SemMenu(), _Guarda(), segundos=1) is False
+
+
+def test_o_relato_diz_que_o_candidato_esta_recolhido():
+    """Sem isto, "visivel=False; caixa=nenhuma" parecia o mesmo caso do
+    'Entrar', e o conserto seria o errado."""
+    from justica_mcp.dcp import relato_dos_candidatos
+
+    class _Tela:
+        def query_selector_all(self, seletor):
+            return [_ItemRecolhido()] if seletor == "li" else []
+
+    linha = relato_dos_candidatos(_Tela(), "Consultas Processuais")[0]
+    assert "RECOLHIDO (grupo fechado)" in linha
+
+
+def test_a_rede_sem_tamanho_tambem_olha_etiqueta_muda():
+    """Ate 08/10/2026 ela olhava so `button` e `a`, e por isso nao alcancava
+    o item do menu."""
+    from justica_mcp.dcp import candidato_sem_tamanho
+
+    item = _ItemRecolhido()
+
+    class _Tela:
+        def query_selector_all(self, seletor):
+            return [item] if seletor == "li" else []
+
+    assert candidato_sem_tamanho(_Tela(), "Consultas Processuais") is item
