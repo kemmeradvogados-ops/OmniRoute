@@ -30,7 +30,28 @@ ESCOLHA_INTEGRAL = "Salvar Documentos Carregados"
 ESCOLHA_MARCADOS = "Salvar Documentos Selecionados"
 ESCOLHA_CANCELAR = "Cancelar"
 
-TETO_DO_DOWNLOAD = 180
+# Quanto esperar pelo ARQUIVO, que e coisa diferente de esperar por tela.
+#
+# O portal nao tem o PDF pronto: ele o GERA quando se pede, e um lote de 300
+# paginas leva o tempo que leva. Em 08/10/2026 os quatro lotes foram marcados
+# certos, 45 de 45, 32 de 32, 53 de 53 e 34 de 34, e os quatro morreram em 45
+# segundos de espera. O numero 45 vem de `--segundos`, que e prazo de tela, e
+# estava passando por cima deste teto, que existe exatamente para isto.
+TETO_DO_DOWNLOAD = 300
+
+
+def espera_do_arquivo(segundos: Any) -> int:
+    """O prazo do DOWNLOAD, que nunca e menor que o teto proprio dele.
+
+    Prazo de tela e prazo de arquivo sao grandezas diferentes: a tela que nao
+    monta em 45s esta quebrada; o PDF de 300 paginas que nao chega em 45s
+    esta so sendo gerado.
+    """
+    try:
+        pedido = int(segundos)
+    except (TypeError, ValueError):
+        pedido = 0
+    return max(pedido, TETO_DO_DOWNLOAD)
 
 
 class DownloadIndisponivel(RuntimeError):
@@ -458,13 +479,16 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
             "Nada foi baixado.")
     alvo_da_escolha = f"texto={ESCOLHA_MARCADOS}"
     guarda.pode_executar(Acao.CLICAR, alvo_da_escolha, url=pagina.url)
+    espera = espera_do_arquivo(segundos)
+    print(f"      Esperando ate {espera}s pelo arquivo. O portal gera o PDF "
+          "agora, e isso demora.")
     try:
-        with pagina.expect_download(timeout=segundos * 1000) as info:
+        with pagina.expect_download(timeout=espera * 1000) as info:
             clicar_com_jeito(escolha)
     except Exception as exc:
         raise DownloadIndisponivel(
             f"{ESCOLHA_MARCADOS!r} foi clicado e nenhum arquivo chegou em "
-            f"{segundos}s ({type(exc).__name__}). Nada foi gravado.") from None
+            f"{espera}s ({type(exc).__name__}). Nada foi gravado.") from None
     return _gravar(info.value, destino, nome)
 
 
@@ -665,8 +689,11 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
         raise DownloadIndisponivel(recado)
 
     guarda.pode_executar(Acao.CLICAR, alvo_da_escolha, url=pagina.url)
+    espera = espera_do_arquivo(segundos)
+    print(f"    Esperando ate {espera}s pelo arquivo da integra. O portal gera "
+          "o PDF agora, e processo grande demora.")
     try:
-        with pagina.expect_download(timeout=segundos * 1000) as info:
+        with pagina.expect_download(timeout=espera * 1000) as info:
             escolha.click()
     except Exception as exc:
         # Em vez de so falhar, LE o indice. O advogado pediu em 08/10/2026 duas
@@ -683,7 +710,7 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
             mapa = [f"nao foi possivel ler o indice ({type(outra).__name__})"]
         raise DownloadIndisponivel(
             f"A escolha {ESCOLHA_INTEGRAL!r} foi clicada e nenhum arquivo chegou "
-            f"em {segundos}s ({type(exc).__name__}). Processo grande nao baixa "
+            f"em {espera}s ({type(exc).__name__}). Processo grande nao baixa "
             "de uma vez, como o advogado ja havia informado em 06/10/2026."
             + "\n    O INDICE DE DOCUMENTOS, para baixar em partes:\n    "
             + "\n    ".join(mapa)

@@ -4144,3 +4144,58 @@ def test_os_lotes_funcionam_com_a_caixa_JA_aberta(tmp_path):
     arquivos = baixar_em_lotes(tela, guarda, tmp_path, "0045025", 300,
                                segundos=2)
     assert len(arquivos) == 3
+
+
+# ==========================================================================
+# Prazo de TELA e prazo de ARQUIVO sao grandezas diferentes
+#
+# 08/10/2026, a corrida mais longe de todas. As 164 marcacoes deram certo,
+# nos quatro lotes: 45 de 45, 32 de 32, 53 de 53, 34 de 34. Os quatro
+# downloads morreram em 45 segundos.
+#
+# O 45 vem de `--segundos`, que e prazo de tela, e estava passando por cima
+# de `TETO_DO_DOWNLOAD`, que existe exatamente para isto. O portal nao tem o
+# PDF pronto: ele o GERA quando se pede. A tela que nao monta em 45s esta
+# quebrada; o PDF de 300 paginas que nao chega em 45s esta so sendo gerado.
+# ==========================================================================
+
+def test_o_prazo_do_arquivo_nunca_e_menor_que_o_teto():
+    from justica_mcp.dcp import TETO_DO_DOWNLOAD, espera_do_arquivo
+
+    assert TETO_DO_DOWNLOAD >= 300
+    # O prazo de tela nao encurta o de arquivo.
+    assert espera_do_arquivo(45) == TETO_DO_DOWNLOAD
+    assert espera_do_arquivo(0) == TETO_DO_DOWNLOAD
+    # Mas um prazo MAIOR, pedido de proposito, vale.
+    assert espera_do_arquivo(900) == 900
+
+
+def test_prazo_ilegivel_nao_vira_espera_zero():
+    """Espera zero faria todo download falhar na hora, sem explicacao."""
+    from justica_mcp.dcp import TETO_DO_DOWNLOAD, espera_do_arquivo
+
+    assert espera_do_arquivo(None) == TETO_DO_DOWNLOAD
+    assert espera_do_arquivo("muito") == TETO_DO_DOWNLOAD
+
+
+def test_o_download_usa_o_prazo_de_arquivo_e_nao_o_de_tela():
+    """Guarda de fonte contra a regressao exata de 08/10/2026."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    for funcao in (dcp.baixar_marcados, dcp.baixar_integra):
+        fonte = inspect.getsource(funcao)
+        assert "espera_do_arquivo(segundos)" in fonte
+        assert "timeout=segundos * 1000" not in fonte
+
+
+def test_a_espera_longa_e_anunciada_antes_de_comecar():
+    """Sem isso, cinco minutos de silencio parecem travamento."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.baixar_marcados)
+    assert "Esperando ate" in fonte
+    assert "gera o PDF" in fonte

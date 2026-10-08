@@ -5321,6 +5321,7 @@ def consultar_processo(
     confirmado: bool = False,
     aceitar_termo: bool = False,
     motivo: Optional[str] = None,
+    segundos_download: Optional[int] = None,
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -5572,7 +5573,8 @@ def consultar_processo(
                               abrir_visualizador, baixar_em_lotes,
                               baixar_integra, baixar_uma_peca,
                               entrar_no_portal_de_servicos, escolher_perfil,
-                              na_tela_de_perfil, reencontrar_o_portal)
+                              espera_do_arquivo, na_tela_de_perfil,
+                              reencontrar_o_portal)
             from .dcp import buscar as buscar_dcp
 
             print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
@@ -5658,6 +5660,10 @@ def consultar_processo(
             # em lotes de N paginas.
             escolha = (documentos or "").strip().lower()
             arquivos = []
+            # Prazo de ARQUIVO, que nunca e o de tela: o portal gera o PDF
+            # quando se pede, e um lote de 300 paginas leva o tempo que leva.
+            prazo_do_arquivo = espera_do_arquivo(
+                segundos_download if segundos_download else segundos)
             try:
                 from .core.acervo import garantir_pasta
 
@@ -5671,14 +5677,14 @@ def consultar_processo(
                         return 1
                     arquivos = [baixar_uma_peca(
                         janela, guarda, pasta, numero.apenas_digitos,
-                        int(alvo), segundos)]
+                        int(alvo), prazo_do_arquivo)]
                 elif escolha.startswith("lotes"):
                     _, _, quanto = escolha.partition(":")
                     tamanho_do_lote = (int(quanto) if quanto.strip().isdigit()
                                        else PAGINAS_POR_LOTE)
                     arquivos = baixar_em_lotes(
                         janela, guarda, pasta, numero.apenas_digitos,
-                        tamanho_do_lote, segundos)
+                        tamanho_do_lote, prazo_do_arquivo)
                 else:
                     # A integra primeiro, e os LOTES por conta propria quando
                     # ela nao vem. Instrucao do advogado em 08/10/2026: "eu
@@ -5692,7 +5698,7 @@ def consultar_processo(
                     try:
                         arquivos = [baixar_integra(
                             janela, guarda, pasta, numero.apenas_digitos,
-                            segundos)]
+                            prazo_do_arquivo)]
                     except DownloadIndisponivel as exc:
                         print(f"  [INTEGRA NAO VEIO] {exc}")
                         print("  Caindo para o download em lotes de "
@@ -5700,7 +5706,7 @@ def consultar_processo(
                               "nova tentativa de login.")
                         arquivos = baixar_em_lotes(
                             janela, guarda, pasta, numero.apenas_digitos,
-                            PAGINAS_POR_LOTE, segundos)
+                            PAGINAS_POR_LOTE, prazo_do_arquivo)
             except DownloadIndisponivel as exc:
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(janela, "TELA DO VISUALIZADOR")
@@ -6295,6 +6301,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="qual perfil usar quando o portal pergunta: a inscricao "
                          "no eproc (RJ168943) ou o tipo de usuario no DCP "
                          "(Advogado)")
+    cp.add_argument("--segundos-download", type=int, default=None,
+                    dest="segundos_download",
+                    help="quanto esperar pelo ARQUIVO, que e diferente de "
+                         "esperar por tela: o portal GERA o PDF quando se pede. "
+                         "Minimo e padrao: 300. Processo muito grande pode "
+                         "precisar de mais")
     cp.add_argument("--motivo", default=None,
                     help="justificativa do acesso aos autos, quando o portal a "
                          "pedir. O do Rio de Janeiro pede, no campo 'Motivo', "
@@ -6375,6 +6387,7 @@ def main(argv: list[str] | None = None) -> int:
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,
                 documentos=args.documentos, confirmado=args.confirmado,
                 aceitar_termo=args.aceitar_termo, motivo=args.motivo,
+                segundos_download=args.segundos_download,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
             )
