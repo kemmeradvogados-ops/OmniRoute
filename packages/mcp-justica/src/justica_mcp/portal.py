@@ -5566,12 +5566,13 @@ def consultar_processo(
             return 0
 
         if identidade.sistema == "dcp":
-            from .dcp import (MOTIVO_PADRAO, ConsultaIndisponivel,
-                              DownloadIndisponivel, MotivoNaoInformado,
-                              PerfilNaoInformado, abrir_visualizador,
-                              baixar_integra, entrar_no_portal_de_servicos,
-                              escolher_perfil, na_tela_de_perfil,
-                              reencontrar_o_portal)
+            from .dcp import (MOTIVO_PADRAO, PAGINAS_POR_LOTE,
+                              ConsultaIndisponivel, DownloadIndisponivel,
+                              MotivoNaoInformado, PerfilNaoInformado,
+                              abrir_visualizador, baixar_em_lotes,
+                              baixar_integra, baixar_uma_peca,
+                              entrar_no_portal_de_servicos, escolher_perfil,
+                              na_tela_de_perfil, reencontrar_o_portal)
             from .dcp import buscar as buscar_dcp
 
             print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
@@ -5651,12 +5652,55 @@ def consultar_processo(
             print(f"  Visualizador aberto: {endereco_sem_dado(janela.url, 80)}")
             _assentar(janela, segundos)
 
+            # As tres formas de baixar, pedidas pelo advogado em 08/10/2026
+            # depois de a integra nao vir de uma vez: tudo num arquivo so,
+            # UMA peca pela pagina em que ela comeca, ou o processo inteiro
+            # em lotes de N paginas.
+            escolha = (documentos or "").strip().lower()
+            arquivos = []
             try:
                 from .core.acervo import garantir_pasta
 
                 pasta = garantir_pasta(numero.apenas_digitos)
-                arquivo = baixar_integra(
-                    janela, guarda, pasta, numero.apenas_digitos, segundos)
+                if escolha.startswith("peca:"):
+                    alvo = escolha.split(":", 1)[1].strip()
+                    if not alvo.isdigit():
+                        print(f"  [PAROU] --documentos peca:{alvo!r} nao e uma "
+                              "pagina. Use o numero que aparece ao lado do nome "
+                              "do documento no indice, por exemplo peca:92.")
+                        return 1
+                    arquivos = [baixar_uma_peca(
+                        janela, guarda, pasta, numero.apenas_digitos,
+                        int(alvo), segundos)]
+                elif escolha.startswith("lotes"):
+                    _, _, quanto = escolha.partition(":")
+                    tamanho_do_lote = (int(quanto) if quanto.strip().isdigit()
+                                       else PAGINAS_POR_LOTE)
+                    arquivos = baixar_em_lotes(
+                        janela, guarda, pasta, numero.apenas_digitos,
+                        tamanho_do_lote, segundos)
+                else:
+                    # A integra primeiro, e os LOTES por conta propria quando
+                    # ela nao vem. Instrucao do advogado em 08/10/2026: "eu
+                    # queria isso como padrao para problemas como esse".
+                    #
+                    # Cair para os lotes sozinho e seguro porque a parte nao se
+                    # disfarca de inteiro: cada arquivo nasce com a faixa de
+                    # paginas no nome, e o comando diz que caiu. O risco que
+                    # este projeto evita e o contrario, um PDF parcial gravado
+                    # como integra, e esse continua impossivel.
+                    try:
+                        arquivos = [baixar_integra(
+                            janela, guarda, pasta, numero.apenas_digitos,
+                            segundos)]
+                    except DownloadIndisponivel as exc:
+                        print(f"  [INTEGRA NAO VEIO] {exc}")
+                        print("  Caindo para o download em lotes de "
+                              f"{PAGINAS_POR_LOTE} paginas, sem precisar de "
+                              "nova tentativa de login.")
+                        arquivos = baixar_em_lotes(
+                            janela, guarda, pasta, numero.apenas_digitos,
+                            PAGINAS_POR_LOTE, segundos)
             except DownloadIndisponivel as exc:
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(janela, "TELA DO VISUALIZADOR")
@@ -5664,24 +5708,30 @@ def consultar_processo(
             finally:
                 _fechar(janela)
 
-            tamanho = 0
-            try:
-                import os as _os
+            total = 0
+            for arquivo in arquivos:
+                tamanho = 0
+                try:
+                    import os as _os
 
-                tamanho = _os.path.getsize(arquivo)
-            except OSError:
-                pass
-            print(f"\n  Integra gravada em {arquivo}")
-            print(f"  Tamanho: {tamanho} byte(s).")
+                    tamanho = _os.path.getsize(arquivo)
+                except OSError:
+                    pass
+                total += tamanho
+                print(f"\n  Gravado em {arquivo}")
+                print(f"  Tamanho: {tamanho} byte(s).")
             # Dito sempre, e nao so quando algo parece errado: o advogado
             # informou que processo grande as vezes nao baixa de uma vez, e um
             # PDF parcial guardado como integra nao se denuncia sozinho.
-            print("  CONFIRA se o arquivo tem o processo inteiro. Processo grande")
-            print("  as vezes nao baixa de uma vez, e daqui nao da para saber.")
+            if len(arquivos) == 1 and not escolha.startswith("peca:"):
+                print("  CONFIRA se o arquivo tem o processo inteiro. Processo "
+                      "grande as vezes nao baixa de uma vez, e daqui nao da "
+                      "para saber.")
             estado_local.registrar(
                 acao="copia_integral", tribunal=identidade.tribunal,
                 sistema=identidade.sistema, numero=numero.formatado,
-                resultado="integra gravada", detalhe=str(tamanho),
+                resultado=f"{len(arquivos)} arquivo(s) gravado(s)",
+                detalhe=str(total),
             )
             return 0
 
@@ -6251,7 +6301,12 @@ def main(argv: list[str] | None = None) -> int:
                          "antes de abrir o Visualizador. Padrao: 'consulta'")
     cp.add_argument("--documentos", default="auto",
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
-                         "'integra', 'ultimos:N' ou 'nenhum'")
+                         "'integra', 'ultimos:N' ou 'nenhum'. No DCP do Rio de "
+                         "Janeiro, para processo grande que nao baixa de uma vez: "
+                         "'peca:N' baixa SO o documento que comeca na pagina N "
+                         "(o numero que aparece ao lado do nome no indice), e "
+                         "'lotes' ou 'lotes:N' baixa o processo inteiro de N em "
+                         "N paginas, 300 por padrao")
     cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
     cp.add_argument("--aceito-o-termo", action="store_true", dest="aceitar_termo",
                     help="aceita o aviso de responsabilidade que o PJe levanta ao abrir "

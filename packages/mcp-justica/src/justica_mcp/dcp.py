@@ -281,6 +281,300 @@ def _pai_de(elemento: Any) -> Optional[Any]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Baixar em PARTES, quando a integra nao vem de uma vez
+#
+# Conferido em campo em 08/10/2026, com o Visualizador aberto no processo do
+# advogado: 164 documentos, ultima pagina 1541, e a marca de selecao de cada
+# item e um `input[type=checkbox]` que fica no elemento PAI dele. Em lotes de
+# 300 paginas o processo dava 4 downloads.
+#
+# As duas formas que ele pediu nascem do mesmo mecanismo: marcar itens e usar
+# "Salvar Documentos Selecionados". A diferenca e so quais itens se marca.
+# ---------------------------------------------------------------------------
+
+
+def marca_do_item(elemento: Any) -> Optional[Any]:
+    """A caixa de marcacao do item, que fica no PAI dele, nao dentro.
+
+    Conferido em 08/10/2026: `input[type=checkbox] x1 no pai` para os tres
+    itens examinados. Procura tambem dentro e no avo, porque um item pode ser
+    montado com um nivel a mais sem que isso mude o que ele e.
+    """
+    for alvo in (_pai_de(elemento), elemento, _pai_de(_pai_de(elemento))):
+        if alvo is None:
+            continue
+        for lugar in LUGARES_DE_MARCA:
+            try:
+                achados = alvo.query_selector_all(lugar) or []
+            except Exception:
+                continue
+            if achados:
+                return achados[0]
+    return None
+
+
+def esta_marcado(marca: Any) -> Optional[bool]:
+    """Se a caixa esta marcada agora, ou None quando nao da para saber."""
+    for codigo in ("e => e.checked",
+                   "e => e.getAttribute('aria-checked') === 'true'"):
+        try:
+            return bool(marca.evaluate(codigo))
+        except Exception:
+            continue
+    return None
+
+
+def marcar_item(marca: Any, pagina: Any) -> bool:
+    """Marca a caixa e CONFERE que ela ficou marcada.
+
+    A caixa do Angular Material e um `input` escondido atras de um desenho, e
+    o clique de mouse nela costuma falhar por nao ter area visivel. O clique
+    do documento resolve, e a conferencia depois e o que impede o programa de
+    seguir achando que marcou quando nao marcou: um lote com documento de
+    menos vira um PDF incompleto que ninguem volta a conferir.
+    """
+    if esta_marcado(marca) is True:
+        return True
+    for tentativa in (lambda: clicar_com_jeito(marca),
+                      lambda: clicar_pelo_documento(_pai_de(marca))):
+        try:
+            tentativa()
+        except Exception:
+            continue
+        try:
+            pagina.wait_for_timeout(120)
+        except Exception:
+            pass
+        if esta_marcado(marca) is not False:
+            return esta_marcado(marca) is True
+    return False
+
+
+def desmarcar_tudo(marcas: Any, pagina: Any) -> int:
+    """Desfaz a selecao do lote anterior. Devolve quantas ficaram desmarcadas.
+
+    Entre um lote e outro isto nao e opcional: marca que sobra do lote
+    anterior entra no PDF seguinte, e dois arquivos com o mesmo documento
+    dentro nao se denunciam sozinhos.
+    """
+    desfeitas = 0
+    for marca in marcas or []:
+        if esta_marcado(marca) is not True:
+            desfeitas += 1
+            continue
+        try:
+            clicar_com_jeito(marca)
+            pagina.wait_for_timeout(80)
+        except Exception:
+            pass
+        if esta_marcado(marca) is not True:
+            desfeitas += 1
+    return desfeitas
+
+
+def indice_com_paginas(pagina: Any) -> list:
+    """Cada item do indice com a pagina em que ele comeca e a marca dele.
+
+    Devolve uma lista de (pagina_inicial, elemento, marca), na ordem da tela.
+    Item sem pagina legivel ou sem marca fica de fora da conta, e quem chama
+    diz quantos ficaram: documento que some em silencio e o defeito que esta
+    funcao existe para nao ter.
+    """
+    saida = []
+    for elemento in itens_do_indice(pagina):
+        try:
+            inicio = pagina_inicial_do_item(
+                elemento.get_attribute("aria-label") or "")
+        except Exception:
+            inicio = None
+        if inicio is None:
+            continue
+        saida.append((inicio, elemento, marca_do_item(elemento)))
+    return saida
+
+
+def _gravar(baixado: Any, destino: Any, nome: str) -> str:
+    from pathlib import Path
+
+    pasta = Path(destino)
+    pasta.mkdir(parents=True, exist_ok=True)
+    sugerido = baixado.suggested_filename or "processo.pdf"
+    arquivo = pasta / f"{nome}-{sugerido}"
+    baixado.save_as(str(arquivo))
+    return str(arquivo)
+
+
+def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
+                    segundos: int = TETO_DO_DOWNLOAD) -> str:
+    """Abre a caixa de download e salva SO o que esta marcado."""
+    from .core.guarda_navegacao import Acao
+
+    botao = achar_botao_de_download(pagina)
+    if botao is None:
+        raise DownloadIndisponivel(
+            f"O botao {BOTAO_DE_DOWNLOAD!r} sumiu da barra. Nada foi baixado.")
+    alvo_do_botao = f'[aria-label="{BOTAO_DE_DOWNLOAD}"]'
+    guarda.pode_executar(Acao.CLICAR, alvo_do_botao, url=pagina.url)
+    clicar_com_jeito(botao)
+    try:
+        pagina.wait_for_timeout(1500)
+    except Exception:
+        pass
+
+    escolha = achar_escolha(pagina, ESCOLHA_MARCADOS)
+    if escolha is None:
+        raise DownloadIndisponivel(
+            f"A caixa de download nao mostrou {ESCOLHA_MARCADOS!r}. "
+            "Nada foi baixado.")
+    alvo_da_escolha = f"texto={ESCOLHA_MARCADOS}"
+    guarda.pode_executar(Acao.CLICAR, alvo_da_escolha, url=pagina.url)
+    try:
+        with pagina.expect_download(timeout=segundos * 1000) as info:
+            clicar_com_jeito(escolha)
+    except Exception as exc:
+        raise DownloadIndisponivel(
+            f"{ESCOLHA_MARCADOS!r} foi clicado e nenhum arquivo chegou em "
+            f"{segundos}s ({type(exc).__name__}). Nada foi gravado.") from None
+    return _gravar(info.value, destino, nome)
+
+
+def permitir_o_download_marcado(pagina: Any, guarda: Any) -> None:
+    """Autoriza, de uma vez, os cliques do caminho da selecao."""
+    from .core.guarda_navegacao import Permissao
+    from .portal import permissao_efemera
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="download por selecao no Visualizador de Processos",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(
+            f'[aria-label="{BOTAO_DE_DOWNLOAD}"]',
+            f'[aria-label="{BOTAO_CAIXA_DE_SELECAO}"]',
+            f"texto={ESCOLHA_MARCADOS}",
+            "input[type=checkbox]",
+        ),
+    ))
+
+
+def baixar_uma_peca(pagina: Any, guarda: Any, destino: Any, chave: str,
+                    pagina_inicial: int,
+                    segundos: int = TETO_DO_DOWNLOAD) -> str:
+    """Baixa UM documento, o que comeca na pagina indicada pelo operador.
+
+    A pagina e a que aparece ao lado do nome no indice, como o advogado
+    explicou em 08/10/2026. E ela que identifica o documento para quem olha a
+    tela, entao e por ela que ele se pede.
+    """
+    permitir_o_download_marcado(pagina, guarda)
+    if not abrir_caixa_de_selecao(pagina, guarda):
+        raise DownloadIndisponivel(
+            f"O botao {BOTAO_CAIXA_DE_SELECAO!r} nao esta na barra. "
+            "Sem a caixa de selecao nao da para escolher um documento.")
+
+    indice = indice_com_paginas(pagina)
+    if not indice:
+        raise DownloadIndisponivel(
+            "O indice de documentos nao foi lido. Nada foi baixado.")
+
+    escolhidos = [t for t in indice if t[0] == pagina_inicial]
+    if not escolhidos:
+        disponiveis = sorted({t[0] for t in indice})[:20]
+        raise DownloadIndisponivel(
+            f"Nenhum documento comeca na pagina {pagina_inicial}. "
+            f"O indice tem {len(indice)} documento(s); os primeiros comecam "
+            "nas paginas: " + ", ".join(str(p) for p in disponiveis) + ".")
+    if len(escolhidos) > 1:
+        raise DownloadIndisponivel(
+            f"{len(escolhidos)} documentos comecam na pagina {pagina_inicial}. "
+            "Baixar o errado seria pior que nao baixar. Nada foi marcado.")
+
+    inicio, _elemento, marca = escolhidos[0]
+    if marca is None:
+        raise DownloadIndisponivel(
+            f"O documento da pagina {inicio} nao tem caixa de marcacao. "
+            "Nada foi baixado.")
+    desmarcar_tudo([t[2] for t in indice if t[2] is not None], pagina)
+    if not marcar_item(marca, pagina):
+        raise DownloadIndisponivel(
+            f"A caixa do documento da pagina {inicio} nao ficou marcada. "
+            "Baixar agora traria o processo errado. Nada foi baixado.")
+    print(f"    Marcado 1 documento, o que comeca na pagina {inicio}.")
+    return baixar_marcados(pagina, guarda, destino,
+                           f"{chave}-pagina{inicio}", segundos)
+
+
+def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
+                    tamanho: int = PAGINAS_POR_LOTE,
+                    segundos: int = TETO_DO_DOWNLOAD) -> list:
+    """Baixa o processo inteiro, de `tamanho` em `tamanho` paginas.
+
+    Devolve a lista de arquivos gravados, na ordem. Um lote que falha NAO
+    derruba os anteriores: eles ja estao em disco e valem. O que falhou e
+    dito, com a faixa de paginas, para que possa ser repetido sozinho.
+    """
+    permitir_o_download_marcado(pagina, guarda)
+    if not abrir_caixa_de_selecao(pagina, guarda):
+        raise DownloadIndisponivel(
+            f"O botao {BOTAO_CAIXA_DE_SELECAO!r} nao esta na barra. "
+            "Sem a caixa de selecao nao da para baixar em partes.")
+
+    indice = indice_com_paginas(pagina)
+    if not indice:
+        raise DownloadIndisponivel(
+            "O indice de documentos nao foi lido. Nada foi baixado.")
+
+    sem_marca = [t[0] for t in indice if t[2] is None]
+    if sem_marca:
+        print(f"    [ATENCAO] {len(sem_marca)} documento(s) do indice nao tem "
+              "caixa de marcacao e NAO entrarao em lote nenhum.")
+        print("    Paginas iniciais: "
+              + ", ".join(str(p) for p in sem_marca[:20])
+              + ("; ..." if len(sem_marca) > 20 else ""))
+
+    uteis = [t for t in indice if t[2] is not None]
+    lotes = lotes_por_pagina([t[0] for t in uteis], tamanho)
+    todas = [t[2] for t in uteis]
+    print(f"    {len(uteis)} documento(s) em {len(lotes)} lote(s) de ate "
+          f"{tamanho} paginas.")
+
+    arquivos, falhas = [], []
+    for numero, lote in enumerate(lotes, 1):
+        primeira, ultima = uteis[lote[0]][0], uteis[lote[-1]][0]
+        desmarcar_tudo(todas, pagina)
+        marcados = 0
+        for posicao in lote:
+            if marcar_item(uteis[posicao][2], pagina):
+                marcados += 1
+        print(f"    Lote {numero}/{len(lotes)}: paginas {primeira} a {ultima}, "
+              f"{marcados} de {len(lote)} documento(s) marcado(s).")
+        if marcados != len(lote):
+            falhas.append(
+                f"lote {numero} (paginas {primeira} a {ultima}): so "
+                f"{marcados} de {len(lote)} documentos foram marcados")
+            continue
+        try:
+            arquivo = baixar_marcados(
+                pagina, guarda, destino,
+                f"{chave}-lote{numero}-paginas{primeira}a{ultima}", segundos)
+        except DownloadIndisponivel as exc:
+            falhas.append(f"lote {numero} (paginas {primeira} a {ultima}): {exc}")
+            continue
+        arquivos.append(arquivo)
+        print(f"    Lote {numero} gravado em {arquivo}")
+
+    if falhas:
+        print(f"    [INCOMPLETO] {len(falhas)} lote(s) nao foram gravados:")
+        for falha in falhas:
+            print(f"      {falha}")
+        print("    Os lotes que deram certo estao em disco e valem. Repita o "
+              "comando para os que faltam.")
+    if not arquivos:
+        raise DownloadIndisponivel(
+            "Nenhum lote foi gravado. " + "; ".join(falhas[:3]))
+    return arquivos
+
+
 def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
                    segundos: int = TETO_DO_DOWNLOAD) -> str:
     """Clica em baixar, escolhe o processo INTEGRAL e grava o arquivo.

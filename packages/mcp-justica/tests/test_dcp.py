@@ -3569,3 +3569,381 @@ def test_o_relato_do_indice_ja_mostra_os_lotes():
     assert "em lotes de 300 paginas dariam 3 download(s)" in texto
     # E o andamento continua fora.
     assert "andamento" not in texto
+
+
+# ==========================================================================
+# Baixar em PARTES: as duas opcoes pedidas
+#
+# Conferido em campo em 08/10/2026, com o Visualizador aberto no processo do
+# advogado: 164 documentos, ultima pagina 1541, e a marca de selecao de cada
+# item e um `input[type=checkbox]` que fica no elemento PAI dele. Em lotes de
+# 300 paginas aquele processo dava 4 downloads.
+#
+# As duas formas nascem do mesmo mecanismo: marcar itens e usar "Salvar
+# Documentos Selecionados". A diferenca e so quais itens se marca.
+# ==========================================================================
+
+class _Marca:
+    """A caixa de marcacao, como o Angular Material a monta: `input`
+    escondido atras de um desenho, que nao aceita clique de mouse."""
+
+    def __init__(self, aceita_documento=True):
+        self.marcada = False
+        self.aceita_documento = aceita_documento
+
+    def bounding_box(self):
+        return None  # escondida: clique de mouse nao tem onde cair
+
+    def evaluate(self, codigo):
+        if "checked" in codigo and "click" not in codigo:
+            return self.marcada
+        if "click" in codigo:
+            if not self.aceita_documento:
+                raise RuntimeError("nao aceita")
+            self.marcada = not self.marcada
+            return None
+        return None
+
+
+class _ItemComMarca:
+    def __init__(self, inicio, marca=None):
+        self.inicio = inicio
+        self.marca = marca if marca is not None else _Marca()
+        self.pai = self
+
+    def get_attribute(self, nome):
+        if nome == "aria-label":
+            return f"Alternar {self.inicio} - andamento que nao pode sair"
+        return None
+
+    def query_selector_all(self, seletor):
+        if seletor == "input[type=checkbox]" and self.marca is not None:
+            return [self.marca]
+        return []
+
+    def evaluate_handle(self, _js):
+        dono = self
+
+        class _Punho:
+            def as_element(self):
+                return dono
+
+        return _Punho()
+
+
+class _BotaoDaBarra(_BotaoDeTela):
+    """Botao da barra do Visualizador: texto e nome de icone, quem diz o que
+    ele faz e o `aria-label`."""
+
+    def __init__(self, rotulo, tela=None):
+        super().__init__("download_for_offline")
+        self.rotulo = rotulo
+        self.tela = tela
+
+    def get_attribute(self, nome):
+        return self.rotulo if nome == "aria-label" else None
+
+    def click(self):
+        super().click()
+        if self.tela is not None:
+            self.tela.caixa_aberta = True
+
+
+class _VisualizadorComIndice:
+    """O Visualizador com o indice aberto e a caixa de selecao ligada."""
+
+    viewport_size = {"width": 1280, "height": 800}
+    url = "https://www3.tjrj.jus.br/visproc/#/xyz"
+
+    def __init__(self, inicios, entrega=True, tem_caixa=True):
+        self.itens = [_ItemComMarca(i) for i in inicios]
+        self.entrega = entrega
+        self.tem_caixa = tem_caixa
+        self.downloads = 0
+        self.marcados_por_download = []
+        # A caixa de download so mostra as escolhas depois de o botao da barra
+        # ser clicado, como no portal.
+        self.caixa_aberta = False
+        from justica_mcp.dcp import (BOTAO_CAIXA_DE_SELECAO, BOTAO_DE_DOWNLOAD,
+                                     ESCOLHA_MARCADOS)
+        # Os botoes da barra sao achados pelo ROTULO ACESSIVEL, nao pelo
+        # texto: o texto deles e o nome do icone ("download_for_offline").
+        self.botao = _BotaoDaBarra(BOTAO_DE_DOWNLOAD, self)
+        self.caixa = _BotaoDaBarra(BOTAO_CAIXA_DE_SELECAO)
+        self.escolha = _BotaoDeTela(ESCOLHA_MARCADOS)
+        self._marcados = ESCOLHA_MARCADOS
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.dcp import BOTAO_CAIXA_DE_SELECAO, BOTAO_DE_DOWNLOAD
+        from justica_mcp.portal import PREFIXO_DE_TEXTO
+
+        from justica_mcp.portal import ALVOS_CLICAVEIS
+
+        if seletor == "[aria-label]":
+            return list(self.itens) + [self.botao, self.caixa]
+        # `_por_texto_exato` pergunta pelos clicaveis e compara o texto; e
+        # assim que a escolha da caixa de download e achada.
+        if seletor == ALVOS_CLICAVEIS:
+            return [self.escolha] if self.caixa_aberta else []
+        return []
+
+    def query_selector(self, seletor):
+        achados = self.query_selector_all(seletor)
+        return achados[0] if achados else None
+
+    def evaluate(self, _c):
+        return self.viewport_size
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+    def expect_download(self, timeout=None):
+        tela = self
+
+        class _Espera:
+            def __enter__(_s):
+                return _s
+
+            def __exit__(_s, *a):
+                if not tela.entrega:
+                    raise RuntimeError("TimeoutError: nenhum arquivo")
+                tela.downloads += 1
+                tela.marcados_por_download.append(
+                    [i.inicio for i in tela.itens if i.marca.marcada])
+                return False
+
+            @property
+            def value(_s):
+                class _Arquivo:
+                    suggested_filename = "processo.pdf"
+
+                    def save_as(self, caminho):
+                        import pathlib
+
+                        pathlib.Path(caminho).write_bytes(b"%PDF-1.4 teste")
+
+                return _Arquivo()
+
+        return _Espera()
+
+
+def _rotulo_da_caixa(tela, rotulo):
+    """`elemento_por_rotulo` procura por atributo; os botoes falsos respondem
+    pelo texto. Esta ponte evita reescrever os falsos antigos."""
+    return None
+
+
+def test_a_marca_do_item_e_achada_no_PAI_dele():
+    """Conferido em 08/10/2026: `input[type=checkbox] x1 no pai`."""
+    from justica_mcp.dcp import marca_do_item
+
+    item = _ItemComMarca(92)
+    assert marca_do_item(item) is item.marca
+
+
+def test_marcar_confere_que_ficou_marcado():
+    """Lote com documento de menos vira um PDF incompleto que ninguem volta a
+    conferir."""
+    from justica_mcp.dcp import esta_marcado, marcar_item
+
+    marca = _Marca()
+    assert esta_marcado(marca) is False
+
+    class _Tela:
+        def wait_for_timeout(self, _ms):
+            pass
+
+    assert marcar_item(marca, _Tela()) is True
+    assert esta_marcado(marca) is True
+    # Marcar o que ja esta marcado nao desmarca.
+    assert marcar_item(marca, _Tela()) is True
+    assert esta_marcado(marca) is True
+
+
+def test_a_marca_que_nao_aceita_clique_e_denunciada():
+    from justica_mcp.dcp import marcar_item
+
+    class _Tela:
+        def wait_for_timeout(self, _ms):
+            pass
+
+    assert marcar_item(_Marca(aceita_documento=False), _Tela()) is False
+
+
+def test_desmarcar_limpa_o_lote_anterior():
+    """Marca que sobra entra no PDF seguinte, e dois arquivos com o mesmo
+    documento dentro nao se denunciam sozinhos."""
+    from justica_mcp.dcp import desmarcar_tudo, esta_marcado
+
+    marcas = [_Marca(), _Marca(), _Marca()]
+    for m in marcas:
+        m.marcada = True
+
+    class _Tela:
+        def wait_for_timeout(self, _ms):
+            pass
+
+    assert desmarcar_tudo(marcas, _Tela()) == 3
+    assert all(esta_marcado(m) is False for m in marcas)
+
+
+def test_o_indice_com_paginas_junta_pagina_item_e_marca():
+    from justica_mcp.dcp import indice_com_paginas
+
+    tela = _VisualizadorComIndice([3, 93, 97])
+    lido = indice_com_paginas(tela)
+
+    assert [p for p, _, _ in lido] == [3, 93, 97]
+    assert all(marca is not None for _, _, marca in lido)
+
+
+def test_o_item_sem_pagina_legivel_fica_de_fora_da_conta():
+    """Documento que some em silencio e o defeito que isto existe para nao ter:
+    por isso ele fica de fora da CONTA, e nao da lista de problemas."""
+    from justica_mcp.dcp import indice_com_paginas
+
+    class _SemPagina(_ItemComMarca):
+        def get_attribute(self, nome):
+            return "Baixar o processo atual em PDF" if nome == "aria-label" else None
+
+    tela = _VisualizadorComIndice([3, 93])
+    tela.itens.append(_SemPagina(0))
+
+    assert [p for p, _, _ in indice_com_paginas(tela)] == [3, 93]
+
+
+def test_a_peca_pedida_pela_pagina_e_a_unica_marcada(tmp_path):
+    """A pagina e a que aparece ao lado do nome no indice: e ela que
+    identifica o documento para quem olha a tela."""
+    from justica_mcp.dcp import baixar_uma_peca
+
+    tela = _VisualizadorComIndice([3, 93, 97, 99])
+    arquivo = baixar_uma_peca(tela, _Guarda(), tmp_path, "0045025", 93,
+                              segundos=2)
+
+    assert tela.downloads == 1
+    assert tela.marcados_por_download == [[93]]
+    assert "pagina93" in arquivo
+
+
+def test_pagina_que_nao_existe_no_indice_e_recusada_com_a_lista(tmp_path):
+    from justica_mcp.dcp import DownloadIndisponivel, baixar_uma_peca
+
+    tela = _VisualizadorComIndice([3, 93, 97])
+    with pytest.raises(DownloadIndisponivel) as erro:
+        baixar_uma_peca(tela, _Guarda(), tmp_path, "0045025", 500, segundos=2)
+
+    recado = str(erro.value)
+    assert "Nenhum documento comeca na pagina 500" in recado
+    assert "3, 93, 97" in recado
+    assert tela.downloads == 0
+
+
+def test_duas_pecas_na_mesma_pagina_param_em_vez_de_chutar(tmp_path):
+    """Baixar o errado seria pior que nao baixar."""
+    from justica_mcp.dcp import DownloadIndisponivel, baixar_uma_peca
+
+    tela = _VisualizadorComIndice([3, 93, 93])
+    with pytest.raises(DownloadIndisponivel, match="2 documentos comecam"):
+        baixar_uma_peca(tela, _Guarda(), tmp_path, "0045025", 93, segundos=2)
+    assert tela.downloads == 0
+
+
+def test_os_lotes_saem_na_ordem_e_sem_repetir_documento(tmp_path):
+    """Cada documento entra em UM arquivo. Marca que sobra do lote anterior
+    entra no PDF seguinte, e isso nao se denuncia sozinho."""
+    from justica_mcp.dcp import baixar_em_lotes
+
+    tela = _VisualizadorComIndice([1, 50, 100, 400, 450, 900])
+    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025",
+                               tamanho=300, segundos=2)
+
+    assert tela.downloads == 3
+    assert tela.marcados_por_download == [[1, 50, 100], [400, 450], [900]]
+    assert len(arquivos) == 3
+    assert "lote1-paginas1a100" in arquivos[0]
+    assert "lote3-paginas900a900" in arquivos[2]
+
+
+def test_um_lote_que_falha_nao_derruba_os_que_deram_certo(tmp_path):
+    """Eles ja estao em disco e valem."""
+    from justica_mcp.dcp import baixar_em_lotes
+
+    tela = _VisualizadorComIndice([1, 400, 900])
+    # O documento do meio nao aceita marcacao.
+    tela.itens[1].marca.aceita_documento = False
+
+    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025",
+                               tamanho=300, segundos=2)
+
+    assert len(arquivos) == 2
+    assert tela.marcados_por_download == [[1], [900]]
+
+
+def test_sem_nenhum_lote_gravado_o_comando_recusa(tmp_path):
+    from justica_mcp.dcp import DownloadIndisponivel, baixar_em_lotes
+
+    tela = _VisualizadorComIndice([1, 400], entrega=False)
+    with pytest.raises(DownloadIndisponivel, match="Nenhum lote foi gravado"):
+        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2)
+
+
+def test_o_indice_vazio_para_antes_de_marcar_qualquer_coisa(tmp_path):
+    from justica_mcp.dcp import DownloadIndisponivel, baixar_em_lotes
+
+    tela = _VisualizadorComIndice([])
+    with pytest.raises(DownloadIndisponivel, match="nao foi lido"):
+        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2)
+    assert tela.downloads == 0
+
+
+def test_o_caminho_da_selecao_usa_SALVAR_SELECIONADOS_e_nao_CARREGADOS():
+    """Guarda de fonte. 'Carregados' traz o processo integral; se o caminho
+    dos lotes o usasse, cada lote seria o processo inteiro e ninguem notaria
+    pelos arquivos."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.baixar_marcados)
+    assert "ESCOLHA_MARCADOS" in fonte
+    assert "ESCOLHA_INTEGRAL" not in fonte
+
+
+# ==========================================================================
+# Os lotes como PADRAO, e nao como opcao que o operador precisa lembrar
+#
+# Instrucao do advogado em 08/10/2026, depois de ver as duas opcoes prontas:
+# "eu queria isso como padrao para problemas como esse".
+#
+# Cair para os lotes sozinho e seguro porque a parte nao se disfarca de
+# inteiro: cada arquivo nasce com a faixa de paginas no nome, e o comando diz
+# que caiu. O risco que este projeto evita e o CONTRARIO, um PDF parcial
+# gravado como integra, e esse continua impossivel.
+# ==========================================================================
+
+def test_a_integra_que_nao_vem_cai_sozinha_para_os_lotes():
+    """Guarda de fonte: o padrao tenta a integra e, so entao, os lotes."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    # A queda existe, e vem DEPOIS da tentativa de integra.
+    assert "INTEGRA NAO VEIO" in fonte
+    assert fonte.index("baixar_integra(") < fonte.index("INTEGRA NAO VEIO")
+    assert fonte.index("INTEGRA NAO VEIO") < fonte.index(
+        "baixar_em_lotes(\n                            janela")
+
+
+def test_o_nome_do_arquivo_de_lote_carrega_a_faixa_de_paginas(tmp_path):
+    """E o que impede uma parte de ser confundida com o processo inteiro."""
+    from justica_mcp.dcp import baixar_em_lotes
+
+    tela = _VisualizadorComIndice([1, 400])
+    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025",
+                               tamanho=300, segundos=2)
+
+    assert all("lote" in a and "paginas" in a for a in arquivos)
+    # E nenhum deles se chama "integra".
+    assert not any("integra" in a for a in arquivos)
