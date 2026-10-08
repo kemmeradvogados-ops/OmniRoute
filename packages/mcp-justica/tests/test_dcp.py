@@ -3649,6 +3649,40 @@ class _BotaoDaBarra(_BotaoDeTela):
             self.tela.caixa_aberta = True
 
 
+class _BotaoDaCaixaDeSelecao:
+    """O botao que liga as marcas, e que TROCA de rotulo quando elas ligam."""
+
+    def __init__(self, tela):
+        self.tela = tela
+
+    def get_attribute(self, nome):
+        from justica_mcp.dcp import (BOTAO_CAIXA_DE_SELECAO,
+                                     BOTAO_OCULTAR_SELECAO)
+
+        if nome != "aria-label":
+            return None
+        return (BOTAO_OCULTAR_SELECAO if self.tela.selecao_aberta
+                else BOTAO_CAIXA_DE_SELECAO)
+
+    def inner_text(self):
+        return "check_circle_outline"
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 5, "y": 5, "width": 32, "height": 32}
+
+    def scroll_into_view_if_needed(self):
+        pass
+
+    def click(self):
+        self.tela.selecao_aberta = not self.tela.selecao_aberta
+
+
 class _VisualizadorComIndice:
     """O Visualizador com o indice aberto e a caixa de selecao ligada."""
 
@@ -3669,7 +3703,10 @@ class _VisualizadorComIndice:
         # Os botoes da barra sao achados pelo ROTULO ACESSIVEL, nao pelo
         # texto: o texto deles e o nome do icone ("download_for_offline").
         self.botao = _BotaoDaBarra(BOTAO_DE_DOWNLOAD, self)
-        self.caixa = _BotaoDaBarra(BOTAO_CAIXA_DE_SELECAO)
+        # O botao da caixa de selecao TROCA de rotulo quando a caixa abre, como
+        # no portal. Falso que nao troca esconderia o defeito de 08/10/2026.
+        self.caixa = _BotaoDaCaixaDeSelecao(self)
+        self.selecao_aberta = False
         self.escolha = _BotaoDeTela(ESCOLHA_MARCADOS)
         self._marcados = ESCOLHA_MARCADOS
 
@@ -4057,3 +4094,53 @@ def test_o_visualizador_nao_olha_mais_uma_vez_so():
     fonte = inspect.getsource(dcp.abrir_visualizador)
     assert "esperar_a_tela_do_processo(pagina, segundos)" in fonte
     assert 'elemento_visivel(quadro, f"texto={BOTAO_VISUALIZADOR}")' not in fonte
+
+
+# ==========================================================================
+# O botao que troca de nome quando a caixa abre
+#
+# 08/10/2026. O download em lotes recusou dizendo que "Exibir caixa de
+# seleção" nao estava na barra, e o relato da mesma corrida mostrava
+# `rotulo='Ocultar caixa de seleção'`. Nao havia contradicao: o botao e o
+# mesmo e troca de rotulo, e quem tinha aberto a caixa fui EU, no
+# reconhecimento do indice que roda quando a integra falha.
+#
+# Chamar duas vezes nao pode desfazer o que a primeira fez.
+# ==========================================================================
+
+def test_abrir_a_caixa_duas_vezes_nao_a_fecha():
+    from justica_mcp.dcp import abrir_caixa_de_selecao, caixa_de_selecao_aberta
+
+    tela = _VisualizadorComIndice([3, 93])
+    guarda = _Guarda()
+
+    assert abrir_caixa_de_selecao(tela, guarda) is True
+    assert caixa_de_selecao_aberta(tela) is True
+    # A segunda chamada nao clica em nada, e a caixa continua aberta.
+    assert abrir_caixa_de_selecao(tela, guarda) is True
+    assert caixa_de_selecao_aberta(tela) is True
+
+
+def test_a_abertura_tem_prova_positiva():
+    """Marcar documento numa caixa fechada nao marca nada."""
+    from justica_mcp.dcp import abrir_caixa_de_selecao
+
+    tela = _VisualizadorComIndice([3])
+    # Um botao que aceita o clique e nao abre coisa nenhuma.
+    tela.caixa.click = lambda: None
+
+    assert abrir_caixa_de_selecao(tela, _Guarda()) is False
+
+
+def test_os_lotes_funcionam_com_a_caixa_JA_aberta(tmp_path):
+    """O caminho exato de 08/10/2026: o reconhecimento abriu, os lotes vieram
+    depois."""
+    from justica_mcp.dcp import abrir_caixa_de_selecao, baixar_em_lotes
+
+    tela = _VisualizadorComIndice([1, 400, 900])
+    guarda = _Guarda()
+    abrir_caixa_de_selecao(tela, guarda)  # como faz o reconhecimento
+
+    arquivos = baixar_em_lotes(tela, guarda, tmp_path, "0045025", 300,
+                               segundos=2)
+    assert len(arquivos) == 3

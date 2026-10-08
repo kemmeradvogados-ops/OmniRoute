@@ -75,6 +75,11 @@ def caixa_de_download_aberta(pagina: Any) -> bool:
 # seguido do numero do documento e do proprio andamento. O numero e sequencia;
 # o resto e conteudo do processo e nao sai em relato nenhum.
 BOTAO_CAIXA_DE_SELECAO = "Exibir caixa de seleção"
+# O MESMO botao, depois que a caixa abre. Ele troca de rotulo, e foi assim que
+# a corrida de 08/10/2026 desistiu de uma coisa que ja estava pronta: o
+# reconhecimento do indice, que roda quando a integra falha, ABRIU a caixa; o
+# download em lotes, logo depois, procurou "Exibir" e nao achou.
+BOTAO_OCULTAR_SELECAO = "Ocultar caixa de seleção"
 MARCA_DO_ITEM_DO_INDICE = "alternar "
 # Onde a marca de selecao costuma morar, do mais especifico ao mais frouxo.
 LUGARES_DE_MARCA = (
@@ -176,10 +181,31 @@ def itens_do_indice(pagina: Any) -> list:
     return saida
 
 
+def caixa_de_selecao_aberta(pagina: Any) -> bool:
+    """Se as marcas de selecao ja estao ligadas.
+
+    Pelo rotulo do botao, que e o que o portal troca: com a caixa aberta ele
+    passa a ser "Ocultar caixa de selecao". Perguntar isso antes de clicar e o
+    que impede o programa de FECHAR a caixa achando que a estava abrindo.
+    """
+    from .portal import elemento_por_rotulo
+
+    return elemento_por_rotulo(pagina, BOTAO_OCULTAR_SELECAO) is not None
+
+
 def abrir_caixa_de_selecao(pagina: Any, guarda: Any) -> bool:
-    """Liga as marcas de selecao do indice, pelo botao da barra."""
+    """Liga as marcas de selecao do indice, se ja nao estiverem ligadas.
+
+    Chamar isto duas vezes nao pode desfazer o que a primeira fez, e e
+    exatamente o que acontecia ate 08/10/2026: o reconhecimento do indice
+    abria a caixa, e o download em lotes, logo depois, procurava o botao de
+    ABRIR, que ja tinha virado o de fechar.
+    """
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import elemento_por_rotulo, permissao_efemera
+
+    if caixa_de_selecao_aberta(pagina):
+        return True
 
     botao = elemento_por_rotulo(pagina, BOTAO_CAIXA_DE_SELECAO)
     if botao is None:
@@ -197,7 +223,10 @@ def abrir_caixa_de_selecao(pagina: Any, guarda: Any) -> bool:
         pagina.wait_for_timeout(1200)
     except Exception:
         pass
-    return True
+    # Prova positiva, como em todo clique deste programa: o botao tem de ter
+    # virado o de fechar. Sem isso, "abri a caixa" e so uma suposicao sobre o
+    # que o clique fez, e marcar documento numa caixa fechada nao marca nada.
+    return caixa_de_selecao_aberta(pagina)
 
 
 def relatar_o_indice(pagina: Any, teto: int = 8) -> list[str]:
