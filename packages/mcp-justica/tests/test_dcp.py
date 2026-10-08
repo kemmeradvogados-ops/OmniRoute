@@ -4199,3 +4199,54 @@ def test_a_espera_longa_e_anunciada_antes_de_comecar():
     fonte = inspect.getsource(dcp.baixar_marcados)
     assert "Esperando ate" in fonte
     assert "gera o PDF" in fonte
+
+
+# ==========================================================================
+# UM lote so
+#
+# Pedido do advogado em 08/10/2026: "queria que o teste fosse so de um grupo
+# mesmo". E uma falha que estava a vista: a propria recusa dizia "repita o
+# comando para os que faltam", e o programa nao tinha como repetir um lote.
+#
+# A divisao nao muda: o lote 2 de quatro tem as mesmas paginas, baixado
+# sozinho ou no meio dos outros. Se mudasse, repetir um lote que falhou
+# traria outro pedaco do processo, e os arquivos em disco deixariam de se
+# encaixar.
+# ==========================================================================
+
+def test_um_lote_so_traz_as_MESMAS_paginas_que_traria_no_conjunto(tmp_path):
+    from justica_mcp.dcp import baixar_em_lotes
+
+    paginas = [1, 50, 100, 400, 450, 900]
+
+    todos = _VisualizadorComIndice(paginas)
+    baixar_em_lotes(todos, _Guarda(), tmp_path, "0045025", 300, segundos=2)
+
+    sozinho = _VisualizadorComIndice(paginas)
+    baixar_em_lotes(sozinho, _Guarda(), tmp_path, "0045025", 300, segundos=2,
+                    apenas=2)
+
+    assert todos.marcados_por_download[1] == sozinho.marcados_por_download[0]
+    assert sozinho.downloads == 1
+
+
+def test_o_primeiro_lote_e_o_de_numero_1():
+    """Contado a partir de 1, como o relato o mostra ("Lote 1/4")."""
+    from justica_mcp.dcp import baixar_em_lotes
+    import tempfile
+
+    tela = _VisualizadorComIndice([1, 50, 400])
+    with tempfile.TemporaryDirectory() as pasta:
+        baixar_em_lotes(tela, _Guarda(), pasta, "0045025", 300, segundos=2,
+                        apenas=1)
+    assert tela.marcados_por_download == [[1, 50]]
+
+
+def test_lote_que_nao_existe_para_e_diz_quantos_ha(tmp_path):
+    from justica_mcp.dcp import DownloadIndisponivel, baixar_em_lotes
+
+    tela = _VisualizadorComIndice([1, 400])
+    with pytest.raises(DownloadIndisponivel, match="tem 2 lote"):
+        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2,
+                        apenas=9)
+    assert tela.downloads == 0

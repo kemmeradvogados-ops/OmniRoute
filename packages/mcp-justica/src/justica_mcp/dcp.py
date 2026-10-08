@@ -559,8 +559,15 @@ def baixar_uma_peca(pagina: Any, guarda: Any, destino: Any, chave: str,
 
 def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
                     tamanho: int = PAGINAS_POR_LOTE,
-                    segundos: int = TETO_DO_DOWNLOAD) -> list:
-    """Baixa o processo inteiro, de `tamanho` em `tamanho` paginas.
+                    segundos: int = TETO_DO_DOWNLOAD,
+                    apenas: Optional[int] = None) -> list:
+    """Baixa o processo, de `tamanho` em `tamanho` paginas.
+
+    Com `apenas`, baixa SO aquele lote, contado a partir de 1. A divisao nao
+    muda: o lote 2 de quatro continua sendo o mesmo lote 2, com as mesmas
+    paginas, baixado sozinho ou no meio dos outros. Sem isso, "repita o
+    comando para os que faltam", que a propria recusa diz, nao tinha como ser
+    obedecido, e conferir o caminho custava o processo inteiro.
 
     Devolve a lista de arquivos gravados, na ordem. Um lote que falha NAO
     derruba os anteriores: eles ja estao em disco e valem. O que falhou e
@@ -591,8 +598,20 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
     print(f"    {len(uteis)} documento(s) em {len(lotes)} lote(s) de ate "
           f"{tamanho} paginas.")
 
+    numerados = list(enumerate(lotes, 1))
+    if apenas is not None:
+        if not 1 <= apenas <= len(lotes):
+            raise DownloadIndisponivel(
+                f"Este processo tem {len(lotes)} lote(s) de {tamanho} paginas, "
+                f"e foi pedido o lote {apenas}. Nada foi baixado.")
+        numerados = [numerados[apenas - 1]]
+        primeira, ultima = uteis[lotes[apenas - 1][0]][0], \
+            uteis[lotes[apenas - 1][-1]][0]
+        print(f"    Baixando APENAS o lote {apenas} de {len(lotes)}: paginas "
+              f"{primeira} a {ultima}.")
+
     arquivos, falhas = [], []
-    for numero, lote in enumerate(lotes, 1):
+    for numero, lote in numerados:
         primeira, ultima = uteis[lote[0]][0], uteis[lote[-1]][0]
         desmarcar_tudo(todas, pagina)
         marcados = 0

@@ -5678,6 +5678,19 @@ def consultar_processo(
                     arquivos = [baixar_uma_peca(
                         janela, guarda, pasta, numero.apenas_digitos,
                         int(alvo), prazo_do_arquivo)]
+                elif escolha.startswith("lote:"):
+                    # UM lote so, contado a partir de 1. A divisao nao muda: o
+                    # lote 2 de quatro tem as mesmas paginas, sozinho ou no
+                    # meio dos outros.
+                    alvo = escolha.split(":", 1)[1].strip()
+                    if not alvo.isdigit() or int(alvo) < 1:
+                        print(f"  [PAROU] --documentos lote:{alvo!r} nao e um "
+                              "numero de lote. Use lote:1, lote:2 e assim por "
+                              "diante, ou 'lotes' para todos.")
+                        return 1
+                    arquivos = baixar_em_lotes(
+                        janela, guarda, pasta, numero.apenas_digitos,
+                        PAGINAS_POR_LOTE, prazo_do_arquivo, apenas=int(alvo))
                 elif escolha.startswith("lotes"):
                     _, _, quanto = escolha.partition(":")
                     tamanho_do_lote = (int(quanto) if quanto.strip().isdigit()
@@ -6318,7 +6331,9 @@ def main(argv: list[str] | None = None) -> int:
                          "'peca:N' baixa SO o documento que comeca na pagina N "
                          "(o numero que aparece ao lado do nome no indice), e "
                          "'lotes' ou 'lotes:N' baixa o processo inteiro de N em "
-                         "N paginas, 300 por padrao")
+                         "N paginas, 300 por padrao, e 'lote:K' baixa SO o "
+                         "K-esimo desses lotes, para conferir o caminho ou "
+                         "repetir um que falhou")
     cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
     cp.add_argument("--aceito-o-termo", action="store_true", dest="aceitar_termo",
                     help="aceita o aviso de responsabilidade que o PJe levanta ao abrir "
