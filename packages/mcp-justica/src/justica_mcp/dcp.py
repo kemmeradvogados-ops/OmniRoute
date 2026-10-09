@@ -466,6 +466,81 @@ def _gravar(baixado: Any, destino: Any, nome: str) -> str:
     return str(arquivo)
 
 
+# Uma so ida ao navegador por volta de aviso. O relato completo da tela faz
+# uma chamada por atributo de cada elemento, e nesta tela sao 543 botoes: ficar
+# repetindo isso durante a espera custaria mais tempo do que a propria espera.
+JS_DOS_CONTROLES = """
+() => {
+  const vis = (e) => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const saida = [];
+  const alvos = document.querySelectorAll(
+    'button, a[role=button], input[type=submit], input[type=button], ' +
+    '[role=dialog], [role=alertdialog], mat-dialog-container');
+  for (const e of alvos) {
+    if (!vis(e)) continue;
+    saida.push([
+      (e.innerText || e.value || '').trim().slice(0, 60),
+      (e.getAttribute('aria-label') || e.getAttribute('title') || '').trim().slice(0, 60)
+    ]);
+    if (saida.length >= 400) break;
+  }
+  return saida;
+}
+"""
+
+# Quantas novidades cabem num aviso. O que interessa e o controle que APARECEU,
+# e se aparecerem dezenas de uma vez isso ja e a resposta.
+TETO_DE_NOVIDADES = 8
+
+
+def controles_da_tela(pagina: Any) -> list:
+    """Texto visivel e rotulo de cada controle visivel, como pares."""
+    try:
+        bruto = pagina.evaluate(JS_DOS_CONTROLES)
+    except Exception:
+        # Tela navegando, fechada, ou sem o metodo (falso de teste antigo).
+        return []
+    pares = []
+    for item in bruto or []:
+        try:
+            pares.append((str(item[0] or ""), str(item[1] or "")))
+        except Exception:
+            continue
+    return pares
+
+
+def novidades_na_tela(antes: list, agora: list) -> list[str]:
+    """O que apareceu na tela depois do clique, SEM o conteudo do processo.
+
+    A mesma regra do relato de tela: controle que se repete aos montes e item
+    de lista, e o rotulo dele e o andamento do processo. Vira contagem, sem
+    rotulo nenhum. O que sobra ainda passa por `sem_dado_de_processo`.
+    """
+    from collections import Counter, OrderedDict
+
+    from .portal import TETO_DE_BOTOES_IGUAIS, sem_dado_de_processo
+
+    sobra = Counter(agora) - Counter(antes)
+    grupos: "OrderedDict[str, list]" = OrderedDict()
+    for (visivel, rotulo), quantas in sobra.items():
+        grupos.setdefault(visivel, []).extend([rotulo] * quantas)
+
+    linhas = []
+    for visivel, rotulos in grupos.items():
+        if len(rotulos) > TETO_DE_BOTOES_IGUAIS:
+            linhas.append(f"{sem_dado_de_processo(visivel)!r} x{len(rotulos)} "
+                          "(itens de lista: rotulos omitidos, sao conteudo do "
+                          "processo)")
+            continue
+        for rotulo in rotulos:
+            marca = (f" rotulo={sem_dado_de_processo(rotulo)!r}" if rotulo else "")
+            linhas.append(f"{sem_dado_de_processo(visivel)!r}{marca}")
+    return linhas
+
+
 def janela_fechada(pagina: Any) -> bool:
     """A janela ainda esta aberta? Erro ao perguntar ja e resposta: nao."""
     try:
@@ -534,9 +609,17 @@ def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
     Devolve, quando nao chegou, a frase que diz o que aconteceu: o portal
     demorou mais que o prazo, ou a janela se fechou no meio. Sao coisas
     diferentes e o operador precisa saber qual das duas foi.
+
+    A espera tambem OLHA a tela. Em 09/10/2026 o clique saiu, a janela ficou
+    viva os 300s inteiros e nenhum arquivo foi anunciado; o relato de depois
+    mostrou a tela do Visualizador normal, e nada do que aconteceu no meio.
+    No e-SAJ, a licao de 22/09/2026 foi justamente esta: o portal NAO entrega
+    no primeiro botao, ele monta o arquivo e so entao mostra o segundo. So da
+    para saber se e esse o caso aqui olhando enquanto espera.
     """
     import time
 
+    antes = controles_da_tela(pagina)
     comeco = time.time()
     limite = comeco + espera
     proximo_aviso = comeco + INTERVALO_DO_AVISO
@@ -558,6 +641,12 @@ def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
             proximo_aviso = agora + INTERVALO_DO_AVISO
             print(f"{recuo}... {int(agora - comeco)}s de {espera}s. O portal ainda "
                   "esta gerando o PDF. Nao feche a janela.")
+            novas = novidades_na_tela(antes, controles_da_tela(pagina))
+            for linha in novas[:TETO_DE_NOVIDADES]:
+                print(f"{recuo}    [APARECEU NA TELA] {linha}")
+            if len(novas) > TETO_DE_NOVIDADES:
+                print(f"{recuo}    [APARECEU NA TELA] e mais "
+                      f"{len(novas) - TETO_DE_NOVIDADES} controle(s).")
         try:
             pagina.wait_for_timeout(PASSO_DA_ESPERA)
         except Exception:

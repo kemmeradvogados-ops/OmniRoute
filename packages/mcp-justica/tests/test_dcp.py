@@ -4406,3 +4406,77 @@ def test_janela_fechada_interrompe_os_lotes_seguintes():
             baixar_em_lotes(tela, _Guarda(), pasta, "x", tamanho=50)
     assert "se fechou" in str(erro.value)
     assert tela.downloads == 0
+
+
+# ---------------- a espera OLHA a tela ----------------
+#
+# Em 09/10/2026 o clique saiu, a janela ficou viva os 300s inteiros e nenhum
+# arquivo foi anunciado. O relato de depois mostrou o Visualizador normal e
+# nada do que aconteceu no meio. No e-SAJ a licao ja tinha sido dada em
+# 22/09/2026: o portal nao entrega no primeiro botao.
+
+
+def test_novidade_na_tela_e_so_o_que_apareceu():
+    from justica_mcp.dcp import novidades_na_tela
+
+    antes = [("download_for_offline", "Baixar o processo atual em PDF")]
+    agora = antes + [("Salvar o documento", "")]
+    assert novidades_na_tela(antes, agora) == ["'Salvar o documento'"]
+
+
+def test_tela_sem_mudanca_nao_gera_novidade():
+    from justica_mcp.dcp import novidades_na_tela
+
+    tela = [("a", ""), ("b", "rotulo")]
+    assert novidades_na_tela(tela, tela) == []
+
+
+def test_a_novidade_nao_despeja_o_indice_do_processo():
+    """Item de arvore vem aos montes e o rotulo dele e o andamento. Vira
+    contagem, sem rotulo nenhum, como no relato de tela."""
+    from justica_mcp.dcp import novidades_na_tela
+
+    antes = []
+    agora = [("expand_more", f"Alternar {n} - Juntada - dia 27/04/2018")
+             for n in (3, 12, 45, 60)]
+    linhas = novidades_na_tela(antes, agora)
+    assert linhas == ["'expand_more' x4 (itens de lista: rotulos omitidos, "
+                      "sao conteudo do processo)"]
+    assert "Juntada" not in " ".join(linhas)
+
+
+def test_controles_da_tela_nao_derruba_a_espera_quando_a_leitura_falha():
+    """Tela navegando ou fechada nao pode transformar o aviso em traceback."""
+    from justica_mcp.dcp import controles_da_tela
+
+    class _TelaQueRecusa:
+        def evaluate(self, _js):
+            raise RuntimeError("execution context was destroyed")
+
+    assert controles_da_tela(_TelaQueRecusa()) == []
+
+
+def test_a_espera_conta_o_que_apareceu_na_tela(capsys, monkeypatch):
+    from justica_mcp import dcp
+
+    class _TelaQueMostraOutroBotao:
+        def __init__(self):
+            self.voltas = 0
+
+        def is_closed(self):
+            return False
+
+        def wait_for_timeout(self, _ms):
+            self.voltas += 1
+
+        def evaluate(self, _js):
+            if self.voltas == 0:
+                return [["download_for_offline", "Baixar o processo atual em PDF"]]
+            return [["download_for_offline", "Baixar o processo atual em PDF"],
+                    ["Salvar o documento", ""]]
+
+    monkeypatch.setattr(dcp, "INTERVALO_DO_AVISO", 0)
+    tela = _TelaQueMostraOutroBotao()
+    dcp.esperar_a_descarga(tela, [], 300)
+    saida = capsys.readouterr().out
+    assert "[APARECEU NA TELA] 'Salvar o documento'" in saida
