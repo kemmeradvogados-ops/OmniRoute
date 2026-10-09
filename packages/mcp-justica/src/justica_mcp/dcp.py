@@ -39,6 +39,17 @@ ESCOLHA_CANCELAR = "Cancelar"
 # estava passando por cima deste teto, que existe exatamente para isto.
 TETO_DO_DOWNLOAD = 300
 
+# De quanto em quanto tempo a espera pelo arquivo fala, e de quanto em quanto
+# tempo ela confere se a janela continua aberta.
+#
+# Em 09/10/2026 o lote 1 foi marcado certo, 45 de 45, a espera de 300s comecou
+# e o terminal ficou mudo. No fim a janela nao estava mais aberta, e nao ha
+# como saber se foi o operador que a fechou achando que tinha travado ou se ela
+# morreu sozinha. Espera muda de cinco minutos e um convite para fechar a
+# janela, e e isso que estes dois numeros desfazem.
+INTERVALO_DO_AVISO = 20
+PASSO_DA_ESPERA = 500
+
 
 def espera_do_arquivo(segundos: Any) -> int:
     """O prazo do DOWNLOAD, que nunca e menor que o teto proprio dele.
@@ -455,6 +466,127 @@ def _gravar(baixado: Any, destino: Any, nome: str) -> str:
     return str(arquivo)
 
 
+def janela_fechada(pagina: Any) -> bool:
+    """A janela ainda esta aberta? Erro ao perguntar ja e resposta: nao."""
+    try:
+        return bool(pagina.is_closed())
+    except Exception:
+        return True
+
+
+def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
+    """Ouve os downloads da janela e das abas que ela abrir, e GRAVA na hora.
+
+    O ouvinte entra ANTES do clique, e grava dentro do proprio aviso, por duas
+    razoes que ja custaram copia em campo. A primeira e do e-SAJ, em
+    22/09/2026: a janela se fechou entre o aviso de download e a gravacao, e
+    meio segundo de atraso levou o arquivo junto. A segunda e deste portal, em
+    09/10/2026: com `expect_download` o arquivo so e gravado depois que a
+    espera termina, entao janela que morre no meio da geracao do PDF nao deixa
+    nada no disco, nem quando o portal ja tinha entregue.
+    """
+
+    def guardar(baixado: Any) -> None:
+        registro: dict[str, Any] = {"baixado": baixado, "arquivo": None, "erro": None}
+        capturados.append(registro)
+        try:
+            registro["arquivo"] = gravar(baixado)
+        except Exception as exc:
+            registro["erro"] = f"{type(exc).__name__}: {exc}"
+
+    def ouvir_a_aba_nova(outra: Any) -> None:
+        outra.on("download", guardar)
+
+    pagina.on("download", guardar)
+    ouvindo_o_contexto = False
+    try:
+        pagina.context.on("page", ouvir_a_aba_nova)
+        ouvindo_o_contexto = True
+    except Exception:
+        # Sem acesso ao contexto, a janela principal continua sendo ouvida: e
+        # menos cobertura, nao um erro que justifique nao esperar o arquivo.
+        pass
+
+    def parar_de_ouvir() -> None:
+        """Tira o ouvinte da janela quando a espera acaba.
+
+        Sem isto, o lote 2 e ouvido tambem pelo ouvinte que o lote 1 deixou
+        para tras, e cada arquivo seguinte e gravado uma vez a mais do que o
+        anterior, por cima do caminho do lote errado.
+        """
+        try:
+            pagina.remove_listener("download", guardar)
+        except Exception:
+            pass
+        if ouvindo_o_contexto:
+            try:
+                pagina.context.remove_listener("page", ouvir_a_aba_nova)
+            except Exception:
+                pass
+
+    return parar_de_ouvir
+
+
+def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
+                       recuo: str = "      ") -> Optional[str]:
+    """Acompanha a geracao do PDF. None quando o arquivo chegou.
+
+    Devolve, quando nao chegou, a frase que diz o que aconteceu: o portal
+    demorou mais que o prazo, ou a janela se fechou no meio. Sao coisas
+    diferentes e o operador precisa saber qual das duas foi.
+    """
+    import time
+
+    comeco = time.time()
+    limite = comeco + espera
+    proximo_aviso = comeco + INTERVALO_DO_AVISO
+    # Duas redeas, nao uma. O relogio e quem manda no navegador de verdade; a
+    # conta de voltas existe porque cada volta dorme `PASSO_DA_ESPERA`, entao
+    # passar desse numero significa que a espera nao esta dormindo coisa
+    # nenhuma, e ficar rodando a vazio por cinco minutos nao ajuda ninguem.
+    voltas = 0
+    voltas_maximas = int(espera * 1000 / PASSO_DA_ESPERA) + 2
+    while time.time() < limite and voltas < voltas_maximas:
+        voltas += 1
+        if capturados:
+            return None
+        if janela_fechada(pagina):
+            return (f"A janela se fechou {int(time.time() - comeco)}s depois do "
+                    f"pedido, antes de o arquivo chegar. O prazo era de {espera}s.")
+        agora = time.time()
+        if agora >= proximo_aviso:
+            proximo_aviso = agora + INTERVALO_DO_AVISO
+            print(f"{recuo}... {int(agora - comeco)}s de {espera}s. O portal ainda "
+                  "esta gerando o PDF. Nao feche a janela.")
+        try:
+            pagina.wait_for_timeout(PASSO_DA_ESPERA)
+        except Exception:
+            if capturados:
+                return None
+            return (f"A janela parou de responder {int(time.time() - comeco)}s "
+                    "depois do pedido, antes de o arquivo chegar.")
+    if capturados:
+        return None
+    return f"Nenhum arquivo chegou em {espera}s depois do pedido."
+
+
+def arquivo_capturado(capturados: list) -> Optional[str]:
+    """O caminho do primeiro arquivo que chegou ao disco, se chegou."""
+    for registro in capturados:
+        if registro.get("arquivo"):
+            return registro["arquivo"]
+    return None
+
+
+def recado_de_gravacao(capturados: list) -> str:
+    """O que deu errado ao gravar, quando o aviso veio e o arquivo nao ficou."""
+    erros = [r["erro"] for r in capturados if r.get("erro")]
+    if not erros:
+        return ""
+    return (" O navegador anunciou o download e a gravacao falhou: "
+            + "; ".join(erros) + ".")
+
+
 def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
                     segundos: int = TETO_DO_DOWNLOAD) -> str:
     """Abre a caixa de download e salva SO o que esta marcado."""
@@ -481,15 +613,23 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
     guarda.pode_executar(Acao.CLICAR, alvo_da_escolha, url=pagina.url)
     espera = espera_do_arquivo(segundos)
     print(f"      Esperando ate {espera}s pelo arquivo. O portal gera o PDF "
-          "agora, e isso demora.")
+          "agora, e isso demora. Nao feche a janela.")
+    capturados: list = []
+    parar_de_ouvir = escutar_descargas(
+        pagina, capturados, lambda baixado: _gravar(baixado, destino, nome))
     try:
-        with pagina.expect_download(timeout=espera * 1000) as info:
-            clicar_com_jeito(escolha)
-    except Exception as exc:
-        raise DownloadIndisponivel(
-            f"{ESCOLHA_MARCADOS!r} foi clicado e nenhum arquivo chegou em "
-            f"{espera}s ({type(exc).__name__}). Nada foi gravado.") from None
-    return _gravar(info.value, destino, nome)
+        clicar_com_jeito(escolha)
+        parada = esperar_a_descarga(pagina, capturados, espera)
+    finally:
+        parar_de_ouvir()
+    arquivo = arquivo_capturado(capturados)
+    if arquivo:
+        return arquivo
+    if parada is None:
+        parada = "O navegador anunciou o download e nada ficou no disco."
+    raise DownloadIndisponivel(
+        f"{ESCOLHA_MARCADOS!r} foi clicado e nenhum arquivo foi gravado. "
+        + parada + recado_de_gravacao(capturados))
 
 
 def permitir_o_download_marcado(pagina: Any, guarda: Any) -> None:
@@ -631,6 +771,13 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
                 f"{chave}-lote{numero}-paginas{primeira}a{ultima}", segundos)
         except DownloadIndisponivel as exc:
             falhas.append(f"lote {numero} (paginas {primeira} a {ultima}): {exc}")
+            # Com a janela fechada nao ha o que tentar: marcar e clicar numa
+            # tela que nao existe mais so troca o recado certo, "a janela se
+            # fechou", por uma fila de erros de leitura que escondem a causa.
+            if janela_fechada(pagina):
+                falhas.append("a janela se fechou, e os lotes seguintes nem "
+                              "chegaram a ser tentados")
+                break
             continue
         arquivos.append(arquivo)
         print(f"    Lote {numero} gravado em {arquivo}")
@@ -710,16 +857,40 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
     guarda.pode_executar(Acao.CLICAR, alvo_da_escolha, url=pagina.url)
     espera = espera_do_arquivo(segundos)
     print(f"    Esperando ate {espera}s pelo arquivo da integra. O portal gera "
-          "o PDF agora, e processo grande demora.")
+          "o PDF agora, e processo grande demora. Nao feche a janela.")
+
+    def gravar_a_integra(baixado: Any) -> str:
+        pasta = Path(destino)
+        pasta.mkdir(parents=True, exist_ok=True)
+        sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
+        arquivo = pasta / f"integra-{sugerido}"
+        baixado.save_as(str(arquivo))
+        return str(arquivo)
+
+    capturados: list = []
+    parar_de_ouvir = escutar_descargas(pagina, capturados, gravar_a_integra)
     try:
-        with pagina.expect_download(timeout=espera * 1000) as info:
-            escolha.click()
-    except Exception as exc:
-        # Em vez de so falhar, LE o indice. O advogado pediu em 08/10/2026 duas
-        # formas de baixar em partes, e as duas precisam marcar itens do
-        # indice, que nunca foi lido com a caixa de selecao aberta. Fazer essa
-        # leitura aqui aproveita a corrida que ja foi gasta.
-        mapa = []
+        escolha.click()
+        parada = esperar_a_descarga(pagina, capturados, espera, recuo="    ")
+    finally:
+        parar_de_ouvir()
+    arquivo = arquivo_capturado(capturados)
+    if arquivo:
+        return arquivo
+
+    if parada is None:
+        parada = "O navegador anunciou o download e nada ficou no disco."
+    parada += recado_de_gravacao(capturados)
+
+    # Em vez de so falhar, LE o indice. O advogado pediu em 08/10/2026 duas
+    # formas de baixar em partes, e as duas precisam marcar itens do indice,
+    # que nunca foi lido com a caixa de selecao aberta. Fazer essa leitura aqui
+    # aproveita a corrida que ja foi gasta. Com a janela fechada nao ha indice
+    # para ler, e tentar so troca o recado certo por um erro de leitura.
+    mapa = []
+    if janela_fechada(pagina):
+        mapa = ["a janela se fechou antes de o indice poder ser lido"]
+    else:
         try:
             if abrir_caixa_de_selecao(pagina, guarda):
                 mapa = relatar_o_indice(pagina)
@@ -727,21 +898,13 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
                 mapa = [f"o botao {BOTAO_CAIXA_DE_SELECAO!r} nao esta na barra"]
         except Exception as outra:
             mapa = [f"nao foi possivel ler o indice ({type(outra).__name__})"]
-        raise DownloadIndisponivel(
-            f"A escolha {ESCOLHA_INTEGRAL!r} foi clicada e nenhum arquivo chegou "
-            f"em {espera}s ({type(exc).__name__}). Processo grande nao baixa "
-            "de uma vez, como o advogado ja havia informado em 06/10/2026."
-            + "\n    O INDICE DE DOCUMENTOS, para baixar em partes:\n    "
-            + "\n    ".join(mapa)
-        ) from None
-
-    baixado = info.value
-    pasta = Path(destino)
-    pasta.mkdir(parents=True, exist_ok=True)
-    sugerido = baixado.suggested_filename or f"{chave}-integra.pdf"
-    arquivo = pasta / f"integra-{sugerido}"
-    baixado.save_as(str(arquivo))
-    return str(arquivo)
+    raise DownloadIndisponivel(
+        f"A escolha {ESCOLHA_INTEGRAL!r} foi clicada e nenhum arquivo foi "
+        f"gravado. {parada} Processo grande nao baixa de uma vez, como o "
+        "advogado ja havia informado em 06/10/2026."
+        + "\n    O INDICE DE DOCUMENTOS, para baixar em partes:\n    "
+        + "\n    ".join(mapa)
+    ) from None
 
 
 # ---------------------------------------------------------------------------

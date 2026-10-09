@@ -35,7 +35,7 @@ class _Elemento:
 
     def click(self):
         self.pagina.cliques.append(self.rotulo or self.texto)
-        self.pagina.depois_do_clique()
+        self.pagina.depois_do_clique(self.rotulo or self.texto)
 
 
 class _Baixado:
@@ -74,14 +74,33 @@ class _Visualizador:
         self.entrega_arquivo = entrega_arquivo
         self.caixa_aberta = False
         self.baixado = _Baixado()
+        self.ouvintes = []
+        self.fechada = False
         self.barra = []
         if tem_botao:
             self.barra.append(
                 _Elemento(self, "download_for_offline", BOTAO_DE_DOWNLOAD))
 
-    def depois_do_clique(self):
+    # O navegador de verdade nao devolve o arquivo no retorno do clique: ele
+    # AVISA, por evento, quando o portal entrega. Falso que entregasse no
+    # retorno escondia exatamente o defeito de 09/10/2026.
+    def on(self, evento, funcao):
+        if evento == "download":
+            self.ouvintes.append(funcao)
+
+    def remove_listener(self, evento, funcao):
+        if evento == "download" and funcao in self.ouvintes:
+            self.ouvintes.remove(funcao)
+
+    def is_closed(self):
+        return self.fechada
+
+    def depois_do_clique(self, texto=""):
         if self.abre_caixa:
             self.caixa_aberta = True
+        if texto in (ESCOLHA_INTEGRAL, ESCOLHA_MARCADOS) and self.entrega_arquivo:
+            for ouvinte in list(self.ouvintes):
+                ouvinte(self.baixado)
 
     def _botoes_da_caixa(self):
         if not self.caixa_aberta:
@@ -101,10 +120,6 @@ class _Visualizador:
     def wait_for_timeout(self, _):
         pass
 
-    def expect_download(self, timeout=None):
-        if not self.entrega_arquivo:
-            raise RuntimeError("TimeoutError: nenhum download chegou")
-        return _Espera(self.baixado)
 
 
 class _Guarda:
@@ -3683,6 +3698,29 @@ class _BotaoDaCaixaDeSelecao:
         self.tela.selecao_aberta = not self.tela.selecao_aberta
 
 
+class _ArquivoBaixado:
+    """O que o navegador entrega junto com o aviso de download."""
+
+    suggested_filename = "processo.pdf"
+
+    def save_as(self, caminho):
+        import pathlib
+
+        pathlib.Path(caminho).write_bytes(b"%PDF-1.4 teste")
+
+
+class _EscolhaDaCaixa(_BotaoDeTela):
+    """A escolha da caixa de download: clicar nela faz o portal entregar."""
+
+    def __init__(self, texto, tela):
+        super().__init__(texto)
+        self.tela = tela
+
+    def click(self):
+        super().click()
+        self.tela.anunciar_o_download()
+
+
 class _VisualizadorComIndice:
     """O Visualizador com o indice aberto e a caixa de selecao ligada."""
 
@@ -3707,8 +3745,32 @@ class _VisualizadorComIndice:
         # no portal. Falso que nao troca esconderia o defeito de 08/10/2026.
         self.caixa = _BotaoDaCaixaDeSelecao(self)
         self.selecao_aberta = False
-        self.escolha = _BotaoDeTela(ESCOLHA_MARCADOS)
+        self.escolha = _EscolhaDaCaixa(ESCOLHA_MARCADOS, self)
         self._marcados = ESCOLHA_MARCADOS
+        self.ouvintes = []
+        self.fechada = False
+
+    # O navegador avisa por evento; o arquivo nao volta do clique.
+    def on(self, evento, funcao):
+        if evento == "download":
+            self.ouvintes.append(funcao)
+
+    def remove_listener(self, evento, funcao):
+        if evento == "download" and funcao in self.ouvintes:
+            self.ouvintes.remove(funcao)
+
+    def is_closed(self):
+        return self.fechada
+
+    def anunciar_o_download(self):
+        """O que o navegador faz quando o portal termina de gerar o PDF."""
+        if not self.entrega:
+            return
+        self.downloads += 1
+        self.marcados_por_download.append(
+            [i.inicio for i in self.itens if i.marca.marcada])
+        for ouvinte in list(self.ouvintes):
+            ouvinte(_ArquivoBaixado())
 
     def query_selector_all(self, seletor):
         from justica_mcp.dcp import BOTAO_CAIXA_DE_SELECAO, BOTAO_DE_DOWNLOAD
@@ -3734,34 +3796,6 @@ class _VisualizadorComIndice:
     def wait_for_timeout(self, _ms):
         pass
 
-    def expect_download(self, timeout=None):
-        tela = self
-
-        class _Espera:
-            def __enter__(_s):
-                return _s
-
-            def __exit__(_s, *a):
-                if not tela.entrega:
-                    raise RuntimeError("TimeoutError: nenhum arquivo")
-                tela.downloads += 1
-                tela.marcados_por_download.append(
-                    [i.inicio for i in tela.itens if i.marca.marcada])
-                return False
-
-            @property
-            def value(_s):
-                class _Arquivo:
-                    suggested_filename = "processo.pdf"
-
-                    def save_as(self, caminho):
-                        import pathlib
-
-                        pathlib.Path(caminho).write_bytes(b"%PDF-1.4 teste")
-
-                return _Arquivo()
-
-        return _Espera()
 
 
 def _rotulo_da_caixa(tela, rotulo):
@@ -4249,4 +4283,126 @@ def test_lote_que_nao_existe_para_e_diz_quantos_ha(tmp_path):
     with pytest.raises(DownloadIndisponivel, match="tem 2 lote"):
         baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2,
                         apenas=9)
+    assert tela.downloads == 0
+
+
+# ---------------- a espera pelo arquivo, de olhos abertos ----------------
+#
+# Em 09/10/2026 o lote 1 foi marcado certo, 45 de 45, a espera de 300s comecou,
+# o terminal ficou mudo e no fim a janela nao estava mais aberta. Nenhum
+# arquivo chegou ao disco em nenhuma tentativa, nunca. Estes testes guardam as
+# tres mudancas que isso obrigou: gravar no aviso, dizer o que aconteceu e
+# falar durante a espera.
+
+
+class _JanelaQueMorreAoEntregar(_Visualizador):
+    """O navegador anuncia o download e a janela se fecha em seguida."""
+
+    def depois_do_clique(self, texto=""):
+        super().depois_do_clique(texto)
+        if texto == ESCOLHA_MARCADOS:
+            self.fechada = True
+
+
+def test_o_arquivo_fica_no_disco_mesmo_com_a_janela_morrendo_depois():
+    """Gravar dentro do aviso, e nao depois da espera, e o que salva a copia.
+
+    Com `expect_download` o arquivo so era gravado quando a espera terminava:
+    janela que morre no meio da geracao nao deixava nada no disco, nem quando o
+    portal ja tinha entregue.
+    """
+    import tempfile
+
+    from justica_mcp.dcp import baixar_marcados
+
+    tela = _JanelaQueMorreAoEntregar()
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = baixar_marcados(tela, _Guarda(), pasta, "lote-1")
+    assert tela.baixado.gravado_em == arquivo
+
+
+def test_janela_fechada_na_espera_diz_isso_e_nao_prazo_vencido():
+    """Prazo vencido e janela fechada sao coisas diferentes, e so o operador
+    sabe qual das duas aconteceu com ele. O recado precisa dizer qual foi."""
+    import tempfile
+
+    from justica_mcp.dcp import baixar_marcados
+
+    tela = _Visualizador(entrega_arquivo=False)
+    tela.fechada = True
+    with tempfile.TemporaryDirectory() as pasta:
+        with pytest.raises(DownloadIndisponivel) as erro:
+            baixar_marcados(tela, _Guarda(), pasta, "lote-1")
+    recado = str(erro.value)
+    assert "se fechou" in recado
+    assert "Nenhum arquivo chegou" not in recado
+
+
+def test_prazo_vencido_com_a_janela_viva_diz_prazo_vencido():
+    import tempfile
+
+    from justica_mcp.dcp import baixar_marcados
+
+    tela = _Visualizador(entrega_arquivo=False)
+    with tempfile.TemporaryDirectory() as pasta:
+        with pytest.raises(DownloadIndisponivel) as erro:
+            baixar_marcados(tela, _Guarda(), pasta, "lote-1")
+    recado = str(erro.value)
+    assert "Nenhum arquivo chegou" in recado
+    assert "se fechou" not in recado
+
+
+def test_a_espera_tira_o_ouvinte_quando_acaba():
+    """Ouvinte que fica para tras faz o lote 2 ser gravado tambem pelo ouvinte
+    do lote 1, por cima do caminho errado."""
+    import tempfile
+
+    from justica_mcp.dcp import baixar_marcados
+
+    tela = _Visualizador()
+    with tempfile.TemporaryDirectory() as pasta:
+        baixar_marcados(tela, _Guarda(), pasta, "lote-1")
+        assert tela.ouvintes == []
+        baixar_marcados(tela, _Guarda(), pasta, "lote-2")
+        assert tela.ouvintes == []
+
+
+def test_a_espera_fala_enquanto_espera(capsys, monkeypatch):
+    """Espera muda de cinco minutos e um convite para fechar a janela."""
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "INTERVALO_DO_AVISO", 0)
+    tela = _Visualizador(entrega_arquivo=False)
+    dcp.esperar_a_descarga(tela, [], 300)
+    saida = capsys.readouterr().out
+    assert "Nao feche a janela" in saida
+    assert "de 300s" in saida
+
+
+def test_o_dcp_nao_espera_download_de_olhos_fechados():
+    """`expect_download` nao enxerga a janela morrer nem fala durante a espera,
+    e so grava o arquivo quando a espera termina. Nenhum dos tres serve aqui."""
+    from pathlib import Path
+
+    from justica_mcp import dcp
+
+    fonte = Path(dcp.__file__).read_text(encoding="utf-8")
+    # O nome pode aparecer em comentario, contando a licao. O que nao pode
+    # voltar e a CHAMADA.
+    assert ".expect_download(" not in fonte
+
+
+def test_janela_fechada_interrompe_os_lotes_seguintes():
+    """Insistir numa tela que nao existe mais troca o recado certo por uma fila
+    de erros de leitura."""
+    import tempfile
+
+    from justica_mcp.dcp import baixar_em_lotes
+
+    tela = _VisualizadorComIndice([1, 60, 120, 180], entrega=False)
+    tela.fechada = True
+    with tempfile.TemporaryDirectory() as pasta:
+        with pytest.raises(DownloadIndisponivel) as erro:
+            baixar_em_lotes(tela, _Guarda(), pasta, "x", tamanho=50)
+    assert "se fechou" in str(erro.value)
     assert tela.downloads == 0
