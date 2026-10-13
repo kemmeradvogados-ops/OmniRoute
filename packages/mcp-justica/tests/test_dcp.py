@@ -5102,3 +5102,99 @@ def test_tela_que_poe_tudo_num_container_so_ainda_separa_os_movimentos():
         ("27/04/2018", "Juntada de Peticao"),
         ("03/05/2018", "Conclusao ao Juiz"),
     ]
+
+
+# ---------------- o valor do rotulo vem por quatro caminhos ----------------
+#
+# Na corrida de 13/10/2026 os blocos nao viraram movimentacao nenhuma. A
+# leitura procurava o valor em dois lugares: o elemento irmao seguinte e o
+# texto do pai COMECANDO pelo rotulo. Na tela real nenhum dos dois serve: o
+# valor pode ser texto solto, e o texto do pai comeca pelo titulo "Descricao
+# Detalhada", nao pelo rotulo.
+
+TELA_COM_VALOR_EM_TEXTO_SOLTO = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>P</title></head><body><div id="detalhes-processo">
+  <div id="modal-geral">
+    <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+    <div><label>Data: </label>27/04/2018</div>
+    <div><label>Descricao: </label>Juntada de Peticao</div>
+  </div>
+  <div id="modal-geral">
+    <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+    <div><label>Data: </label>03/05/2018</div>
+    <div><label>Descricao: </label>Conclusao ao Juiz</div>
+  </div>
+</div></body></html>"""
+
+TELA_COM_TUDO_NO_MESMO_NIVEL = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>P</title></head><body><div id="detalhes-processo">
+  <div id="modal-geral">
+    <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+    <label>Data: </label>27/04/2018
+    <label>Descricao: </label>Juntada de Peticao
+    <label>Data da juntada: </label>28/04/2018
+  </div>
+  <div id="modal-geral">
+    <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+    <label>Data: </label>03/05/2018
+    <label>Descricao: </label>Conclusao ao Juiz
+  </div>
+</div></body></html>"""
+
+
+@semNavegador
+def test_valor_em_texto_solto_depois_do_rotulo_e_lido():
+    """`nextElementSibling` pula texto solto, e era so nele que a leitura
+    procurava."""
+    dados = _ler_em_navegador(TELA_COM_VALOR_EM_TEXTO_SOLTO)
+    assert [(m["data"], m["descricao"]) for m in dados["movimentacoes"]] == [
+        ("27/04/2018", "Juntada de Peticao"),
+        ("03/05/2018", "Conclusao ao Juiz"),
+    ]
+
+
+@semNavegador
+def test_rotulo_e_valor_no_mesmo_nivel_nao_se_contaminam():
+    """Com tudo no mesmo nivel, o texto depois de um rotulo contem o proximo
+    rotulo e o valor dele. O valor precisa parar antes disso."""
+    dados = _ler_em_navegador(TELA_COM_TUDO_NO_MESMO_NIVEL)
+    descricoes = [m["descricao"] for m in dados["movimentacoes"]]
+    assert descricoes == ["Juntada de Peticao", "Conclusao ao Juiz"]
+    for descricao in descricoes:
+        assert ":" not in descricao, descricao
+
+
+@semNavegador
+def test_data_e_descricao_do_mesmo_movimento_caem_no_mesmo_bloco():
+    """Exigir so a descricao no ancestral nao servia: numa tela que poe cada
+    rotulo na sua propria caixa, a caixa da descricao ja basta por si e a da
+    data nao, entao os dois caiam em blocos diferentes e nenhum virava
+    movimentacao."""
+    dados = _ler_em_navegador(TELA_COM_VALOR_EM_TEXTO_SOLTO)
+    diagnostico = dados["estrutura"]["diagnostico_dos_blocos"]
+    assert diagnostico["blocos_formados"] == 2
+    for chaves in diagnostico["chaves_por_bloco"]:
+        assert "data" in chaves and "descricao" in chaves
+
+
+@semNavegador
+def test_o_diagnostico_diz_onde_a_leitura_dos_blocos_parou():
+    """Nao achar rotulo, nao formar bloco e formar bloco com valor vazio sao
+    tres defeitos diferentes, com tres consertos diferentes."""
+    dados = _ler_em_navegador(TELA_COM_MOVIMENTOS_EM_BLOCOS)
+    diagnostico = dados["estrutura"]["diagnostico_dos_blocos"]
+    assert diagnostico["rotulos_de_movimento_na_tela"] == 7
+    assert diagnostico["blocos_formados"] == 3
+    assert diagnostico["chaves_sem_valor_por_bloco"] == [[], [], []]
+
+
+@semNavegador
+def test_o_diagnostico_nao_carrega_valor_nenhum():
+    """Ele existe para ser mostrado, como o resto do bloco de estrutura."""
+    import json
+
+    dados = _ler_em_navegador(TELA_COM_MOVIMENTOS_EM_BLOCOS)
+    texto = json.dumps(dados["estrutura"]["diagnostico_dos_blocos"],
+                       ensure_ascii=False)
+    for conteudo in ("Juntada", "Conclusao", "27/04", "Fulano"):
+        assert conteudo not in texto, conteudo

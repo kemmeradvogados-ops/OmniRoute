@@ -1754,47 +1754,103 @@ JS_DA_TELA_DO_PROCESSO = r"""
   // Os rotulos sao lidos NA ORDEM DO DOCUMENTO, e um movimento termina quando
   // um rotulo que ele ja tem reaparece. Isso nao depende de saber como a tela
   // agrupa os blocos, que e justamente o que eu nao sei.
-  const valorDoRotulo = (rot) => {
-    let irmao = rot.nextElementSibling;
-    while (irmao) {
-      if (irmao.tagName === 'LABEL') break;
-      const t = corta(irmao.innerText, 300);
-      if (t) return t;
-      irmao = irmao.nextElementSibling;
-    }
-    const pai = rot.parentElement;
-    if (pai) {
-      const todo = corta(pai.innerText, 400);
-      const so = corta(rot.innerText, 60);
-      if (todo.indexOf(so) === 0) return corta(todo.slice(so.length), 300);
+  // Onde comeca o PROXIMO rotulo de movimento dentro de um texto. Serve para
+  // nao entregar, como valor de um rotulo, o rotulo seguinte e o valor dele
+  // junto: no texto do bloco inteiro eles vem colados.
+  const PROXIMO_ROTULO =
+    /(data(?:\s+d[ao]\s+[a-z]+)?|descricao(?:\s+da\s+juntada)?|tipo\s+do\s+movimento)\s*:/;
+  const ateOProximoRotulo = (valor) => {
+    const achado = PROXIMO_ROTULO.exec(semAcento(valor));
+    if (!achado || achado.index <= 0) return valor;
+    // `semAcento` nao muda o comprimento dos acentos latinos, entao a posicao
+    // achada na copia sem acento vale na original.
+    return corta(valor.slice(0, achado.index), 300);
+  };
+
+  // O valor de um rotulo, por quatro caminhos. A primeira versao tinha so os
+  // dois primeiros e devolvia vazio na tela real: o valor nao era elemento
+  // irmao, e o texto do pai nao COMECA pelo rotulo, porque o titulo
+  // "Descricao Detalhada" vem antes dele dentro do mesmo bloco.
+  const textoApos = (no, parar) => {
+    let seguinte = no.nextSibling;
+    while (seguinte) {
+      if (seguinte.nodeType === 1) {
+        if (parar && seguinte.tagName === 'LABEL') break;
+        const t = corta(seguinte.innerText || seguinte.textContent, 300);
+        if (t) return t;
+      } else if (seguinte.nodeType === 3) {
+        const t = corta(seguinte.textContent, 300);
+        if (t) return t;
+      }
+      seguinte = seguinte.nextSibling;
     }
     return '';
   };
 
+  const valorDoRotulo = (rot) => {
+    // 1. O que vem logo depois do rotulo, inclusive texto solto.
+    const direto = textoApos(rot, true);
+    if (direto) return ateOProximoRotulo(direto);
+
+    // 2. O campo que o rotulo aponta com `for`.
+    const para = rot.getAttribute('for');
+    if (para) {
+      try {
+        const campo = document.getElementById(para);
+        if (campo && campo !== rot) {
+          const t = corta(campo.value || campo.innerText || '', 300);
+          if (t) return ateOProximoRotulo(t);
+        }
+      } catch (e) { /* identificador invalido como seletor */ }
+    }
+
+    const pai = rot.parentElement;
+    if (!pai) return '';
+
+    // 3. O texto do pai DEPOIS do rotulo, onde quer que ele esteja.
+    const todo = corta(pai.innerText, 600);
+    const so = corta(rot.innerText, 60);
+    const onde = todo.indexOf(so);
+    if (onde >= 0) {
+      const resto = corta(todo.slice(onde + so.length), 300);
+      if (resto) return ateOProximoRotulo(resto);
+    }
+
+    // 4. O rotulo sozinho numa caixa, com o valor na caixa seguinte.
+    const tio = textoApos(pai, false);
+    return tio ? ateOProximoRotulo(tio) : '';
+  };
+
   const chaveDoRotulo = (rot) =>
     semAcento(corta(rot.innerText, 60)).replace(/:$/, '').trim();
-  const temDescricao = (no) => Array.from(no.querySelectorAll('label'))
-    .some(l => ROTULOS_DE_DESCRICAO.indexOf(chaveDoRotulo(l)) >= 0);
-  // O bloco de um rotulo e o MENOR ancestral que contem uma descricao. A
-  // primeira versao disto separava os blocos so pela repeticao de rotulo, e
-  // perdia o movimento cujos rotulos nao repetiam os do anterior: "Data do
-  // expediente" e "Descricao da Juntada" entravam no bloco de "Data" e
-  // "Descricao" como se fossem o mesmo movimento.
+  // O bloco de um rotulo e o MENOR ancestral que contem data E descricao.
+  //
+  // Pedir so a descricao nao servia, e o defeito era silencioso: numa tela que
+  // poe cada rotulo na sua propria caixa, a caixa da descricao ja basta por si
+  // e a da data nao, entao data e descricao do MESMO movimento caiam em blocos
+  // diferentes e nenhum dos dois virava movimentacao. Exigir os dois torna o
+  // bloco o mesmo para os dois rotulos.
+  const temRotuloDe = (no, chaves) => Array.from(no.querySelectorAll('label'))
+    .some(l => chaves.indexOf(chaveDoRotulo(l)) >= 0);
   const blocoDe = (rot) => {
     let no = rot.parentElement;
     for (let i = 0; i < 10 && no; i++) {
-      if (temDescricao(no)) return no;
+      if (temRotuloDe(no, ROTULOS_DE_DATA) && temRotuloDe(no, ROTULOS_DE_DESCRICAO)) {
+        return no;
+      }
       no = no.parentElement;
     }
     return null;
   };
 
   const blocos = [];
+  let rotulosDeMovimento = 0;
   let atual = null;
   let donoAtual = null;
   for (const rot of document.querySelectorAll('label')) {
     const chave = chaveDoRotulo(rot);
     if (ROTULOS_DE_MOVIMENTO.indexOf(chave) < 0) continue;
+    rotulosDeMovimento += 1;
     const dono = blocoDe(rot);
     const ehDescricao = ROTULOS_DE_DESCRICAO.indexOf(chave) >= 0;
     const jaTemDescricao = atual !== null &&
@@ -1827,6 +1883,21 @@ JS_DA_TELA_DO_PROCESSO = r"""
     }
     guardarMovimento(data, hora, descricao, 'bloco de rotulos da tela');
   }
+
+  // O DIAGNOSTICO da leitura dos blocos. Em 13/10/2026 a leitura devolveu uma
+  // movimentacao so e o terminal nao sabia dizer onde ela tinha parado: se nao
+  // achou rotulo, se nao formou bloco, ou se formou bloco com valor vazio. Sao
+  // tres defeitos diferentes com tres consertos diferentes.
+  //
+  // Vai so a CHAVE de cada rotulo, que e vocabulario da tela, e se o valor
+  // ficou vazio, que e um sim ou nao. O valor em si nao entra aqui.
+  const diagnostico = {
+    rotulos_de_movimento_na_tela: rotulosDeMovimento,
+    blocos_formados: blocos.length,
+    chaves_por_bloco: blocos.slice(0, 8).map(b => Object.keys(b)),
+    chaves_sem_valor_por_bloco: blocos.slice(0, 8)
+      .map(b => Object.keys(b).filter(k => !b[k])),
+  };
 
   // A ESTRUTURA das tabelas, para apertar esta leitura contra a tela real. Vai
   // junto o cabecalho de cada uma, que e vocabulario da TELA e nao dado de
@@ -1918,7 +1989,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
   return {pares: pares, partes: partes, movimentacoes: movimentacoes,
           tabelas: tabelas, familias: familias,
           rotulosCandidatos: rotulosCandidatos,
-          secoes: secoes, botoes: botoes};
+          secoes: secoes, botoes: botoes, diagnostico: diagnostico};
 }
 """
 
@@ -1937,6 +2008,28 @@ def _sem_dado(texto: Any) -> str:
     return sem_dado_de_processo(str(texto or ""))
 
 
+def _diagnostico(bruto: Any) -> dict:
+    """Onde a leitura dos blocos de movimento parou, em numeros e em chaves.
+
+    Nao achar rotulo, nao formar bloco e formar bloco com valor vazio sao tres
+    defeitos diferentes, com tres consertos diferentes. Sem isto o terminal
+    dizia so "uma movimentacao" e nao dava para saber qual dos tres era.
+    """
+    if not isinstance(bruto, dict):
+        return {"rotulos_de_movimento_na_tela": 0, "blocos_formados": 0,
+                "chaves_por_bloco": [], "chaves_sem_valor_por_bloco": []}
+    return {
+        "rotulos_de_movimento_na_tela":
+            int(bruto.get("rotulos_de_movimento_na_tela") or 0),
+        "blocos_formados": int(bruto.get("blocos_formados") or 0),
+        "chaves_por_bloco": [[_sem_dado(c) for c in bloco]
+                             for bloco in (bruto.get("chaves_por_bloco") or [])],
+        "chaves_sem_valor_por_bloco":
+            [[_sem_dado(c) for c in bloco]
+             for bloco in (bruto.get("chaves_sem_valor_por_bloco") or [])],
+    }
+
+
 def _leitura_vazia(falha: Optional[str] = None) -> dict:
     """O mesmo formato, quando nao houve o que ler. Nunca um dicionario torto.
 
@@ -1948,7 +2041,8 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
         "partes": [],
         "movimentacoes": [],
         "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": [],
-                      "secoes": [], "botoes": [], "rotulos_lidos": []},
+                      "secoes": [], "botoes": [], "rotulos_lidos": [],
+                      "diagnostico_dos_blocos": _diagnostico(None)},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -2048,6 +2142,7 @@ def extrair(quadro: Any) -> dict:
         # So as CHAVES do que foi lido. O valor e dado de processo e fica fora
         # deste bloco, que existe para poder ser mostrado.
         "rotulos_lidos": sorted(_sem_dado(r) for r in principais),
+        "diagnostico_dos_blocos": _diagnostico(bruto.get("diagnostico")),
     }
     saida["totais"] = {"principais": len(principais),
                        "partes": len(partes),
