@@ -2404,14 +2404,27 @@ def _paginas_na_tela(quadro: Any) -> list:
     return sorted(saida, key=lambda par: par[0])
 
 
+def _assinatura_da_pagina(movimentos: list) -> tuple:
+    """O que identifica a PAGINA, para saber se ela trocou.
+
+    Serve so para isso. Nao serve para descartar movimento: dois andamentos do
+    mesmo dia com a mesma descricao existem, e em 13/10/2026 este programa
+    leu 207 componentes e gravou 201, porque usava a mesma chave para as duas
+    coisas. Seis andamentos foram perdidos em silencio.
+    """
+    return tuple((m.get("data"), m.get("hora"), m.get("descricao"))
+                 for m in movimentos or [])
+
+
 def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
                                        segundos: int = 45,
                                        teto: int = TETO_DE_PAGINAS) -> dict:
-    """Visita cada pagina de movimentos e junta tudo, na ordem.
+    """Visita cada pagina de movimentos e junta TUDO, na ordem.
 
-    Somente leitura: paginar troca o que a tela MOSTRA. A prova de que uma
-    pagina trouxe algo e a lista CRESCER; quando um clique nao traz nada novo,
-    a volta acaba ali em vez de ficar clicando a toa.
+    Somente leitura: paginar troca o que a tela MOSTRA. A prova de que a
+    pagina virou e a lista inteira ficar DIFERENTE da anterior e parar de
+    mudar; a partir dai tudo o que esta nela entra, repetido ou nao, porque
+    repetido aqui e andamento de verdade.
 
     Devolve a lista acumulada e o que aconteceu, para ir ao arquivo e ao
     terminal. Pagina que nao chega e pior do que pagina que falta: o advogado
@@ -2422,22 +2435,13 @@ def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import permissao_efemera
 
-    acumulado: list = []
-    vistos: set = set()
+    def ler() -> list:
+        return list(extrair(quadro).get("movimentacoes") or [])
 
-    def juntar(lista) -> int:
-        novos = 0
-        for movimento in lista or []:
-            chave = (movimento.get("data"), movimento.get("hora"),
-                     movimento.get("descricao"))
-            if chave in vistos:
-                continue
-            vistos.add(chave)
-            acumulado.append(movimento)
-            novos += 1
-        return novos
+    pagina_atual = ler()
+    acumulado: list = list(pagina_atual)
+    assinatura = _assinatura_da_pagina(pagina_atual)
 
-    juntar(extrair(quadro).get("movimentacoes") or [])
     paginas = _paginas_na_tela(quadro)
     if not paginas:
         return {"situacao": "a tela nao tem paginacao de movimentos",
@@ -2470,28 +2474,38 @@ def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
         except Exception:
             parou_por = f"a pagina {numero} nao aceitou o clique"
             break
-        percorridas += 1
 
+        # Esperar a pagina VIRAR, e depois parar de mudar. Aceitar a primeira
+        # leitura diferente pegaria a tela no meio da troca.
         limite = _tempo.monotonic() + max(1, segundos)
-        novos = 0
+        ultima: Optional[list] = None
         estaveis = 0
+        nova: Optional[list] = None
         while _tempo.monotonic() < limite:
             try:
                 quadro.wait_for_timeout(1000)
             except Exception:
                 _tempo.sleep(1)
-            agora = juntar(extrair(quadro).get("movimentacoes") or [])
-            novos += agora
-            if agora:
-                estaveis = 0
+            lida = ler()
+            marca = _assinatura_da_pagina(lida)
+            if marca == assinatura:
                 continue
-            estaveis += 1
-            if estaveis >= LEITURAS_ESTAVEIS:
-                break
-        if novos == 0:
-            parou_por = (f"a pagina {numero} nao trouxe movimentacao nova; o "
+            if ultima is not None and marca == _assinatura_da_pagina(ultima):
+                estaveis += 1
+                if estaveis >= LEITURAS_ESTAVEIS:
+                    nova = lida
+                    break
+            else:
+                ultima = lida
+                estaveis = 0
+        if nova is None:
+            parou_por = (f"a pagina {numero} nao chegou em {segundos}s; o "
                          "historico pode estar incompleto")
             break
+
+        acumulado.extend(nova)
+        assinatura = _assinatura_da_pagina(nova)
+        percorridas += 1
 
     if percorridas >= teto:
         parou_por = f"o teto de {teto} paginas foi atingido"

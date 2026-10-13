@@ -5508,7 +5508,7 @@ def test_a_paginacao_junta_todas_as_paginas_na_ordem():
     assert quadro.clicadas == [2, 3]
 
 
-def test_pagina_que_nao_traz_nada_novo_encerra_a_volta():
+def test_pagina_que_nao_chega_encerra_a_volta_e_avisa():
     """Clicar a toa gasta tempo e esconde que o historico pode estar
     incompleto."""
     from justica_mcp.dcp import percorrer_as_paginas_de_movimentos
@@ -5518,9 +5518,37 @@ def test_pagina_que_nao_traz_nada_novo_encerra_a_volta():
         [("02/01/2020", "dois")],
         [("03/01/2020", "tres")],
     ], trava_na=3)
-    resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda(), segundos=2)
+    resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda(), segundos=4)
     assert "pode estar incompleto" in resultado["situacao"]
     assert [m["descricao"] for m in resultado["movimentacoes"]] == ["um", "dois"]
+
+
+def test_andamento_repetido_em_OUTRA_pagina_nao_e_descartado():
+    """Em 13/10/2026 o programa leu 207 componentes e gravou 201: ele usava a
+    mesma chave para dizer 'a pagina virou' e para descartar repetido, e seis
+    andamentos sumiram em silencio."""
+    from justica_mcp.dcp import percorrer_as_paginas_de_movimentos
+
+    quadro = _QuadroPaginado([
+        [("01/01/2020", "Juntada"), ("01/01/2020", "Juntada")],
+        [("02/01/2020", "Conclusao"), ("01/01/2020", "Juntada")],
+    ])
+    resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda())
+    assert len(resultado["movimentacoes"]) == 4
+    repetidos = [m for m in resultado["movimentacoes"]
+                 if m["descricao"] == "Juntada"]
+    assert len(repetidos) == 3
+
+
+def test_a_assinatura_da_pagina_serve_so_para_saber_se_ela_trocou():
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.percorrer_as_paginas_de_movimentos)
+    assert "acumulado.extend(nova)" in fonte
+    doc = inspect.getdoc(dcp._assinatura_da_pagina)
+    assert "Nao serve para descartar movimento" in doc
 
 
 def test_tela_sem_paginador_nao_e_tratada_como_erro():
