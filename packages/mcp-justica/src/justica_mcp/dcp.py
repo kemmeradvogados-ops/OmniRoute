@@ -2158,9 +2158,13 @@ def extrair(quadro: Any) -> dict:
 # Mandados. O resto do historico esta atras deste botao.
 BOTAO_TODOS_OS_MOVIMENTOS = "Todos Os Movimentos"
 
+# Quantas leituras seguidas sem crescer bastam para dizer que a tela parou de
+# montar. Tres segundos parados, com leitura a cada segundo.
+LEITURAS_ESTAVEIS = 3
+
 
 def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
-                                segundos: int = 20) -> dict:
+                                segundos: int = 45) -> dict:
     """Clica em "Todos Os Movimentos" e espera o historico chegar.
 
     Somente leitura: o botao troca o que a tela MOSTRA, nao toca em nada do
@@ -2194,17 +2198,37 @@ def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
     guarda.pode_executar(Acao.CLICAR, alvo, url=endereco)
     clicar_com_jeito(botao)
 
+    # Esperar ate PARAR de crescer, e nao ate crescer pela primeira vez.
+    #
+    # Em 13/10/2026 esta espera devolveu "clicado, 2 -> 3" e saiu. A tela ainda
+    # estava montando: o portal escreve os movimentos um apos o outro, e sair
+    # na primeira mudanca entrega tres de um historico que tem muito mais.
+    # Parar cedo demais aqui e o mesmo erro de entregar o pedaco como se fosse
+    # o todo, so que disfarcado de sucesso.
     limite = _tempo.monotonic() + max(1, segundos)
     depois = antes
+    estaveis = 0
     while _tempo.monotonic() < limite:
         try:
             quadro.wait_for_timeout(1000)
         except Exception:
             _tempo.sleep(1)
-        depois = len(extrair(quadro).get("movimentacoes") or [])
+        agora = len(extrair(quadro).get("movimentacoes") or [])
+        if agora > depois:
+            depois = agora
+            estaveis = 0
+            continue
         if depois > antes:
-            return {"situacao": f"clicado, {antes} -> {depois} movimentacao(oes)",
-                    "antes": antes, "depois": depois}
+            estaveis += 1
+            if estaveis >= LEITURAS_ESTAVEIS:
+                break
+
+    if depois > antes:
+        parou = ("a contagem parou de crescer" if estaveis >= LEITURAS_ESTAVEIS
+                 else f"o prazo de {segundos}s acabou com ela ainda crescendo")
+        return {"situacao": f"clicado, {antes} -> {depois} movimentacao(oes), "
+                            f"{parou}",
+                "antes": antes, "depois": depois}
     return {"situacao": f"clicado, e a contagem nao mudou ({antes}). O "
                         "historico pode estar incompleto",
             "antes": antes, "depois": depois}

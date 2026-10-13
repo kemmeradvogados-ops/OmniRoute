@@ -5198,3 +5198,93 @@ def test_o_diagnostico_nao_carrega_valor_nenhum():
                        ensure_ascii=False)
     for conteudo in ("Juntada", "Conclusao", "27/04", "Fulano"):
         assert conteudo not in texto, conteudo
+
+
+# ---------------- a espera para quando a tela PARA de montar ----------------
+#
+# Em 13/10/2026 esta espera devolveu "clicado, 2 -> 3" e saiu. A tela ainda
+# estava montando: o portal escreve os movimentos um apos o outro, e sair na
+# primeira mudanca entrega tres de um historico que tem muito mais. Parar cedo
+# demais aqui e o mesmo erro de entregar o pedaco como se fosse o todo, so que
+# disfarcado de sucesso.
+
+
+class _QuadroQueMontaAosPoucos:
+    """A tela cresce a cada leitura e depois estabiliza, como o portal."""
+
+    url = "https://www3.tjrj.jus.br/#/consultar/detalhes-processo"
+
+    def __init__(self, contagens, sem_parar=False):
+        self.contagens = list(contagens)
+        self.sem_parar = sem_parar
+        self.lidas = 0
+        self.clicado = False
+
+    def _quantas(self):
+        if self.lidas < len(self.contagens):
+            return self.contagens[self.lidas]
+        # Depois da lista, ou estabiliza no ultimo, ou segue crescendo para
+        # sempre, que e como se testa o prazo vencendo com a tela montando.
+        ultimo = self.contagens[-1]
+        return (ultimo + self.lidas - len(self.contagens) + 1
+                if self.sem_parar else ultimo)
+
+    def evaluate(self, _js):
+        quantas = self._quantas()
+        self.lidas += 1
+        return {
+            "pares": [], "partes": [], "tabelas": [], "familias": {},
+            "rotulosCandidatos": [], "secoes": [], "botoes": [],
+            "diagnostico": {},
+            "movimentacoes": [[f"0{n}/01/2020", "", f"movimento {n}", "bloco"]
+                              for n in range(1, quantas + 1)],
+        }
+
+    # `texto=` pergunta pelos clicaveis e compara o texto de cada um.
+    def query_selector_all(self, seletor):
+        from justica_mcp.dcp import BOTAO_TODOS_OS_MOVIMENTOS
+        from justica_mcp.portal import ALVOS_CLICAVEIS
+
+        if seletor == ALVOS_CLICAVEIS:
+            return [_BotaoDeTela(BOTAO_TODOS_OS_MOVIMENTOS)]
+        return []
+
+    def evaluate_do_clique(self, _c):
+        return self.viewport_size
+
+    viewport_size = {"width": 1280, "height": 800}
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_a_espera_vai_ate_a_contagem_parar_de_crescer():
+    from justica_mcp.dcp import mostrar_todos_os_movimentos
+
+    # 2 antes do clique, depois 3, 5, 9, 9, 9: a leitura tem de chegar a 9.
+    quadro = _QuadroQueMontaAosPoucos([2, 3, 5, 9, 9, 9, 9, 9])
+    situacao = mostrar_todos_os_movimentos(quadro, _Guarda())
+    assert situacao["antes"] == 2
+    assert situacao["depois"] == 9
+    assert "2 -> 9" in situacao["situacao"]
+    assert "parou de crescer" in situacao["situacao"]
+
+
+def test_a_espera_avisa_quando_o_prazo_acaba_com_a_tela_crescendo():
+    """Prazo vencido com a tela ainda montando nao e o mesmo que tela pronta,
+    e o advogado precisa saber qual dos dois foi."""
+    from justica_mcp.dcp import mostrar_todos_os_movimentos
+
+    quadro = _QuadroQueMontaAosPoucos([2, 3], sem_parar=True)
+    situacao = mostrar_todos_os_movimentos(quadro, _Guarda(), segundos=2)
+    assert "ainda crescendo" in situacao["situacao"]
+
+
+def test_sair_na_primeira_mudanca_seria_entregar_o_pedaco():
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.mostrar_todos_os_movimentos)
+    assert "estaveis >= LEITURAS_ESTAVEIS" in fonte
+    assert "agora > depois" in fonte
