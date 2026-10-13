@@ -1908,6 +1908,43 @@ JS_DA_TELA_DO_PROCESSO = r"""
       .map(b => Object.keys(b).filter(k => !b[k])),
   };
 
+  // O MOVIMENTO desta tela e um `<app-movimento>`.
+  //
+  // Lido na estrutura real em 13/10/2026, dentro de `div#movimentacaoProcessoC`:
+  //
+  //   div.row.mt-4                     x10
+  //     div.col-12.ng-tns-...          x10
+  //       app-movimento.ng-tns-...     x10
+  //   p-paginator.p-element            x1
+  //   folhas que comecam por data      10
+  //
+  // Dez componentes, dez folhas com data, e um paginador. Este e o primeiro
+  // trecho da leitura de movimento que nao e generico: o nome do componente
+  // veio da tela de verdade, e nao de suposicao sobre como ela seria.
+  //
+  // Quando ha `app-movimento` na tela, SO ele vale. As tres passadas genericas
+  // continuam para a tela que nao tiver nenhum, mas aqui elas so trariam de
+  // volta o que ja esta nos componentes, em pedacos e fora de ordem.
+  const componentes = document.querySelectorAll('app-movimento');
+  const movimentosDoComponente = [];
+  for (const item of componentes) {
+    let data = '', hora = '', descricao = '';
+    const folhasDoItem = [];
+    for (const no of item.querySelectorAll('*')) {
+      if (no.children.length > 0) continue;
+      const t = corta(no.innerText || no.textContent, 300);
+      if (t) folhasDoItem.push(t);
+    }
+    for (const t of folhasDoItem) {
+      const m = t.match(comecaPorData);
+      if (m && !data) { data = m[1]; hora = m[2] || ''; continue; }
+      // A descricao e a folha mais longa que nao e a data nem um rotulo.
+      if (/:$/.test(t)) continue;
+      if (t.length > descricao.length) descricao = t;
+    }
+    movimentosDoComponente.push([data, hora, descricao, 'app-movimento']);
+  }
+
   // O ESQUELETO das caixas de movimentacao.
   //
   // Em 13/10/2026 o clique em "Todos Os Movimentos" fez surgir
@@ -2055,7 +2092,8 @@ JS_DA_TELA_DO_PROCESSO = r"""
           tabelas: tabelas, familias: familias,
           rotulosCandidatos: rotulosCandidatos,
           secoes: secoes, botoes: botoes, diagnostico: diagnostico,
-          caixasDeMovimentacao: caixasDeMovimentacao};
+          caixasDeMovimentacao: caixasDeMovimentacao,
+          movimentosDoComponente: movimentosDoComponente};
 }
 """
 
@@ -2138,7 +2176,8 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
         "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": [],
                       "secoes": [], "botoes": [], "rotulos_lidos": [],
                       "diagnostico_dos_blocos": _diagnostico(None),
-                      "caixas_de_movimentacao": []},
+                      "caixas_de_movimentacao": [],
+                      "componentes_de_movimento": 0},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -2183,8 +2222,15 @@ def extrair(quadro: Any) -> dict:
         # o mesmo rotulo costuma reaparecer em rodape e em caixa escondida.
         principais.setdefault(rotulo, valor)
 
+    # Quando a tela traz `<app-movimento>`, e ele que manda: cada componente e
+    # um movimento, na ordem da tela, sem juntar nem descartar repetido. Dois
+    # andamentos do mesmo dia com a mesma descricao existem, e a deduplicacao
+    # das passadas genericas apagaria o segundo.
+    do_componente = bruto.get("movimentosDoComponente") or []
+    fonte = do_componente if do_componente else (bruto.get("movimentacoes") or [])
+
     movimentacoes = []
-    for item in bruto.get("movimentacoes") or []:
+    for item in fonte:
         try:
             movimentacoes.append({
                 "data": str(item[0]), "hora": str(item[1]),
@@ -2240,6 +2286,7 @@ def extrair(quadro: Any) -> dict:
         "rotulos_lidos": sorted(_sem_dado(r) for r in principais),
         "diagnostico_dos_blocos": _diagnostico(bruto.get("diagnostico")),
         "caixas_de_movimentacao": _caixas(bruto.get("caixasDeMovimentacao")),
+        "componentes_de_movimento": len(do_componente),
     }
     saida["totais"] = {"principais": len(principais),
                        "partes": len(partes),
@@ -2331,6 +2378,127 @@ def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
             "antes": antes, "depois": depois}
 
 
+# A paginacao dos movimentos, lida na estrutura real em 13/10/2026.
+#
+# Dentro de `div#movimentacaoProcessoC` ha dez `app-movimento` e um
+# `p-paginator.p-element`. Os botoes "1", "2" e "3" que apareciam no relato
+# eram isso, e agora e leitura de tela, nao suposicao.
+SELETOR_DA_PAGINA = ".p-paginator-page"
+TETO_DE_PAGINAS = 60
+
+
+def _paginas_na_tela(quadro: Any) -> list:
+    """Os botoes de pagina, como pares (numero, elemento), na ordem."""
+    saida = []
+    try:
+        botoes = quadro.query_selector_all(SELETOR_DA_PAGINA) or []
+    except Exception:
+        return []
+    for botao in botoes:
+        try:
+            escrito = (botao.inner_text() or "").strip()
+        except Exception:
+            continue
+        if escrito.isdigit():
+            saida.append((int(escrito), botao))
+    return sorted(saida, key=lambda par: par[0])
+
+
+def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
+                                       segundos: int = 45,
+                                       teto: int = TETO_DE_PAGINAS) -> dict:
+    """Visita cada pagina de movimentos e junta tudo, na ordem.
+
+    Somente leitura: paginar troca o que a tela MOSTRA. A prova de que uma
+    pagina trouxe algo e a lista CRESCER; quando um clique nao traz nada novo,
+    a volta acaba ali em vez de ficar clicando a toa.
+
+    Devolve a lista acumulada e o que aconteceu, para ir ao arquivo e ao
+    terminal. Pagina que nao chega e pior do que pagina que falta: o advogado
+    precisa saber que o historico pode estar incompleto.
+    """
+    import time as _tempo
+
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import permissao_efemera
+
+    acumulado: list = []
+    vistos: set = set()
+
+    def juntar(lista) -> int:
+        novos = 0
+        for movimento in lista or []:
+            chave = (movimento.get("data"), movimento.get("hora"),
+                     movimento.get("descricao"))
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            acumulado.append(movimento)
+            novos += 1
+        return novos
+
+    juntar(extrair(quadro).get("movimentacoes") or [])
+    paginas = _paginas_na_tela(quadro)
+    if not paginas:
+        return {"situacao": "a tela nao tem paginacao de movimentos",
+                "paginas": 1, "movimentacoes": acumulado}
+
+    endereco = getattr(quadro, "url", "") or ""
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(endereco).padrao_url,
+        descricao="percorrer as paginas de movimentacao, somente leitura",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(SELETOR_DA_PAGINA,),
+    ))
+
+    visitadas = {paginas[0][0]}
+    percorridas = 1
+    parou_por = "nao havia mais pagina"
+    while percorridas < teto:
+        alvo = None
+        for numero, botao in _paginas_na_tela(quadro):
+            if numero not in visitadas:
+                alvo = (numero, botao)
+                break
+        if alvo is None:
+            break
+        numero, botao = alvo
+        visitadas.add(numero)
+        guarda.pode_executar(Acao.CLICAR, SELETOR_DA_PAGINA, url=endereco)
+        try:
+            clicar_com_jeito(botao)
+        except Exception:
+            parou_por = f"a pagina {numero} nao aceitou o clique"
+            break
+        percorridas += 1
+
+        limite = _tempo.monotonic() + max(1, segundos)
+        novos = 0
+        estaveis = 0
+        while _tempo.monotonic() < limite:
+            try:
+                quadro.wait_for_timeout(1000)
+            except Exception:
+                _tempo.sleep(1)
+            agora = juntar(extrair(quadro).get("movimentacoes") or [])
+            novos += agora
+            if agora:
+                estaveis = 0
+                continue
+            estaveis += 1
+            if estaveis >= LEITURAS_ESTAVEIS:
+                break
+        if novos == 0:
+            parou_por = (f"a pagina {numero} nao trouxe movimentacao nova; o "
+                         "historico pode estar incompleto")
+            break
+
+    if percorridas >= teto:
+        parou_por = f"o teto de {teto} paginas foi atingido"
+    return {"situacao": f"{percorridas} pagina(s), {parou_por}",
+            "paginas": percorridas, "movimentacoes": acumulado}
+
+
 def resumo_seguro(dados: dict) -> list:
     """O resumo que PODE ir ao terminal: contagem, e nada de conteudo.
 
@@ -2345,6 +2513,8 @@ def resumo_seguro(dados: dict) -> list:
         f"rotulos lidos: {totais.get('principais', 0)}   "
         f"partes: {totais.get('partes', 0)}   "
         f"movimentacoes: {totais.get('movimentacoes', 0)}",
+        f"componentes app-movimento: "
+        f"{estrutura.get('componentes_de_movimento', 0)}   "
         f"tabelas na tela: {len(estrutura.get('tabelas') or [])}   "
         f"familias de identificador: {len(estrutura.get('familias') or {})}   "
         f"rotulos que a tela oferece: "
@@ -2363,6 +2533,9 @@ def resumo_seguro(dados: dict) -> list:
     historico = leitura.get("todos_os_movimentos")
     if historico:
         linhas.append(f"botao 'Todos Os Movimentos': {historico}")
+    paginas = leitura.get("paginas_de_movimentacao")
+    if paginas:
+        linhas.append(f"paginas de movimentacao: {paginas}")
     if falha:
         pass
     elif not totais.get("principais") and not totais.get("movimentacoes"):

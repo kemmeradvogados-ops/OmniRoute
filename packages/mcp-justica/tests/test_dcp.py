@@ -5364,3 +5364,174 @@ def test_o_identificador_numerado_da_caixa_sai_agrupado():
     dados = _ler_em_navegador(TELA_COM_CAIXA_DE_MOVIMENTACAO)
     ids = [c["id"] for c in dados["estrutura"]["caixas_de_movimentacao"]]
     assert "buscarMovimentacaoN" in ids
+
+
+# ---------------- o movimento e um `app-movimento`, e a lista e paginada ----
+#
+# O esqueleto da tela real, lido em 13/10/2026 dentro de
+# `div#movimentacaoProcessoC`:
+#
+#   div.row.mt-4                     x10
+#     div.col-12.ng-tns-...          x10
+#       app-movimento.ng-tns-...     x10
+#   p-paginator.p-element            x1
+#   folhas que comecam por data      10
+#
+# Dez componentes, dez folhas com data e um paginador. Os botoes "1", "2" e "3"
+# que apareciam no relato eram a paginacao, e agora isso e leitura de tela.
+
+TELA_COM_COMPONENTES = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>P</title></head>
+<body><div id="movimentacaoProcessoC" class="row box-conteudo">
+  <div class="row mt-4"><div class="col-12"><app-movimento>
+    <span class="data">27/04/2018</span>
+    <span class="desc">Juntada de Peticao pela parte autora</span>
+    <label>Tipo do Movimento:</label><span>Juntada</span>
+  </app-movimento></div></div>
+  <div class="row mt-4"><div class="col-12"><app-movimento>
+    <span class="data">03/05/2018 14:22</span>
+    <span class="desc">Conclusao ao Juiz</span>
+  </app-movimento></div></div>
+  <div class="row mt-4"><div class="col-12"><app-movimento>
+    <span class="data">03/05/2018</span>
+    <span class="desc">Conclusao ao Juiz</span>
+  </app-movimento></div></div>
+  <div class="margin-paginator"><p-paginator><div class="p-paginator p-component">
+    <button class="p-paginator-page">1</button>
+    <button class="p-paginator-page">2</button>
+  </div></p-paginator></div>
+</div></body></html>"""
+
+
+@semNavegador
+def test_cada_app_movimento_e_uma_movimentacao():
+    dados = _ler_em_navegador(TELA_COM_COMPONENTES)
+    assert dados["estrutura"]["componentes_de_movimento"] == 3
+    assert [(m["data"], m["hora"]) for m in dados["movimentacoes"]] == [
+        ("27/04/2018", ""), ("03/05/2018", "14:22"), ("03/05/2018", ""),
+    ]
+    for movimento in dados["movimentacoes"]:
+        assert movimento["origem"] == "app-movimento"
+
+
+@semNavegador
+def test_dois_andamentos_iguais_no_mesmo_dia_sobrevivem():
+    """A deduplicacao das passadas genericas apagaria o segundo, e dois
+    andamentos do mesmo dia com a mesma descricao existem."""
+    dados = _ler_em_navegador(TELA_COM_COMPONENTES)
+    iguais = [m for m in dados["movimentacoes"]
+              if m["descricao"] == "Conclusao ao Juiz"]
+    assert len(iguais) == 2
+
+
+@semNavegador
+def test_o_rotulo_dentro_do_componente_nao_vira_descricao():
+    dados = _ler_em_navegador(TELA_COM_COMPONENTES)
+    for movimento in dados["movimentacoes"]:
+        assert not movimento["descricao"].endswith(":")
+
+
+class _QuadroPaginado:
+    """Tres paginas de movimentos, com o paginador da tela real."""
+
+    url = "https://www3.tjrj.jus.br/#/consultar/detalhes-processo"
+
+    def __init__(self, paginas, trava_na=None):
+        self.paginas = paginas
+        self.atual = 0
+        self.trava_na = trava_na
+        self.clicadas = []
+
+    def evaluate(self, _js):
+        return {
+            "pares": [], "partes": [], "tabelas": [], "familias": {},
+            "rotulosCandidatos": [], "secoes": [], "botoes": [],
+            "diagnostico": {}, "caixasDeMovimentacao": [], "movimentacoes": [],
+            "movimentosDoComponente": [
+                [data, "", descricao, "app-movimento"]
+                for data, descricao in self.paginas[self.atual]
+            ],
+        }
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.dcp import SELETOR_DA_PAGINA
+
+        if seletor != SELETOR_DA_PAGINA:
+            return []
+        return [_BotaoDePagina(self, n) for n in range(1, len(self.paginas) + 1)]
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+class _BotaoDePagina:
+    def __init__(self, quadro, numero):
+        self.quadro, self.numero = quadro, numero
+
+    def inner_text(self):
+        return str(self.numero)
+
+    def get_attribute(self, _n):
+        return None
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 10, "y": 10, "width": 30, "height": 30}
+
+    def scroll_into_view_if_needed(self):
+        pass
+
+    def click(self):
+        self.quadro.clicadas.append(self.numero)
+        if self.quadro.trava_na == self.numero:
+            return
+        self.quadro.atual = self.numero - 1
+
+
+def test_a_paginacao_junta_todas_as_paginas_na_ordem():
+    from justica_mcp.dcp import percorrer_as_paginas_de_movimentos
+
+    quadro = _QuadroPaginado([
+        [("01/01/2020", "um"), ("02/01/2020", "dois")],
+        [("03/01/2020", "tres"), ("04/01/2020", "quatro")],
+        [("05/01/2020", "cinco")],
+    ])
+    resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda())
+    assert resultado["paginas"] == 3
+    assert [m["descricao"] for m in resultado["movimentacoes"]] == [
+        "um", "dois", "tres", "quatro", "cinco"]
+    assert quadro.clicadas == [2, 3]
+
+
+def test_pagina_que_nao_traz_nada_novo_encerra_a_volta():
+    """Clicar a toa gasta tempo e esconde que o historico pode estar
+    incompleto."""
+    from justica_mcp.dcp import percorrer_as_paginas_de_movimentos
+
+    quadro = _QuadroPaginado([
+        [("01/01/2020", "um")],
+        [("02/01/2020", "dois")],
+        [("03/01/2020", "tres")],
+    ], trava_na=3)
+    resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda(), segundos=2)
+    assert "pode estar incompleto" in resultado["situacao"]
+    assert [m["descricao"] for m in resultado["movimentacoes"]] == ["um", "dois"]
+
+
+def test_tela_sem_paginador_nao_e_tratada_como_erro():
+    from justica_mcp.dcp import percorrer_as_paginas_de_movimentos
+
+    class _SemPaginador(_QuadroPaginado):
+        def query_selector_all(self, _seletor):
+            return []
+
+    resultado = percorrer_as_paginas_de_movimentos(
+        _SemPaginador([[("01/01/2020", "um")]]), _Guarda())
+    assert resultado["paginas"] == 1
+    assert "nao tem paginacao" in resultado["situacao"]
+    assert len(resultado["movimentacoes"]) == 1

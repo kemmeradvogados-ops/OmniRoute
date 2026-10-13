@@ -3608,7 +3608,8 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     from .dcp import MARCA_DA_TELA_DO_PROCESSO, esperar_a_tela_do_processo
     from .dcp import extrair as extrair_dcp
 
-    from .dcp import mostrar_todos_os_movimentos
+    from .dcp import (mostrar_todos_os_movimentos,
+                      percorrer_as_paginas_de_movimentos)
 
     quadro, botao = esperar_a_tela_do_processo(pagina, segundos)
     endereco_do_quadro = getattr(quadro, "url", "") or ""
@@ -3618,7 +3619,17 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     # 13/10/2026. Sem este clique a consulta devolveria o ultimo andamento como
     # se fosse o historico, que e o erro que o e-SAJ ja ensinou a nao cometer.
     historico = mostrar_todos_os_movimentos(quadro, guarda)
+
+    # A lista de movimentos e PAGINADA: dez `app-movimento` por vez, com um
+    # `p-paginator` ao lado, lidos na estrutura da tela real em 13/10/2026.
+    # Ler so a primeira pagina entregaria dez de um historico inteiro, e
+    # entregaria como se fosse tudo.
+    paginas = percorrer_as_paginas_de_movimentos(quadro, guarda)
+
     dados = extrair_dcp(quadro)
+    if len(paginas["movimentacoes"]) > len(dados.get("movimentacoes") or []):
+        dados["movimentacoes"] = paginas["movimentacoes"]
+        dados["totais"]["movimentacoes"] = len(paginas["movimentacoes"])
     dados["numero"] = numero.formatado
     dados["tribunal"] = identidade.tribunal
     dados["sistema"] = identidade.sistema
@@ -3639,6 +3650,7 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     dados["leitura"]["endereco_do_quadro"] = endereco_sem_dado(
         endereco_do_quadro or "(sem endereco)")
     dados["leitura"]["todos_os_movimentos"] = historico["situacao"]
+    dados["leitura"]["paginas_de_movimentacao"] = paginas["situacao"]
     dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
 
     # A movimentacao do Portal de Servicos nao traz numero de evento, so data e
