@@ -6383,8 +6383,22 @@ class _EstadoFalso:
         self.registros.append(campos)
 
 
+class _GuardaFalsa:
+    def __init__(self):
+        self.permissoes = []
+        self.autorizados = []
+
+    def pode_executar(self, acao, seletor, url=None):
+        self.autorizados.append(seletor)
+
+
 class _QuadroDoProcesso:
     url = "https://www3.tjrj.jus.br/portalservicos/#/consultar/detalhes-processo"
+
+    # Sem botao "Todos Os Movimentos" na tela: a leitura precisa seguir, e
+    # dizer que o historico pode estar incompleto.
+    def query_selector_all(self, _seletor):
+        return []
 
     def evaluate(self, _js):
         return {
@@ -6411,9 +6425,11 @@ def test_a_consulta_do_dcp_grava_o_arquivo_e_o_snapshot(monkeypatch, tmp_path):
 
     _preparar_leitura(monkeypatch, tmp_path)
     estado = _EstadoFalso()
-    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(), estado)
+    dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(), estado)
 
-    assert dados["totais"] == {"principais": 1, "movimentacoes": 2}
+    assert dados["totais"] == {"principais": 1, "partes": 0, "movimentacoes": 2}
+    # Sem o botao na tela falsa, a leitura segue e avisa.
+    assert "nao esta na tela" in dados["leitura"]["todos_os_movimentos"]
     gravado = json.loads(
         __import__("pathlib").Path(dados["arquivo"]).read_text(encoding="utf-8"))
     assert gravado["principais"]["Classe"] == "Procedimento Comum Civel"
@@ -6441,7 +6457,7 @@ def test_o_arquivo_do_dcp_avisa_que_a_leitura_nao_foi_conferida(monkeypatch, tmp
     from justica_mcp.portal import _ler_a_tela_do_dcp
 
     _preparar_leitura(monkeypatch, tmp_path)
-    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+    dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(),
                                _EstadoFalso())
     gravado = json.loads(pathlib.Path(dados["arquivo"]).read_text(encoding="utf-8"))
     assert gravado["leitura"]["confirmada_em_tela_real"] is False
@@ -6452,7 +6468,7 @@ def test_o_endereco_gravado_nao_carrega_o_numero_do_processo(monkeypatch, tmp_pa
     from justica_mcp.portal import _ler_a_tela_do_dcp
 
     _preparar_leitura(monkeypatch, tmp_path)
-    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+    dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(),
                                _EstadoFalso())
     assert "?" not in dados["endereco"]
     assert _NumeroFalso.apenas_digitos not in dados["endereco"]
@@ -6497,7 +6513,7 @@ def test_a_leitura_do_dcp_prova_que_leu_a_tela_do_processo(monkeypatch, tmp_path
     from justica_mcp.portal import _ler_a_tela_do_dcp
 
     _preparar_leitura(monkeypatch, tmp_path)
-    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+    dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(),
                                _EstadoFalso())
     # O falso devolve o botao do Visualizador, que so existe depois que a busca
     # devolve o processo.
@@ -6509,7 +6525,7 @@ def test_a_leitura_do_dcp_prova_que_leu_a_tela_do_processo(monkeypatch, tmp_path
 
     monkeypatch.setattr(dcp, "esperar_a_tela_do_processo",
                         lambda pagina, segundos=45: (_QuadroDaBusca(), None))
-    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+    dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(),
                                _EstadoFalso())
     assert dados["leitura"]["tela_do_processo_confirmada"] is False
     assert "consultaportal" in dados["leitura"]["endereco_do_quadro"]
@@ -6527,6 +6543,6 @@ def test_a_rota_do_processo_basta_mesmo_sem_o_botao(monkeypatch, tmp_path):
 
     monkeypatch.setattr(dcp, "esperar_a_tela_do_processo",
                         lambda pagina, segundos=45: (_SoARota(), None))
-    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+    dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(),
                                _EstadoFalso())
     assert dados["leitura"]["tela_do_processo_confirmada"] is True

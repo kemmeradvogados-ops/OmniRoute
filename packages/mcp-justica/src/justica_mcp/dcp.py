@@ -1606,13 +1606,52 @@ JS_DA_TELA_DO_PROCESSO = r"""
     }
   }
 
+  // Tabela COM cabecalho proprio guarda dados em linha, nao rotulo e valor.
+  // Lido na tela real em 13/10/2026: a tabela "Tipo / Personagem" fez
+  // "Autor", "Reu", "Advogado" e "Representante Legal" entrarem na capa do
+  // processo como se fossem campos dela. Sao partes, e tem lugar proprio.
+  const temCabecalho = (tabela) => {
+    if (!tabela) return false;
+    const topo = tabela.querySelector('tr');
+    const celulas = topo ? Array.from(topo.children) : [];
+    return celulas.length > 0 && celulas.every(c => c.tagName === 'TH');
+  };
+
   for (const tr of document.querySelectorAll('tr')) {
     const celulas = Array.from(tr.children);
     if (celulas.length !== 2) continue;
     // Linha de cabecalho e titulo de coluna, nao rotulo e valor: "Data" nao
     // vale "Movimento". As duas celulas serem TH e o que a distingue.
     if (celulas[0].tagName === 'TH' && celulas[1].tagName === 'TH') continue;
+    if (temCabecalho(tr.closest('table'))) continue;
     guardar(celulas[0].innerText, celulas[1].innerText);
+  }
+
+  // As PARTES, da tabela que a tela real nomeia "Tipo" e "Personagem". Este e
+  // o primeiro trecho desta leitura que nao e generico: o cabecalho foi lido
+  // da tela de verdade em 13/10/2026. Quando ele nao bate, nada sai daqui.
+  const partes = [];
+  const partesVistas = new Set();
+  const semAcento = (s) => (s || '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  for (const tabela of document.querySelectorAll('table')) {
+    const topo = tabela.querySelector('tr');
+    const cabecalho = topo
+      ? Array.from(topo.children).map(c => semAcento(corta(c.innerText, 40)))
+      : [];
+    if (cabecalho.length !== 2) continue;
+    if (cabecalho[0] !== 'tipo' || cabecalho[1] !== 'personagem') continue;
+    for (const linha of Array.from(tabela.querySelectorAll('tr')).slice(1)) {
+      const celulas = Array.from(linha.children);
+      if (celulas.length !== 2) continue;
+      const tipo = corta(celulas[0].innerText, 60);
+      const nome = corta(celulas[1].innerText, 200);
+      if (!tipo || !nome) continue;
+      const chave = tipo + '\u0000' + nome;
+      if (partesVistas.has(chave)) continue;
+      partesVistas.add(chave);
+      partes.push([tipo, nome]);
+    }
   }
 
   const folhas = document.querySelectorAll(
@@ -1782,7 +1821,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
     familias[nome] = (familias[nome] || 0) + 1;
   }
 
-  return {pares: pares, movimentacoes: movimentacoes,
+  return {pares: pares, partes: partes, movimentacoes: movimentacoes,
           tabelas: tabelas, familias: familias,
           rotulosCandidatos: rotulosCandidatos,
           secoes: secoes, botoes: botoes};
@@ -1812,6 +1851,7 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
     """
     return {
         "principais": {},
+        "partes": [],
         "movimentacoes": [],
         "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": [],
                       "secoes": [], "botoes": [], "rotulos_lidos": []},
@@ -1827,7 +1867,7 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
             "aviso": AVISO_DA_LEITURA,
             "falha": falha,
         },
-        "totais": {"principais": 0, "movimentacoes": 0},
+        "totais": {"principais": 0, "partes": 0, "movimentacoes": 0},
     }
 
 
@@ -1887,8 +1927,16 @@ def extrair(quadro: Any) -> dict:
         except Exception:
             continue
 
+    partes = []
+    for item in bruto.get("partes") or []:
+        try:
+            partes.append({"tipo": str(item[0]), "nome": str(item[1])})
+        except Exception:
+            continue
+
     saida = _leitura_vazia()
     saida["principais"] = principais
+    saida["partes"] = partes
     saida["movimentacoes"] = movimentacoes
     saida["estrutura"] = {
         "tabelas": tabelas,
@@ -1908,8 +1956,69 @@ def extrair(quadro: Any) -> dict:
         "rotulos_lidos": sorted(_sem_dado(r) for r in principais),
     }
     saida["totais"] = {"principais": len(principais),
+                       "partes": len(partes),
                        "movimentacoes": len(movimentacoes)}
     return saida
+
+
+# O botao que carrega o historico, lido na tela real em 13/10/2026.
+#
+# A tela do processo mostra UM movimento, o ultimo, com os rotulos "Data da
+# juntada:", "Descricao da Juntada:" e "Tipo do Movimento". Por isso a leitura
+# achava uma movimentacao so, e a que achava vinha, na verdade, do Historico de
+# Mandados. O resto do historico esta atras deste botao.
+BOTAO_TODOS_OS_MOVIMENTOS = "Todos Os Movimentos"
+
+
+def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
+                                segundos: int = 20) -> dict:
+    """Clica em "Todos Os Movimentos" e espera o historico chegar.
+
+    Somente leitura: o botao troca o que a tela MOSTRA, nao toca em nada do
+    processo. E o mesmo ato que o e-SAJ ja fazia desde 22/09/2026 com "exibir
+    mais movimentacoes", e pela mesma razao: entregar o pedaco como se fosse o
+    todo faria o advogado concluir que nao ha andamento anterior.
+
+    A prova de que funcionou nao e o clique, e sim a CONTAGEM crescer. Devolve
+    o que aconteceu, para ir ao arquivo e ao terminal.
+    """
+    import time as _tempo
+
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import elemento_visivel, permissao_efemera
+
+    antes = len(extrair(quadro).get("movimentacoes") or [])
+    alvo = f"texto={BOTAO_TODOS_OS_MOVIMENTOS}"
+    botao = elemento_visivel(quadro, alvo)
+    if botao is None:
+        return {"situacao": f"o botao {BOTAO_TODOS_OS_MOVIMENTOS!r} nao esta na "
+                            "tela; o historico pode estar incompleto",
+                "antes": antes, "depois": antes}
+
+    endereco = getattr(quadro, "url", "") or ""
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(endereco).padrao_url,
+        descricao="mostrar todos os movimentos do processo, somente leitura",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(alvo,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, alvo, url=endereco)
+    clicar_com_jeito(botao)
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    depois = antes
+    while _tempo.monotonic() < limite:
+        try:
+            quadro.wait_for_timeout(1000)
+        except Exception:
+            _tempo.sleep(1)
+        depois = len(extrair(quadro).get("movimentacoes") or [])
+        if depois > antes:
+            return {"situacao": f"clicado, {antes} -> {depois} movimentacao(oes)",
+                    "antes": antes, "depois": depois}
+    return {"situacao": f"clicado, e a contagem nao mudou ({antes}). O "
+                        "historico pode estar incompleto",
+            "antes": antes, "depois": depois}
 
 
 def resumo_seguro(dados: dict) -> list:
@@ -1924,6 +2033,7 @@ def resumo_seguro(dados: dict) -> list:
     estrutura = dados.get("estrutura") or {}
     linhas = [
         f"rotulos lidos: {totais.get('principais', 0)}   "
+        f"partes: {totais.get('partes', 0)}   "
         f"movimentacoes: {totais.get('movimentacoes', 0)}",
         f"tabelas na tela: {len(estrutura.get('tabelas') or [])}   "
         f"familias de identificador: {len(estrutura.get('familias') or {})}   "
@@ -1940,6 +2050,11 @@ def resumo_seguro(dados: dict) -> list:
     falha = leitura.get("falha")
     if falha:
         linhas.append(f"a leitura falhou: {falha}")
+    historico = leitura.get("todos_os_movimentos")
+    if historico:
+        linhas.append(f"botao 'Todos Os Movimentos': {historico}")
+    if falha:
+        pass
     elif not totais.get("principais") and not totais.get("movimentacoes"):
         linhas.append("nada foi lido desta tela. A estrutura dela esta no "
                       "arquivo, e e por ela que a leitura se aperta.")

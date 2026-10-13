@@ -4622,8 +4622,9 @@ def test_a_estrutura_da_tela_sai_sem_conteudo_nenhum():
 def test_tela_vazia_devolve_a_mesma_forma():
     dados = _ler_em_navegador("<!doctype html><html><body></body></html>")
     assert dados["principais"] == {}
+    assert dados["partes"] == []
     assert dados["movimentacoes"] == []
-    assert dados["totais"] == {"principais": 0, "movimentacoes": 0}
+    assert dados["totais"] == {"principais": 0, "partes": 0, "movimentacoes": 0}
 
 
 def test_a_leitura_se_declara_nao_conferida():
@@ -4649,7 +4650,7 @@ def test_tela_ilegivel_nao_derruba_a_consulta():
             raise RuntimeError("execution context was destroyed")
 
     dados = extrair(_TelaQueRecusa())
-    assert dados["totais"] == {"principais": 0, "movimentacoes": 0}
+    assert dados["totais"] == {"principais": 0, "partes": 0, "movimentacoes": 0}
     assert "RuntimeError" in dados["leitura"]["falha"]
 
 
@@ -4887,3 +4888,125 @@ def test_o_bloco_de_estrutura_so_tem_as_CHAVES_do_que_foi_lido():
     assert "Classe" in lidos and "Comarca" in lidos
     for valor in ("Procedimento Comum Civel", "Niteroi", "Fulano de Tal"):
         assert valor not in " ".join(lidos), valor
+
+
+# ---------------- partes, e o botao que carrega o historico ----------------
+#
+# A estrutura da tela real, lida em 13/10/2026, respondeu as duas duvidas que
+# estavam abertas. A tela mostra UM movimento, o ultimo, com os rotulos "Data
+# da juntada:", "Descricao da Juntada:" e "Tipo do Movimento"; o resto do
+# historico esta atras do botao "Todos Os Movimentos". E a tabela "Tipo /
+# Personagem" estava entrando na capa, fazendo de "Autor" e "Reu" campos dela.
+
+TELA_COMO_A_DO_PORTAL = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>Processo</title></head>
+<body><div id="detalhes-processo">
+  <h5>Processo n: 0000000-00.0000.0.00.0000</h5>
+  <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+  <label id="Data da juntada: ">Data da juntada:</label><span>27/04/2018</span>
+  <label id="Descricao da Juntada: ">Descricao da Juntada:</label><span>Juntada de Peticao</span>
+  <button>Todos Os Movimentos</button>
+  <table id="pn_id_1-table" class="p-datatable-table">
+    <tr><th>Tipo</th><th>Personagem</th></tr>
+    <tr><td>Autor</td><td>Fulano de Tal</td></tr>
+    <tr><td>R&eacute;u</td><td>Empresa Beltrano Ltda</td></tr>
+    <tr><td>Advogado</td><td>Sicrano de Tal</td></tr>
+  </table>
+  <div id="tblImprimirPersonGrade"><table class="ng-tns-c1">
+    <tr><th>Tipo</th><th>Personagem</th></tr>
+    <tr><td>Autor</td><td>Fulano de Tal</td></tr>
+  </table></div>
+</div></body></html>"""
+
+
+@semNavegador
+def test_as_partes_saem_da_tabela_tipo_personagem():
+    """Primeiro trecho desta leitura que nao e generico: o cabecalho foi lido
+    da tela de verdade."""
+    dados = _ler_em_navegador(TELA_COMO_A_DO_PORTAL)
+    assert dados["partes"] == [
+        {"tipo": "Autor", "nome": "Fulano de Tal"},
+        {"tipo": "Réu", "nome": "Empresa Beltrano Ltda"},
+        {"tipo": "Advogado", "nome": "Sicrano de Tal"},
+    ]
+    assert dados["totais"]["partes"] == 3
+
+
+@semNavegador
+def test_a_copia_de_impressao_nao_duplica_a_parte():
+    """A tela real traz `tblImprimirPersonGrade` com a mesma tabela dentro."""
+    dados = _ler_em_navegador(TELA_COMO_A_DO_PORTAL)
+    nomes = [p["nome"] for p in dados["partes"]]
+    assert nomes.count("Fulano de Tal") == 1
+
+
+@semNavegador
+def test_as_partes_NAO_entram_na_capa_do_processo():
+    """Em 13/10/2026 'Autor', 'Reu', 'Advogado' e 'Representante Legal'
+    estavam entre os sete rotulos lidos como se fossem campos da capa."""
+    dados = _ler_em_navegador(TELA_COMO_A_DO_PORTAL)
+    for parte in ("Autor", "Réu", "Advogado"):
+        assert parte not in dados["principais"], parte
+    assert dados["principais"]["Data da juntada"] == "27/04/2018"
+
+
+@semNavegador
+def test_tabela_sem_cabecalho_continua_valendo_como_rotulo_e_valor():
+    """A regra nova nao pode cegar a capa: tabela de capa tem TH e TD na mesma
+    linha, nao uma linha inteira de TH."""
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    assert dados["principais"]["Comarca"] == "Niteroi"
+    assert dados["principais"]["Competencia"] == "2a Vara Civel"
+
+
+def test_o_botao_do_historico_e_o_lido_na_tela_real():
+    from justica_mcp.dcp import BOTAO_TODOS_OS_MOVIMENTOS
+
+    assert BOTAO_TODOS_OS_MOVIMENTOS == "Todos Os Movimentos"
+
+
+def test_sem_o_botao_do_historico_a_leitura_avisa():
+    """Entregar o ultimo andamento como se fosse o historico faria o advogado
+    concluir que nao ha andamento anterior."""
+    from justica_mcp.dcp import mostrar_todos_os_movimentos
+
+    class _QuadroSemBotao:
+        url = "https://www3.tjrj.jus.br/#/consultar/detalhes-processo"
+
+        def evaluate(self, _js):
+            return {"pares": [], "partes": [], "movimentacoes": [],
+                    "tabelas": [], "familias": {}, "rotulosCandidatos": [],
+                    "secoes": [], "botoes": []}
+
+        def query_selector_all(self, _seletor):
+            return []
+
+    situacao = mostrar_todos_os_movimentos(_QuadroSemBotao(), _Guarda())
+    assert "nao esta na tela" in situacao["situacao"]
+    assert "incompleto" in situacao["situacao"]
+
+
+def test_a_prova_do_historico_e_a_contagem_crescer_nao_o_clique():
+    """O clique nao prova nada. O que prova e a tela passar a mostrar mais."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.mostrar_todos_os_movimentos)
+    assert "depois > antes" in fonte
+    assert "a contagem nao mudou" in fonte
+
+
+def test_o_resumo_conta_o_que_o_botao_do_historico_fez():
+    from justica_mcp.dcp import resumo_seguro
+
+    dados = {
+        "principais": {}, "partes": [], "movimentacoes": [],
+        "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": []},
+        "totais": {"principais": 3, "partes": 4, "movimentacoes": 141},
+        "leitura": {"falha": None, "tela_do_processo_confirmada": True,
+                    "todos_os_movimentos": "clicado, 1 -> 141 movimentacao(oes)"},
+    }
+    texto = " ".join(resumo_seguro(dados))
+    assert "partes: 4" in texto
+    assert "'Todos Os Movimentos': clicado, 1 -> 141" in texto
