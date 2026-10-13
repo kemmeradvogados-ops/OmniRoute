@@ -1686,11 +1686,17 @@ JS_DA_TELA_DO_PROCESSO = r"""
   const jaVistas = new Set();
   const comecaPorData = /^(\d{2}\/\d{2}\/\d{4})(?:[\s,]+(\d{2}:\d{2}(?::\d{2})?))?/;
   const soData = /^(\d{2}\/\d{2}\/\d{4})(?:[\s,]+(\d{2}:\d{2}(?::\d{2})?))?$/;
+  // A CONTA do que foi descartado. Em 13/10/2026 onze blocos se formaram,
+  // todos com valor lido, e sairam tres movimentacoes. Oito sumiram em
+  // silencio, e o terminal nao tinha como dizer se foi por falta de descricao
+  // ou por repeticao. Sao dois motivos com dois consertos diferentes.
+  const descartes = {sem_data: 0, sem_descricao: 0, repetidas: 0};
   const guardarMovimento = (data, hora, descricao, origem) => {
     descricao = corta(descricao, 300);
-    if (!data || !descricao) return;
+    if (!data) { descartes.sem_data += 1; return; }
+    if (!descricao) { descartes.sem_descricao += 1; return; }
     const chave = data + '\u0000' + descricao;
-    if (jaVistas.has(chave)) return;
+    if (jaVistas.has(chave)) { descartes.repetidas += 1; return; }
     jaVistas.add(chave);
     movimentacoes.push([data, hora || '', descricao, origem]);
   };
@@ -1894,10 +1900,69 @@ JS_DA_TELA_DO_PROCESSO = r"""
   const diagnostico = {
     rotulos_de_movimento_na_tela: rotulosDeMovimento,
     blocos_formados: blocos.length,
+    descartadas_sem_data: descartes.sem_data,
+    descartadas_sem_descricao: descartes.sem_descricao,
+    descartadas_por_repetir: descartes.repetidas,
     chaves_por_bloco: blocos.slice(0, 8).map(b => Object.keys(b)),
     chaves_sem_valor_por_bloco: blocos.slice(0, 8)
       .map(b => Object.keys(b).filter(k => !b[k])),
   };
+
+  // O ESQUELETO das caixas de movimentacao.
+  //
+  // Em 13/10/2026 o clique em "Todos Os Movimentos" fez surgir
+  // `div#movimentacaoProcessoC` e `input#buscarMovimentacaoN`, e a leitura
+  // continuou achando tres movimentacoes. Onze blocos se formaram, nenhum sem
+  // valor, e oito foram descartados. A lista de verdade esta nessa caixa, numa
+  // forma que esta leitura nao reconhece: nem tabela, nem linha que comeca por
+  // data, nem bloco de rotulo.
+  //
+  // Isto aqui nao le a lista: descreve a FORMA dela. Marcador e classe, com
+  // contagem por nivel, e quantas folhas tem texto comecando por data. Nenhum
+  // texto sai daqui.
+  const assinatura = (e) => {
+    const classe = (typeof e.className === 'string' ? e.className : '');
+    const partes = corta(classe, 60).split(' ').filter(Boolean).slice(0, 2);
+    return e.tagName.toLowerCase() + (partes.length ? '.' + partes.join('.') : '');
+  };
+
+  const caixasDeMovimentacao = [];
+  for (const e of document.querySelectorAll('[id]')) {
+    if (semAcento(e.id).indexOf('movimentacao') < 0) continue;
+    if (caixasDeMovimentacao.length >= 3) break;
+
+    const niveis = [];
+    let nivel = [e];
+    for (let d = 0; d < 4 && nivel.length; d++) {
+      const grupos = {};
+      const proximo = [];
+      for (const no of nivel) {
+        for (const filho of Array.from(no.children)) {
+          const a = assinatura(filho);
+          grupos[a] = (grupos[a] || 0) + 1;
+          proximo.push(filho);
+        }
+      }
+      if (Object.keys(grupos).length === 0) break;
+      niveis.push(grupos);
+      nivel = proximo.slice(0, 300);
+    }
+
+    let folhasComData = 0;
+    let folhasComTexto = 0;
+    for (const no of Array.from(e.querySelectorAll('*')).slice(0, 2000)) {
+      if (no.children.length > 0) continue;
+      const t = corta(no.innerText || no.textContent, 60);
+      if (!t) continue;
+      folhasComTexto += 1;
+      if (comecaPorData.test(t)) folhasComData += 1;
+    }
+
+    caixasDeMovimentacao.push([
+      e.id.replace(/\d+/g, 'N'), assinatura(e), niveis,
+      folhasComTexto, folhasComData,
+    ]);
+  }
 
   // A ESTRUTURA das tabelas, para apertar esta leitura contra a tela real. Vai
   // junto o cabecalho de cada uma, que e vocabulario da TELA e nao dado de
@@ -1989,7 +2054,8 @@ JS_DA_TELA_DO_PROCESSO = r"""
   return {pares: pares, partes: partes, movimentacoes: movimentacoes,
           tabelas: tabelas, familias: familias,
           rotulosCandidatos: rotulosCandidatos,
-          secoes: secoes, botoes: botoes, diagnostico: diagnostico};
+          secoes: secoes, botoes: botoes, diagnostico: diagnostico,
+          caixasDeMovimentacao: caixasDeMovimentacao};
 }
 """
 
@@ -2008,6 +2074,29 @@ def _sem_dado(texto: Any) -> str:
     return sem_dado_de_processo(str(texto or ""))
 
 
+def _caixas(bruto: Any) -> list:
+    """A FORMA das caixas de movimentacao, sem nenhum texto delas.
+
+    Marcador e classe, com contagem por nivel, e quantas folhas tem texto
+    comecando por data. E por aqui que se descobre em que forma a lista esta,
+    quando ela nao e tabela nem linha nem bloco de rotulo.
+    """
+    saida = []
+    for item in bruto or []:
+        try:
+            saida.append({
+                "id": _sem_dado(item[0]),
+                "assinatura": _sem_dado(item[1]),
+                "por_nivel": [{str(k): int(v) for k, v in (nivel or {}).items()}
+                              for nivel in (item[2] or [])],
+                "folhas_com_texto": int(item[3]),
+                "folhas_que_comecam_por_data": int(item[4]),
+            })
+        except Exception:
+            continue
+    return saida
+
+
 def _diagnostico(bruto: Any) -> dict:
     """Onde a leitura dos blocos de movimento parou, em numeros e em chaves.
 
@@ -2017,11 +2106,17 @@ def _diagnostico(bruto: Any) -> dict:
     """
     if not isinstance(bruto, dict):
         return {"rotulos_de_movimento_na_tela": 0, "blocos_formados": 0,
+                "descartadas_sem_data": 0, "descartadas_sem_descricao": 0,
+                "descartadas_por_repetir": 0,
                 "chaves_por_bloco": [], "chaves_sem_valor_por_bloco": []}
     return {
         "rotulos_de_movimento_na_tela":
             int(bruto.get("rotulos_de_movimento_na_tela") or 0),
         "blocos_formados": int(bruto.get("blocos_formados") or 0),
+        "descartadas_sem_data": int(bruto.get("descartadas_sem_data") or 0),
+        "descartadas_sem_descricao":
+            int(bruto.get("descartadas_sem_descricao") or 0),
+        "descartadas_por_repetir": int(bruto.get("descartadas_por_repetir") or 0),
         "chaves_por_bloco": [[_sem_dado(c) for c in bloco]
                              for bloco in (bruto.get("chaves_por_bloco") or [])],
         "chaves_sem_valor_por_bloco":
@@ -2042,7 +2137,8 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
         "movimentacoes": [],
         "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": [],
                       "secoes": [], "botoes": [], "rotulos_lidos": [],
-                      "diagnostico_dos_blocos": _diagnostico(None)},
+                      "diagnostico_dos_blocos": _diagnostico(None),
+                      "caixas_de_movimentacao": []},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -2143,6 +2239,7 @@ def extrair(quadro: Any) -> dict:
         # deste bloco, que existe para poder ser mostrado.
         "rotulos_lidos": sorted(_sem_dado(r) for r in principais),
         "diagnostico_dos_blocos": _diagnostico(bruto.get("diagnostico")),
+        "caixas_de_movimentacao": _caixas(bruto.get("caixasDeMovimentacao")),
     }
     saida["totais"] = {"principais": len(principais),
                        "partes": len(partes),

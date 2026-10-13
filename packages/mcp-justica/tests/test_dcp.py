@@ -5288,3 +5288,79 @@ def test_sair_na_primeira_mudanca_seria_entregar_o_pedaco():
     fonte = inspect.getsource(dcp.mostrar_todos_os_movimentos)
     assert "estaveis >= LEITURAS_ESTAVEIS" in fonte
     assert "agora > depois" in fonte
+
+
+# ---------------- a conta do que foi descartado, e a forma da caixa --------
+#
+# Em 13/10/2026 o diagnostico disse: 18 rotulos de movimento na tela, 11 blocos
+# formados, nenhum sem valor, e tres movimentacoes na saida. Oito sumiram em
+# silencio. Faltavam duas coisas: a conta do descarte, por motivo, e a forma da
+# caixa que o clique faz aparecer, onde a lista de verdade deve estar.
+
+TELA_COM_BLOCOS_INCOMPLETOS = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>P</title></head><body><div id="detalhes-processo">
+  <div id="modal-geral">
+    <label>Data: </label>27/04/2018
+    <label>Descricao: </label>Juntada de Peticao
+  </div>
+  <div id="modal-geral">
+    <label>Data: </label>27/04/2018
+    <label>Descricao: </label>Juntada de Peticao
+  </div>
+  <div id="modal-geral">
+    <label>Data do expediente:</label>15/06/2019
+  </div>
+</div></body></html>"""
+
+
+@semNavegador
+def test_o_diagnostico_conta_o_que_foi_descartado_e_por_que():
+    """Bloco sem descricao e bloco repetido somem pelos mesmos motivos e com
+    consertos diferentes. A conta e o que separa os dois."""
+    dados = _ler_em_navegador(TELA_COM_BLOCOS_INCOMPLETOS)
+    diagnostico = dados["estrutura"]["diagnostico_dos_blocos"]
+    assert dados["totais"]["movimentacoes"] == 1
+    assert diagnostico["descartadas_por_repetir"] == 1
+    assert diagnostico["descartadas_sem_descricao"] >= 1
+
+
+TELA_COM_CAIXA_DE_MOVIMENTACAO = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>P</title></head><body>
+<div id="movimentacaoProcessoC" class="container ng-star-inserted">
+  <input id="buscarMovimentacao1">
+  <div class="linha item"><span class="d">27/04/2018</span><span class="t">Juntada de Peticao</span></div>
+  <div class="linha item"><span class="d">03/05/2018</span><span class="t">Conclusao ao Juiz</span></div>
+  <div class="linha item"><span class="d">15/06/2019</span><span class="t">Sentenca publicada</span></div>
+  <div class="rodape"><button>1</button><button>2</button></div>
+</div></body></html>"""
+
+
+@semNavegador
+def test_a_forma_da_caixa_de_movimentacao_aparece_no_relato():
+    """A lista pode nao ser tabela, nem linha que comeca por data, nem bloco de
+    rotulo. Sem saber a forma dela nao da para escrever a leitura certa."""
+    dados = _ler_em_navegador(TELA_COM_CAIXA_DE_MOVIMENTACAO)
+    caixas = {c["id"]: c for c in dados["estrutura"]["caixas_de_movimentacao"]}
+    caixa = caixas["movimentacaoProcessoC"]
+    assert caixa["assinatura"] == "div.container.ng-star-inserted"
+    assert caixa["por_nivel"][0]["div.linha.item"] == 3
+    assert caixa["folhas_que_comecam_por_data"] == 3
+
+
+@semNavegador
+def test_a_forma_da_caixa_nao_carrega_texto_nenhum():
+    """Como o resto do bloco de estrutura, ela existe para ser mostrada."""
+    import json
+
+    dados = _ler_em_navegador(TELA_COM_CAIXA_DE_MOVIMENTACAO)
+    texto = json.dumps(dados["estrutura"]["caixas_de_movimentacao"],
+                       ensure_ascii=False)
+    for conteudo in ("Juntada", "Conclusao", "Sentenca", "27/04", "2018"):
+        assert conteudo not in texto, conteudo
+
+
+@semNavegador
+def test_o_identificador_numerado_da_caixa_sai_agrupado():
+    dados = _ler_em_navegador(TELA_COM_CAIXA_DE_MOVIMENTACAO)
+    ids = [c["id"] for c in dados["estrutura"]["caixas_de_movimentacao"]]
+    assert "buscarMovimentacaoN" in ids
