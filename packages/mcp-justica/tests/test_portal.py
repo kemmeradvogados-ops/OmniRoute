@@ -6352,3 +6352,140 @@ def test_o_desempate_nao_quebra_com_lista_vazia():
     from justica_mcp.portal import _controle_preferido
 
     assert _controle_preferido([]) is None
+
+
+# ---------------- a consulta do DCP le, grava e alimenta o monitoramento ----
+#
+# Ate 13/10/2026 o ramo do DCP ia da busca direto para os documentos. Nenhum
+# numero de processo real entra nestes testes: o repositorio e publico.
+
+
+class _NumeroFalso:
+    formatado = "0000000-00.0000.0.00.0000"
+    apenas_digitos = "00000000000000000000"
+    grau = 1
+
+
+class _IdentidadeFalsa:
+    tribunal = "TJRJ"
+    sistema = "dcp"
+
+
+class _EstadoFalso:
+    def __init__(self):
+        self.snapshots = []
+        self.registros = []
+
+    def gravar_snapshot(self, chave, linhas):
+        self.snapshots.append((chave, linhas))
+
+    def registrar(self, **campos):
+        self.registros.append(campos)
+
+
+class _QuadroDoProcesso:
+    url = "https://www3.tjrj.jus.br/portalservicos/#/consultar/detalhes-processo"
+
+    def evaluate(self, _js):
+        return {
+            "pares": [["Classe", "Procedimento Comum Civel"]],
+            "movimentacoes": [["27/04/2018", "", "Juntada de Peticao"],
+                              ["03/05/2018", "14:22", "Conclusao ao Juiz"]],
+            "tabelas": [], "familias": {},
+        }
+
+
+def _preparar_leitura(monkeypatch, tmp_path):
+    from justica_mcp import dcp
+    from justica_mcp.core import estado as _estado
+
+    monkeypatch.setattr(dcp, "esperar_a_tela_do_processo",
+                        lambda pagina, segundos=45: (_QuadroDoProcesso(), object()))
+    monkeypatch.setattr(_estado, "diretorio_estado", lambda: tmp_path)
+
+
+def test_a_consulta_do_dcp_grava_o_arquivo_e_o_snapshot(monkeypatch, tmp_path):
+    import json
+
+    from justica_mcp.portal import _ler_a_tela_do_dcp
+
+    _preparar_leitura(monkeypatch, tmp_path)
+    estado = _EstadoFalso()
+    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(), estado)
+
+    assert dados["totais"] == {"principais": 1, "movimentacoes": 2}
+    gravado = json.loads(
+        __import__("pathlib").Path(dados["arquivo"]).read_text(encoding="utf-8"))
+    assert gravado["principais"]["Classe"] == "Procedimento Comum Civel"
+    assert gravado["numero"] == _NumeroFalso.formatado
+    assert gravado["tribunal"] == "TJRJ"
+    assert gravado["sistema"] == "dcp"
+
+    # Sem o snapshot, processo do Rio de Janeiro fica fora do monitoramento: a
+    # consulta traria os dados e `verificar_novos_andamentos` nunca saberia que
+    # eles existiram.
+    chave, linhas = estado.snapshots[0]
+    assert chave == _NumeroFalso.apenas_digitos
+    assert linhas[0] == {"data_hora": "27/04/2018", "codigo": "27/04/2018",
+                         "nome": "Juntada de Peticao"}
+    assert len(linhas) == 2
+    assert estado.registros[0]["acao"] == "leitura_da_tela_do_processo"
+
+
+def test_o_arquivo_do_dcp_avisa_que_a_leitura_nao_foi_conferida(monkeypatch, tmp_path):
+    """Quem abrir o arquivo daqui a seis meses nao tem como saber de outro
+    jeito que a tela nunca foi vista por este programa."""
+    import json
+    import pathlib
+
+    from justica_mcp.portal import _ler_a_tela_do_dcp
+
+    _preparar_leitura(monkeypatch, tmp_path)
+    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+                               _EstadoFalso())
+    gravado = json.loads(pathlib.Path(dados["arquivo"]).read_text(encoding="utf-8"))
+    assert gravado["leitura"]["confirmada_em_tela_real"] is False
+    assert "nunca viu" in gravado["leitura"]["aviso"]
+
+
+def test_o_endereco_gravado_nao_carrega_o_numero_do_processo(monkeypatch, tmp_path):
+    from justica_mcp.portal import _ler_a_tela_do_dcp
+
+    _preparar_leitura(monkeypatch, tmp_path)
+    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+                               _EstadoFalso())
+    assert "?" not in dados["endereco"]
+    assert _NumeroFalso.apenas_digitos not in dados["endereco"]
+
+
+def test_a_ferramenta_do_servidor_alcanca_o_dcp():
+    """Ate 13/10/2026 ela recusava: o caminho existia so pela linha de comando."""
+    from justica_mcp.tools import SISTEMAS_AUTENTICADOS
+
+    assert "dcp" in SISTEMAS_AUTENTICADOS
+    assert "eproc" in SISTEMAS_AUTENTICADOS
+
+
+def test_o_caminho_do_servidor_para_na_tela_do_processo():
+    """A ferramenta promete somente leitura. Abrir o Visualizador e entrar nos
+    autos, e isso continua exigindo pedido do advogado pela linha de comando."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._capturar_dcp)
+    for proibido in ("abrir_visualizador", "baixar_integra", "baixar_em_lotes",
+                     "baixar_uma_peca", "motivo"):
+        assert proibido not in fonte, proibido
+
+
+def test_a_ferramenta_marca_a_leitura_nao_conferida_como_tal():
+    """Dizer confianca 'alta' para uma leitura por estrutura apaga a diferenca
+    justamente onde ela pesa."""
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    assert 'confirmada_em_tela_real' in fonte
+    assert '"alta" if conferida else "nao conferida"' in fonte

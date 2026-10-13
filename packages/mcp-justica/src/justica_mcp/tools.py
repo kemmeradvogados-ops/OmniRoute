@@ -82,6 +82,13 @@ class PublicacoesOabInput(BaseModel):
 
 # ----------------------------- registro -----------------------------
 
+# Sistemas que a ferramenta autenticada sabe percorrer. O eproc entra pela
+# busca rapida; o DCP do Rio de Janeiro entra pela tela de selecao, escolhe o
+# tipo de usuario e vai pelo menu. Os dois param na tela do processo: nenhum
+# abre documento, nenhum baixa nada.
+SISTEMAS_AUTENTICADOS = ("dcp", "eproc")
+
+
 def registrar(mcp: Any) -> None:
     def somente_leitura(titulo: str) -> ToolAnnotations:
         """Anotacoes da versao 1: nenhuma ferramenta altera estado no tribunal."""
@@ -330,9 +337,19 @@ def registrar(mcp: Any) -> None:
     async def justica_consultar_processo_autenticado(params: NumeroInput) -> str:
         """Consulta o processo no portal do tribunal, com a credencial do advogado.
 
-        Traz o que a base nacional NAO tem: partes, eventos completos e a lista
-        de documentos de cada evento. Somente leitura: nao abre documento, nao
-        baixa nada, nao toca em expediente de intimacao.
+        Traz o que a base nacional NAO tem. Somente leitura: nao abre
+        documento, nao baixa nada, nao toca em expediente de intimacao.
+
+        O que vem depende do sistema, e a diferenca importa:
+
+        - eproc: partes, eventos completos e a lista de documentos de cada
+          evento, lidos por seletor conferido na tela real.
+        - dcp (Portal de Servicos do Rio de Janeiro): capa e movimentacoes
+          lidas pela ESTRUTURA da pagina, nao por seletor conferido. O
+          resultado traz `leitura.confirmada_em_tela_real: false` e
+          `proveniencia.confianca: "nao conferida"`. Nao apresente esses dados
+          como certos: diga ao advogado que a leitura ainda nao foi conferida
+          contra a tela.
 
         CUSTO REAL POR CHAMADA: cada uso autentica de verdade no tribunal, o
         que leva dezenas de segundos e consome uma tentativa. Tentativas
@@ -360,11 +377,13 @@ def registrar(mcp: Any) -> None:
             LimiteTentativas.do_ambiente(_estado).exigir_folga()
 
             sistema = (await resolver_sistema(numero, _estado)).sistema
-            if sistema not in ("eproc",):
+            if sistema not in SISTEMAS_AUTENTICADOS:
                 return _erro(
                     f"Consulta autenticada ainda nao implementada para {sistema!r}.",
                     "sistema_sem_adaptador",
-                    "Apenas o eproc tem adaptador autenticado. Use a base nacional.",
+                    "Hoje ha adaptador autenticado para "
+                    f"{', '.join(sorted(SISTEMAS_AUTENTICADOS))}. "
+                    "Use a base nacional para os demais.",
                 )
 
             # Playwright sincrono nao roda dentro do laco de eventos; vai para
@@ -372,13 +391,25 @@ def registrar(mcp: Any) -> None:
             dados = await asyncio.to_thread(
                 consultar_processo_estruturado, tribunal.codigo, sistema, numero.formatado
             )
+            # A confianca sai do PROPRIO dado, e nao de uma constante: quem
+            # le por estrutura nao sabe o mesmo que quem le por seletor
+            # conferido, e dizer "alta" para os dois apaga essa diferenca
+            # justamente onde ela pesa.
+            conferida = (dados.get("leitura") or {}).get(
+                "confirmada_em_tela_real", True)
+            observacao = ("Leitura autenticada do portal, ao vivo. Nenhum documento "
+                          "foi aberto e nenhum expediente foi tocado.")
+            if not conferida:
+                observacao += (
+                    " A capa e as movimentacoes foram lidas pela estrutura da "
+                    "pagina, e nao por seletor conferido na tela real. Trate "
+                    "como leitura nao conferida e diga isso ao advogado.")
             dados["proveniencia"] = {
                 "fonte": f"{tribunal.codigo}/{sistema}",
                 "metodo": "navegador",
-                "confianca": "alta",
+                "confianca": "alta" if conferida else "nao conferida",
                 "coletado_em": agora_iso(),
-                "observacao": ("Leitura autenticada do portal, ao vivo. Nenhum documento "
-                               "foi aberto e nenhum expediente foi tocado."),
+                "observacao": observacao,
             }
             return _json(dados)
         except TetoDeTentativasAtingido as exc:

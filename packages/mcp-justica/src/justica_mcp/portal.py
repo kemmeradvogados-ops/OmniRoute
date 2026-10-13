@@ -3593,6 +3593,48 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
     return destino
 
 
+def _ler_a_tela_do_dcp(pagina, numero, identidade, estado_local,
+                       segundos: int = 45) -> dict:
+    """Le a tela do processo do Portal de Servicos, grava e devolve os dados.
+
+    Um lugar so para as tres coisas que a consulta precisa fazer depois da
+    busca: ler, gravar em arquivo e alimentar a comparacao de novidades. O
+    comando de terminal e a ferramenta do servidor chamam esta mesma funcao,
+    porque duas copias disso divergem no primeiro conserto.
+
+    Nada e impresso aqui. O que pode ir ao terminal e contagem, e quem decide
+    imprimir e quem chamou; o conteudo fica no arquivo.
+    """
+    from .dcp import esperar_a_tela_do_processo
+    from .dcp import extrair as extrair_dcp
+
+    quadro, _ = esperar_a_tela_do_processo(pagina, segundos)
+    dados = extrair_dcp(quadro)
+    dados["numero"] = numero.formatado
+    dados["tribunal"] = identidade.tribunal
+    dados["sistema"] = identidade.sistema
+    dados["grau"] = numero.grau
+    dados["endereco"] = endereco_sem_dado(
+        getattr(quadro, "url", "") or getattr(pagina, "url", "") or "")
+    dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
+
+    # A movimentacao do Portal de Servicos nao traz numero de evento, so data e
+    # descricao, como no e-SAJ. A data faz as vezes de codigo: comparar por
+    # (data, descricao) e o que a tela permite.
+    estado_local.gravar_snapshot(
+        numero.apenas_digitos,
+        [{"data_hora": m["data"], "codigo": m["data"], "nome": m["descricao"]}
+         for m in dados["movimentacoes"]],
+    )
+    estado_local.registrar(
+        acao="leitura_da_tela_do_processo", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado,
+        resultado=(f"{dados['totais']['principais']} rotulo(s), "
+                   f"{dados['totais']['movimentacoes']} movimentacao(oes)"),
+    )
+    return dados
+
+
 BOTAO_INTEGRA = "#btnDownloadCompletoRS"
 
 # Palavras que denunciam um caminho de copia dos autos. Comparadas SEM ACENTO,
@@ -5217,6 +5259,56 @@ BUSCA_RAPIDA = "#txtNumProcessoPesquisaRapida"
 BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
 
 
+def _capturar_dcp(pagina, guarda, estado_local, identidade, numero,
+                  perfil, url_de_login: str, guardado: dict) -> int:
+    """O caminho do DCP para a ferramenta do servidor. SOMENTE LEITURA.
+
+    Faz o mesmo que o comando de terminal faz ate a tela do processo, e para
+    ai: nao abre o Visualizador, nao pede justificativa, nao baixa nada. Abrir
+    os autos e entrar no processo, e isso continua exigindo pedido explicito do
+    advogado pela linha de comando.
+    """
+    from .dcp import (ConsultaIndisponivel, PerfilNaoInformado,
+                      entrar_no_portal_de_servicos, escolher_perfil,
+                      na_tela_de_perfil, reencontrar_o_portal)
+    from .dcp import buscar as buscar_dcp
+
+    segundos = 45
+    try:
+        pagina = entrar_no_portal_de_servicos(pagina, guarda, segundos)
+    except ConsultaIndisponivel as exc:
+        guardado["erro"] = f"Portal de Servicos nao abriu: {exc}"
+        return 1
+    _assentar(pagina, segundos)
+    pagina = reencontrar_o_portal(pagina, 15)
+
+    if na_tela_de_perfil(pagina):
+        if not (perfil or "").strip():
+            guardado["erro"] = (
+                "O Portal de Servicos pede o tipo de usuario e nenhum esta "
+                "configurado. O operador define JUSTICA_PORTAL_TJRJ_DCP_PERFIL "
+                "no .env; o agente nao escolhe perfil, porque o perfil decide o "
+                "que a sessao enxerga.")
+            return 1
+        try:
+            escolher_perfil(pagina, guarda, perfil, segundos)
+        except (PerfilNaoInformado, NavegacaoBloqueada, ConsultaIndisponivel) as exc:
+            guardado["erro"] = f"Tipo de usuario nao foi aceito: {exc}"
+            return 1
+        _assentar(pagina, segundos)
+        pagina = reencontrar_o_portal(pagina, 15)
+
+    try:
+        buscar_dcp(pagina, guarda, numero, url_de_login, segundos)
+    except ConsultaIndisponivel as exc:
+        guardado["erro"] = f"A busca nao chegou ao processo: {exc}"
+        return 1
+
+    dados = _ler_a_tela_do_dcp(pagina, numero, identidade, estado_local, segundos)
+    guardado["dados"] = dados
+    return 0
+
+
 def consultar_processo_estruturado(
     tribunal: str,
     sistema: str,
@@ -5252,6 +5344,15 @@ def consultar_processo_estruturado(
         from .extracao import esperar_tela_do_processo, extrair_processo
 
         numero = parse_numero(numero_processo)
+        # O caminho do Portal de Servicos nao e o do eproc: nao ha barra de
+        # busca rapida, ha entrada pela tela de selecao, escolha do tipo de
+        # usuario e menu. Ate 13/10/2026 a ferramenta do servidor recusava o
+        # DCP por nao ter este ramo, e o caminho existia so pela linha de
+        # comando.
+        if identidade.sistema == "dcp":
+            return _capturar_dcp(
+                pagina, guarda, estado_local, identidade, numero,
+                config.perfil, config.url, guardado)
         atual = pagina.url
         campo = elemento_visivel(pagina, BUSCA_RAPIDA)
         botao = elemento_visivel(pagina, BOTAO_BUSCA)
@@ -5576,6 +5677,7 @@ def consultar_processo(
                               espera_do_arquivo, na_tela_de_perfil,
                               reencontrar_o_portal)
             from .dcp import buscar as buscar_dcp
+            from .dcp import resumo_seguro
 
             print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
             # A entrada pela tela de selecao NAO e etapa decorativa. Conferido
@@ -5634,6 +5736,21 @@ def consultar_processo(
                 sistema=identidade.sistema, numero=numero.formatado,
                 resultado="busca enviada",
             )
+
+            # LER a tela do processo, e nao so chegar a ela. Ate 13/10/2026 o
+            # caminho do DCP passava direto daqui para os documentos: a
+            # consulta nao devolvia capa nem movimentacao, nao gravava arquivo
+            # e nao alimentava a comparacao de novidades, entao processo do Rio
+            # de Janeiro ficava fora do monitoramento. A leitura e generica e
+            # vem marcada como tal dentro do proprio arquivo.
+            dados = _ler_a_tela_do_dcp(
+                pagina, numero, identidade, estado_local, segundos)
+            print("\n  LIDO DA TELA DO PROCESSO:")
+            for linha in resumo_seguro(dados):
+                print(f"    {linha}")
+            print(f"  Conteudo completo em: {dados['arquivo']}")
+            print("  O arquivo contem dado de cliente. Nao o cole em conversa "
+                  "nenhuma.")
 
             # Abrir os autos e um SEGUNDO passo, e so acontece quando o
             # operador pede documentos. Consultar e ler a capa; abrir o

@@ -1536,6 +1536,239 @@ def esperar_a_tela_do_processo(pagina: Any, segundos: int = 45) -> tuple:
             _tempo.sleep(0.5)
 
 
+# ---------------------------------------------------------------------------
+# Leitura da tela do processo
+#
+# ATENCAO, e isto nao e formalidade: esta leitura e GENERICA. A tela do
+# processo do Portal de Servicos nunca foi vista por este programa. Todo o
+# resto deste arquivo foi escrito a partir de tela real, lida em campo nos
+# dias 05, 06 e 08/10/2026; esta parte, nao.
+#
+# Por isso nada aqui procura identificador do portal. O que ela procura e
+# ESTRUTURA que existe em qualquer pagina:
+#
+#   - lista de definicao, `<dt>` seguido de `<dd>`;
+#   - linha de tabela com exatamente duas celulas, rotulo e valor;
+#   - folha de texto no formato "Rotulo: valor";
+#   - rotulo que termina em dois pontos, com o valor na folha seguinte;
+#   - linha que comeca por data, que e como movimentacao se apresenta.
+#
+# O que ela devolve vem marcado como leitura nao conferida, e o relatorio
+# junto traz a estrutura da tela (tabelas e familias de identificador, sem
+# conteudo nenhum) justamente para que a leitura possa ser apertada depois,
+# contra a tela de verdade, em vez de continuar generica para sempre.
+# ---------------------------------------------------------------------------
+
+AVISO_DA_LEITURA = (
+    "Leitura GENERICA. Os rotulos e as linhas foram achados pela estrutura da "
+    "pagina (lista de definicao, linha de duas celulas, texto no formato "
+    "'Rotulo: valor' e linha que comeca por data), e NAO por seletor lido da "
+    "tela real do Portal de Servicos, que este programa nunca viu. Confira "
+    "contra a tela antes de usar como fonte."
+)
+
+JS_DA_TELA_DO_PROCESSO = """
+() => {
+  const corta = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const visivel = (e) => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+
+  const pares = [];
+  const vistos = new Set();
+  // Rotulo e nome de campo, nao linha de movimentacao. Sem esta regra, a
+  // tabela de movimentos entrava inteira na capa do processo, cada data virando
+  // um "rotulo", e a hora "14:22" ainda virava o par "03/05/2018 14" -> "22".
+  const ehRotulo = (r) => (
+    /[A-Za-zÀ-ÿ]/.test(r) &&
+    !/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(r) &&
+    !/^\d/.test(r) &&
+    r.length <= 60
+  );
+  const guardar = (rotulo, valor) => {
+    rotulo = corta(rotulo, 120).replace(/:\s*$/, '');
+    valor = corta(valor, 300);
+    if (!rotulo || !valor || rotulo === valor) return;
+    if (!ehRotulo(rotulo)) return;
+    const chave = rotulo.toLowerCase() + '\u0000' + valor;
+    if (vistos.has(chave)) return;
+    vistos.add(chave);
+    pares.push([rotulo, valor]);
+  };
+
+  for (const dl of document.querySelectorAll('dl')) {
+    const filhos = Array.from(dl.children);
+    for (let i = 0; i < filhos.length - 1; i++) {
+      if (filhos[i].tagName === 'DT' && filhos[i + 1].tagName === 'DD') {
+        guardar(filhos[i].innerText, filhos[i + 1].innerText);
+      }
+    }
+  }
+
+  for (const tr of document.querySelectorAll('tr')) {
+    const celulas = Array.from(tr.children);
+    if (celulas.length !== 2) continue;
+    // Linha de cabecalho e titulo de coluna, nao rotulo e valor: "Data" nao
+    // vale "Movimento". As duas celulas serem TH e o que a distingue.
+    if (celulas[0].tagName === 'TH' && celulas[1].tagName === 'TH') continue;
+    guardar(celulas[0].innerText, celulas[1].innerText);
+  }
+
+  const folhas = document.querySelectorAll(
+    'span, div, p, li, label, strong, b, td, h1, h2, h3, h4, h5');
+  for (const e of folhas) {
+    if (e.children.length > 0) continue;
+    if (!visivel(e)) continue;
+    const texto = corta(e.innerText, 360);
+    if (!texto) continue;
+    const m = texto.match(/^([^:]{2,60}):\s*(.+)$/);
+    if (m) { guardar(m[1], m[2]); continue; }
+    if (/:$/.test(texto)) {
+      const vizinho = e.nextElementSibling;
+      if (vizinho && vizinho.children.length === 0 && visivel(vizinho)) {
+        guardar(texto, corta(vizinho.innerText, 300));
+      }
+    }
+  }
+
+  const movimentacoes = [];
+  const jaVistas = new Set();
+  const comecaPorData = /^(\d{2}\/\d{2}\/\d{4})(?:[\s,]+(\d{2}:\d{2}(?::\d{2})?))?/;
+  for (const linha of document.querySelectorAll('tr, [role=row], li')) {
+    if (linha.querySelector('tr, [role=row]')) continue;
+    const texto = corta(linha.innerText, 400);
+    const m = texto.match(comecaPorData);
+    if (!m) continue;
+    const descricao = corta(texto.slice(m[0].length).replace(/^[\s\-|]+/, ''), 300);
+    if (!descricao) continue;
+    const chave = m[1] + '\u0000' + descricao;
+    if (jaVistas.has(chave)) continue;
+    jaVistas.add(chave);
+    movimentacoes.push([m[1], m[2] || '', descricao]);
+  }
+
+  const tabelas = [];
+  for (const t of Array.from(document.querySelectorAll('table')).slice(0, 40)) {
+    const primeira = t.querySelector('tr');
+    tabelas.push([t.id || '', corta(t.className, 45),
+                  t.querySelectorAll('tr').length,
+                  primeira ? primeira.children.length : 0]);
+  }
+
+  const familias = {};
+  for (const e of document.querySelectorAll('[id]')) {
+    const marcador = e.tagName.toLowerCase();
+    if (['script', 'style', 'link', 'meta'].indexOf(marcador) >= 0) continue;
+    const nome = marcador + '#' + e.id.replace(/\d+/g, 'N');
+    familias[nome] = (familias[nome] || 0) + 1;
+  }
+
+  return {pares: pares, movimentacoes: movimentacoes,
+          tabelas: tabelas, familias: familias};
+}
+"""
+
+
+def _leitura_vazia(falha: Optional[str] = None) -> dict:
+    """O mesmo formato, quando nao houve o que ler. Nunca um dicionario torto.
+
+    Quem consome nao pode ter de descobrir se a leitura falhou olhando se a
+    chave existe: a forma e sempre a mesma, e a falha vem dita.
+    """
+    return {
+        "principais": {},
+        "movimentacoes": [],
+        "estrutura": {"tabelas": [], "familias": {}},
+        "leitura": {
+            "metodo": "generica",
+            "confirmada_em_tela_real": False,
+            "aviso": AVISO_DA_LEITURA,
+            "falha": falha,
+        },
+        "totais": {"principais": 0, "movimentacoes": 0},
+    }
+
+
+def extrair(quadro: Any) -> dict:
+    """Le a tela do processo do Portal de Servicos, pela estrutura da pagina.
+
+    Devolve o mesmo formato do e-SAJ no que da para comparar (`principais`,
+    `movimentacoes`, `totais`), mais a `estrutura` da tela, que nao tem
+    conteudo nenhum e serve para apertar esta leitura depois.
+
+    O campo `leitura` diz, dentro do proprio arquivo, que isto nao foi
+    conferido em tela real. Quem abrir o arquivo daqui a seis meses nao tem
+    como saber disso de outro jeito.
+    """
+    try:
+        bruto = quadro.evaluate(JS_DA_TELA_DO_PROCESSO)
+    except Exception as exc:
+        return _leitura_vazia(f"{type(exc).__name__}: {exc}")
+    if not isinstance(bruto, dict):
+        return _leitura_vazia("a tela devolveu algo que nao e leitura")
+
+    principais: dict = {}
+    for item in bruto.get("pares") or []:
+        try:
+            rotulo, valor = str(item[0]), str(item[1])
+        except Exception:
+            continue
+        # O primeiro valor de cada rotulo ganha: numa tela montada por script,
+        # o mesmo rotulo costuma reaparecer em rodape e em caixa escondida.
+        principais.setdefault(rotulo, valor)
+
+    movimentacoes = []
+    for item in bruto.get("movimentacoes") or []:
+        try:
+            movimentacoes.append({"data": str(item[0]), "hora": str(item[1]),
+                                  "descricao": str(item[2])})
+        except Exception:
+            continue
+
+    tabelas = []
+    for item in bruto.get("tabelas") or []:
+        try:
+            tabelas.append({"id": str(item[0]), "classe": str(item[1]),
+                            "linhas": int(item[2]), "colunas": int(item[3])})
+        except Exception:
+            continue
+
+    saida = _leitura_vazia()
+    saida["principais"] = principais
+    saida["movimentacoes"] = movimentacoes
+    saida["estrutura"] = {"tabelas": tabelas,
+                          "familias": dict(bruto.get("familias") or {})}
+    saida["totais"] = {"principais": len(principais),
+                       "movimentacoes": len(movimentacoes)}
+    return saida
+
+
+def resumo_seguro(dados: dict) -> list:
+    """O resumo que PODE ir ao terminal: contagem, e nada de conteudo.
+
+    O e-SAJ imprime classe, assunto, foro e vara. Aqui nao. Esta tela e tela de
+    processo, e a regra do advogado para ela e clara: resultado com dado de
+    cliente vai para arquivo, nunca para o terminal nem para conversa. Contagem
+    nao e dado de cliente; classe e assunto sao.
+    """
+    totais = dados.get("totais") or {}
+    estrutura = dados.get("estrutura") or {}
+    linhas = [
+        f"rotulos lidos: {totais.get('principais', 0)}   "
+        f"movimentacoes: {totais.get('movimentacoes', 0)}",
+        f"tabelas na tela: {len(estrutura.get('tabelas') or [])}   "
+        f"familias de identificador: {len(estrutura.get('familias') or {})}",
+    ]
+    falha = (dados.get("leitura") or {}).get("falha")
+    if falha:
+        linhas.append(f"a leitura falhou: {falha}")
+    elif not totais.get("principais") and not totais.get("movimentacoes"):
+        linhas.append("nada foi lido desta tela. A estrutura dela esta no "
+                      "arquivo, e e por ela que a leitura se aperta.")
+    return linhas
+
+
 def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
                        motivo: Optional[str] = None) -> Any:
     """Clica em "Processo Eletronico - Visualizador" e devolve a JANELA NOVA.

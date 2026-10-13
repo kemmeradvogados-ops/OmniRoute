@@ -4480,3 +4480,195 @@ def test_a_espera_conta_o_que_apareceu_na_tela(capsys, monkeypatch):
     dcp.esperar_a_descarga(tela, [], 300)
     saida = capsys.readouterr().out
     assert "[APARECEU NA TELA] 'Salvar o documento'" in saida
+
+
+# ---------------- a leitura da tela do processo ----------------
+#
+# Ate 13/10/2026 o caminho do DCP ia da busca direto para os documentos: a
+# consulta nao devolvia capa nem movimentacao, nao gravava arquivo e nao
+# alimentava a comparacao de novidades, entao processo do Rio de Janeiro ficava
+# fora do monitoramento.
+#
+# A leitura e GENERICA, e os testes dizem isso em todo lugar: a tela do
+# processo do Portal de Servicos nunca foi vista por este programa, e o que
+# esta sendo guardado aqui e a regra de ESTRUTURA, nao um seletor do portal.
+
+
+def _navegador_de_teste():
+    """O executavel do Chromium instalado, ou None quando nao ha nenhum."""
+    import os
+
+    for caminho in (
+        "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell",
+        "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+    ):
+        if os.path.exists(caminho):
+            return caminho
+    return None
+
+
+TELA_DE_EXEMPLO = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>Detalhes do processo</title></head><body>
+<div id="detalhes-processo">
+  <dl><dt>Classe:</dt><dd>Procedimento Comum Civel</dd>
+      <dt>Assunto</dt><dd>Adjudicacao Compulsoria</dd></dl>
+  <table id="tbDados">
+    <tr><th>Comarca:</th><td>Niteroi</td></tr>
+    <tr><th>Competencia</th><td>2a Vara Civel</td></tr>
+  </table>
+  <span>Juiz: Fulano de Tal</span>
+  <div><label>Valor da causa:</label><span>R$ 100.000,00</span></div>
+  <table id="tbMovimentos">
+    <tr><th>Data</th><th>Movimento</th></tr>
+    <tr><td>27/04/2018</td><td>Juntada de Peticao</td></tr>
+    <tr><td>03/05/2018 14:22</td><td>Conclusao ao Juiz</td></tr>
+    <tr><td>27/04/2018</td><td>Juntada de Peticao</td></tr>
+  </table>
+  <ul><li>15/06/2019 - Sentenca publicada</li><li>sem data nenhuma</li></ul>
+  <span id="rodape-9">Classe: Procedimento Comum Civel</span>
+</div></body></html>"""
+
+
+def _ler_em_navegador(html):
+    """Roda a leitura num Chromium de verdade, contra o HTML dado."""
+    import tempfile
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import extrair
+
+    executavel = _navegador_de_teste()
+    with tempfile.TemporaryDirectory() as pasta:
+        from pathlib import Path as _P
+
+        arquivo = _P(pasta) / "tela.html"
+        arquivo.write_text(html, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(executable_path=executavel,
+                                          args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                return extrair(pagina)
+            finally:
+                navegador.close()
+
+
+semNavegador = pytest.mark.skipif(
+    _navegador_de_teste() is None,
+    reason="nenhum Chromium instalado nesta maquina")
+
+
+@semNavegador
+def test_a_leitura_acha_a_capa_em_navegador_de_verdade():
+    """Falso de pagina nao prova regra de DOM: isto roda num Chromium."""
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    principais = dados["principais"]
+    assert principais["Classe"] == "Procedimento Comum Civel"
+    assert principais["Assunto"] == "Adjudicacao Compulsoria"
+    assert principais["Comarca"] == "Niteroi"
+    assert principais["Competencia"] == "2a Vara Civel"
+    assert principais["Juiz"] == "Fulano de Tal"
+    assert principais["Valor da causa"] == "R$ 100.000,00"
+
+
+@semNavegador
+def test_a_tabela_de_movimentos_NAO_entra_na_capa():
+    """Sem esta regra a capa virava a tabela de movimentos: cada data um
+    'rotulo', e a hora '14:22' ainda virava o par '03/05/2018 14' -> '22'."""
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    for rotulo in dados["principais"]:
+        assert not rotulo[:1].isdigit(), rotulo
+    assert "Data" not in dados["principais"]
+
+
+@semNavegador
+def test_as_movimentacoes_saem_com_data_hora_e_sem_repetir():
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    assert dados["movimentacoes"] == [
+        {"data": "27/04/2018", "hora": "", "descricao": "Juntada de Peticao"},
+        {"data": "03/05/2018", "hora": "14:22", "descricao": "Conclusao ao Juiz"},
+        {"data": "15/06/2019", "hora": "", "descricao": "Sentenca publicada"},
+    ]
+
+
+@semNavegador
+def test_a_estrutura_da_tela_sai_sem_conteudo_nenhum():
+    """E ela que permite apertar esta leitura depois, contra a tela real. Por
+    isso traz tamanho de tabela e familia de identificador, nunca celula."""
+    import json
+
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    estrutura = dados["estrutura"]
+    assert {"id": "tbMovimentos", "classe": "", "linhas": 4,
+            "colunas": 2} in estrutura["tabelas"]
+    assert estrutura["familias"]["span#rodape-N"] == 1
+    texto = json.dumps(estrutura, ensure_ascii=False)
+    for conteudo in ("Niteroi", "Fulano", "Juntada", "100.000"):
+        assert conteudo not in texto, conteudo
+
+
+@semNavegador
+def test_tela_vazia_devolve_a_mesma_forma():
+    dados = _ler_em_navegador("<!doctype html><html><body></body></html>")
+    assert dados["principais"] == {}
+    assert dados["movimentacoes"] == []
+    assert dados["totais"] == {"principais": 0, "movimentacoes": 0}
+
+
+def test_a_leitura_se_declara_nao_conferida():
+    """A tela do processo do Portal de Servicos nunca foi vista por este
+    programa. Quem abrir o arquivo daqui a seis meses nao tem como saber disso
+    de outro jeito."""
+    from justica_mcp.dcp import AVISO_DA_LEITURA, _leitura_vazia
+
+    leitura = _leitura_vazia()["leitura"]
+    assert leitura["confirmada_em_tela_real"] is False
+    assert leitura["metodo"] == "generica"
+    assert leitura["aviso"] == AVISO_DA_LEITURA
+    assert "nunca viu" in AVISO_DA_LEITURA
+
+
+def test_tela_ilegivel_nao_derruba_a_consulta():
+    """A consulta ja foi feita e a tentativa ja foi gasta. Uma leitura que
+    estoura joga tudo isso fora."""
+    from justica_mcp.dcp import extrair
+
+    class _TelaQueRecusa:
+        def evaluate(self, _js):
+            raise RuntimeError("execution context was destroyed")
+
+    dados = extrair(_TelaQueRecusa())
+    assert dados["totais"] == {"principais": 0, "movimentacoes": 0}
+    assert "RuntimeError" in dados["leitura"]["falha"]
+
+
+def test_o_resumo_do_terminal_so_tem_contagem():
+    """Resultado com dado de cliente vai para arquivo, nunca para o terminal.
+    O e-SAJ imprime classe e assunto; esta tela nao."""
+    from justica_mcp.dcp import resumo_seguro
+
+    dados = {
+        "principais": {"Classe": "Procedimento Comum Civel",
+                       "Juiz": "Fulano de Tal"},
+        "movimentacoes": [{"data": "27/04/2018", "hora": "",
+                           "descricao": "Juntada de Peticao"}],
+        "estrutura": {"tabelas": [{"id": "x"}], "familias": {"div#a": 2}},
+        "totais": {"principais": 2, "movimentacoes": 1},
+        "leitura": {"falha": None},
+    }
+    texto = " ".join(resumo_seguro(dados))
+    assert "rotulos lidos: 2" in texto
+    assert "movimentacoes: 1" in texto
+    for conteudo in ("Procedimento", "Fulano", "Juntada"):
+        assert conteudo not in texto, conteudo
+
+
+def test_o_resumo_diz_quando_nada_foi_lido():
+    from justica_mcp.dcp import resumo_seguro
+
+    vazio = {"principais": {}, "movimentacoes": [],
+             "estrutura": {"tabelas": [], "familias": {}},
+             "totais": {"principais": 0, "movimentacoes": 0},
+             "leitura": {"falha": None}}
+    assert "nada foi lido" in " ".join(resumo_seguro(vazio))
