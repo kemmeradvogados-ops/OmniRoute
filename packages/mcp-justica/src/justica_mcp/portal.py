@@ -3605,17 +3605,31 @@ def _ler_a_tela_do_dcp(pagina, numero, identidade, estado_local,
     Nada e impresso aqui. O que pode ir ao terminal e contagem, e quem decide
     imprimir e quem chamou; o conteudo fica no arquivo.
     """
-    from .dcp import esperar_a_tela_do_processo
+    from .dcp import MARCA_DA_TELA_DO_PROCESSO, esperar_a_tela_do_processo
     from .dcp import extrair as extrair_dcp
 
-    quadro, _ = esperar_a_tela_do_processo(pagina, segundos)
+    quadro, botao = esperar_a_tela_do_processo(pagina, segundos)
+    endereco_do_quadro = getattr(quadro, "url", "") or ""
     dados = extrair_dcp(quadro)
     dados["numero"] = numero.formatado
     dados["tribunal"] = identidade.tribunal
     dados["sistema"] = identidade.sistema
     dados["grau"] = numero.grau
     dados["endereco"] = endereco_sem_dado(
-        getattr(quadro, "url", "") or getattr(pagina, "url", "") or "")
+        endereco_do_quadro or getattr(pagina, "url", "") or "")
+
+    # PROVA POSITIVA de que a tela lida e a do processo, e nao o formulario de
+    # busca, que mora no mesmo quadro e tem rotulos iguais aos de uma capa.
+    # Sem ela, em 13/10/2026, a leitura devolveu sete rotulos e nenhuma
+    # movimentacao sem dizer de que tela eles vieram, e nao havia como saber
+    # pelo terminal se o processo tinha chegado.
+    #
+    # Duas provas, e qualquer uma basta: o botao do Visualizador, que so existe
+    # depois que a busca devolve, e a rota do quadro.
+    dados["leitura"]["tela_do_processo_confirmada"] = bool(
+        botao is not None or MARCA_DA_TELA_DO_PROCESSO in endereco_do_quadro)
+    dados["leitura"]["endereco_do_quadro"] = endereco_sem_dado(
+        endereco_do_quadro or "(sem endereco)")
     dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
 
     # A movimentacao do Portal de Servicos nao traz numero de evento, so data e

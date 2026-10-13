@@ -1567,7 +1567,7 @@ AVISO_DA_LEITURA = (
     "contra a tela antes de usar como fonte."
 )
 
-JS_DA_TELA_DO_PROCESSO = """
+JS_DA_TELA_DO_PROCESSO = r"""
 () => {
   const corta = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
   const visivel = (e) => {
@@ -1683,6 +1683,12 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
+            # Coisa diferente da linha acima, e as duas precisam existir. A de
+            # cima diz que a REGRA de leitura nunca foi conferida contra a tela
+            # real. Esta diz se a tela lida era mesmo a do processo, e nao o
+            # formulario de busca que fica no mesmo lugar.
+            "tela_do_processo_confirmada": None,
+            "endereco_do_quadro": None,
             "aviso": AVISO_DA_LEITURA,
             "falha": falha,
         },
@@ -1760,7 +1766,14 @@ def resumo_seguro(dados: dict) -> list:
         f"tabelas na tela: {len(estrutura.get('tabelas') or [])}   "
         f"familias de identificador: {len(estrutura.get('familias') or {})}",
     ]
-    falha = (dados.get("leitura") or {}).get("falha")
+    leitura = dados.get("leitura") or {}
+    if leitura.get("tela_do_processo_confirmada") is False:
+        linhas.append(
+            "ATENCAO: a tela lida NAO foi confirmada como a do processo. O "
+            "formulario de busca mora no mesmo quadro, e o que esta no arquivo "
+            "pode ser ele. Endereco do quadro: "
+            f"{leitura.get('endereco_do_quadro') or '(nao lido)'}")
+    falha = leitura.get("falha")
     if falha:
         linhas.append(f"a leitura falhou: {falha}")
     elif not totais.get("principais") and not totais.get("movimentacoes"):

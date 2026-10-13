@@ -6489,3 +6489,44 @@ def test_a_ferramenta_marca_a_leitura_nao_conferida_como_tal():
     fonte = inspect.getsource(tools.registrar)
     assert 'confirmada_em_tela_real' in fonte
     assert '"alta" if conferida else "nao conferida"' in fonte
+
+
+def test_a_leitura_do_dcp_prova_que_leu_a_tela_do_processo(monkeypatch, tmp_path):
+    """O formulario de busca mora no mesmo quadro que a tela do processo."""
+    from justica_mcp import dcp
+    from justica_mcp.portal import _ler_a_tela_do_dcp
+
+    _preparar_leitura(monkeypatch, tmp_path)
+    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+                               _EstadoFalso())
+    # O falso devolve o botao do Visualizador, que so existe depois que a busca
+    # devolve o processo.
+    assert dados["leitura"]["tela_do_processo_confirmada"] is True
+    assert "detalhes-processo" in dados["leitura"]["endereco_do_quadro"]
+
+    class _QuadroDaBusca(_QuadroDoProcesso):
+        url = "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal"
+
+    monkeypatch.setattr(dcp, "esperar_a_tela_do_processo",
+                        lambda pagina, segundos=45: (_QuadroDaBusca(), None))
+    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+                               _EstadoFalso())
+    assert dados["leitura"]["tela_do_processo_confirmada"] is False
+    assert "consultaportal" in dados["leitura"]["endereco_do_quadro"]
+
+
+def test_a_rota_do_processo_basta_mesmo_sem_o_botao(monkeypatch, tmp_path):
+    """Duas provas, e qualquer uma basta: o botao pode ter sido clicado antes."""
+    from justica_mcp import dcp
+    from justica_mcp.portal import _ler_a_tela_do_dcp
+
+    _preparar_leitura(monkeypatch, tmp_path)
+
+    class _SoARota(_QuadroDoProcesso):
+        url = "https://www3.tjrj.jus.br/portalservicos/#/consultar/detalhes-processo"
+
+    monkeypatch.setattr(dcp, "esperar_a_tela_do_processo",
+                        lambda pagina, segundos=45: (_SoARota(), None))
+    dados = _ler_a_tela_do_dcp(object(), _NumeroFalso(), _IdentidadeFalsa(),
+                               _EstadoFalso())
+    assert dados["leitura"]["tela_do_processo_confirmada"] is True

@@ -4672,3 +4672,57 @@ def test_o_resumo_diz_quando_nada_foi_lido():
              "totais": {"principais": 0, "movimentacoes": 0},
              "leitura": {"falha": None}}
     assert "nada foi lido" in " ".join(resumo_seguro(vazio))
+
+
+def test_o_resumo_avisa_quando_a_tela_nao_foi_confirmada():
+    """Em 13/10/2026 a leitura devolveu sete rotulos e nenhuma movimentacao sem
+    dizer de que tela eles vieram. O formulario de busca mora no mesmo quadro e
+    tem rotulos parecidos com os de uma capa."""
+    from justica_mcp.dcp import resumo_seguro
+
+    dados = {
+        "principais": {"a": "b"}, "movimentacoes": [],
+        "estrutura": {"tabelas": [], "familias": {}},
+        "totais": {"principais": 7, "movimentacoes": 0},
+        "leitura": {"falha": None, "tela_do_processo_confirmada": False,
+                    "endereco_do_quadro": "https://www3.tjrj.jus.br/#/consultaportal"},
+    }
+    texto = " ".join(resumo_seguro(dados))
+    assert "NAO foi confirmada" in texto
+    assert "consultaportal" in texto
+
+
+def test_o_resumo_cala_quando_a_tela_foi_confirmada():
+    from justica_mcp.dcp import resumo_seguro
+
+    dados = {
+        "principais": {}, "movimentacoes": [{"data": "01/01/2020", "hora": "",
+                                             "descricao": "x"}],
+        "estrutura": {"tabelas": [], "familias": {}},
+        "totais": {"principais": 3, "movimentacoes": 1},
+        "leitura": {"falha": None, "tela_do_processo_confirmada": True,
+                    "endereco_do_quadro": "https://www3.tjrj.jus.br/#/detalhes-processo"},
+    }
+    assert "NAO foi confirmada" not in " ".join(resumo_seguro(dados))
+
+
+def test_o_javascript_da_leitura_e_texto_cru():
+    """Sem `r\"\"\"`, o Python interpreta as escapadas que sao do JavaScript:
+    `\\s` e `\\d` viram aviso de escapada invalida e `\\u0000` vira um caractere
+    nulo de verdade dentro do codigo enviado ao navegador."""
+    import re
+
+    from justica_mcp.dcp import JS_DA_TELA_DO_PROCESSO
+
+    assert "\\s+" in JS_DA_TELA_DO_PROCESSO
+    assert "\\d{2}" in JS_DA_TELA_DO_PROCESSO
+    assert "\u0000" not in JS_DA_TELA_DO_PROCESSO
+    assert re.search(r"JS_DA_TELA_DO_PROCESSO = r\"\"\"", _fonte_do_dcp())
+
+
+def _fonte_do_dcp() -> str:
+    from pathlib import Path
+
+    from justica_mcp import dcp
+
+    return Path(dcp.__file__).read_text(encoding="utf-8")
