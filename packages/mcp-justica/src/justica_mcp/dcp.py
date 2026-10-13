@@ -1574,6 +1574,18 @@ JS_DA_TELA_DO_PROCESSO = r"""
     const r = e.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   };
+  const semAcento = (s) => (s || '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+  // Os rotulos de MOVIMENTO, lidos na tela real em 13/10/2026 depois do
+  // clique em "Todos Os Movimentos". Eles aparecem uma vez por movimento, e
+  // por isso NAO sao campos da capa: deixa-los entrar ali fazia o ultimo
+  // movimento ocupar o lugar do processo, e os outros nove sumirem.
+  const ROTULOS_DE_DATA = ['data', 'data da juntada', 'data do expediente',
+                           'data da digitacao'];
+  const ROTULOS_DE_DESCRICAO = ['descricao', 'descricao da juntada'];
+  const ROTULOS_DE_MOVIMENTO = ROTULOS_DE_DATA
+    .concat(ROTULOS_DE_DESCRICAO).concat(['tipo do movimento']);
 
   const pares = [];
   const vistos = new Set();
@@ -1591,6 +1603,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
     valor = corta(valor, 300);
     if (!rotulo || !valor || rotulo === valor) return;
     if (!ehRotulo(rotulo)) return;
+    if (ROTULOS_DE_MOVIMENTO.indexOf(semAcento(rotulo)) >= 0) return;
     const chave = rotulo.toLowerCase() + '\u0000' + valor;
     if (vistos.has(chave)) return;
     vistos.add(chave);
@@ -1632,8 +1645,6 @@ JS_DA_TELA_DO_PROCESSO = r"""
   // da tela de verdade em 13/10/2026. Quando ele nao bate, nada sai daqui.
   const partes = [];
   const partesVistas = new Set();
-  const semAcento = (s) => (s || '').normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   for (const tabela of document.querySelectorAll('table')) {
     const topo = tabela.querySelector('tr');
     const cabecalho = topo
@@ -1732,6 +1743,89 @@ JS_DA_TELA_DO_PROCESSO = r"""
     }
     guardarMovimento(data, hora, descricao,
                      'celula de data na tabela ' + nome + cabecalho);
+  }
+
+  // Terceira passada: o movimento desta tela NAO e linha de tabela, e sim um
+  // BLOCO DE ROTULOS. Lido na estrutura real em 13/10/2026, depois do clique
+  // em "Todos Os Movimentos": "Data da juntada:" e "Descricao da Juntada:"
+  // passaram de 1 para 4 ocorrencias, "Data:" e "Descricao:" apareceram 3
+  // vezes cada, e os titulos "Descricao Detalhada" passaram de 2 para 11.
+  //
+  // Os rotulos sao lidos NA ORDEM DO DOCUMENTO, e um movimento termina quando
+  // um rotulo que ele ja tem reaparece. Isso nao depende de saber como a tela
+  // agrupa os blocos, que e justamente o que eu nao sei.
+  const valorDoRotulo = (rot) => {
+    let irmao = rot.nextElementSibling;
+    while (irmao) {
+      if (irmao.tagName === 'LABEL') break;
+      const t = corta(irmao.innerText, 300);
+      if (t) return t;
+      irmao = irmao.nextElementSibling;
+    }
+    const pai = rot.parentElement;
+    if (pai) {
+      const todo = corta(pai.innerText, 400);
+      const so = corta(rot.innerText, 60);
+      if (todo.indexOf(so) === 0) return corta(todo.slice(so.length), 300);
+    }
+    return '';
+  };
+
+  const chaveDoRotulo = (rot) =>
+    semAcento(corta(rot.innerText, 60)).replace(/:$/, '').trim();
+  const temDescricao = (no) => Array.from(no.querySelectorAll('label'))
+    .some(l => ROTULOS_DE_DESCRICAO.indexOf(chaveDoRotulo(l)) >= 0);
+  // O bloco de um rotulo e o MENOR ancestral que contem uma descricao. A
+  // primeira versao disto separava os blocos so pela repeticao de rotulo, e
+  // perdia o movimento cujos rotulos nao repetiam os do anterior: "Data do
+  // expediente" e "Descricao da Juntada" entravam no bloco de "Data" e
+  // "Descricao" como se fossem o mesmo movimento.
+  const blocoDe = (rot) => {
+    let no = rot.parentElement;
+    for (let i = 0; i < 10 && no; i++) {
+      if (temDescricao(no)) return no;
+      no = no.parentElement;
+    }
+    return null;
+  };
+
+  const blocos = [];
+  let atual = null;
+  let donoAtual = null;
+  for (const rot of document.querySelectorAll('label')) {
+    const chave = chaveDoRotulo(rot);
+    if (ROTULOS_DE_MOVIMENTO.indexOf(chave) < 0) continue;
+    const dono = blocoDe(rot);
+    const ehDescricao = ROTULOS_DE_DESCRICAO.indexOf(chave) >= 0;
+    const jaTemDescricao = atual !== null &&
+      ROTULOS_DE_DESCRICAO.some(c => atual[c] !== undefined);
+    // Tres motivos para comecar outro movimento, e qualquer um basta: mudou o
+    // bloco na tela, o rotulo repetiu, ou chegou a segunda descricao. Os dois
+    // ultimos cobrem a tela que poe tudo num container so, onde o primeiro
+    // nao separaria nada.
+    if (atual === null || dono !== donoAtual || atual[chave] !== undefined ||
+        (ehDescricao && jaTemDescricao)) {
+      atual = {};
+      donoAtual = dono;
+      blocos.push(atual);
+    }
+    atual[chave] = valorDoRotulo(rot);
+  }
+
+  for (const bloco of blocos) {
+    let data = '', hora = '';
+    for (const chave of ROTULOS_DE_DATA) {
+      const m = (bloco[chave] || '').match(comecaPorData);
+      if (m) { data = m[1]; hora = m[2] || ''; break; }
+    }
+    let descricao = '';
+    for (const chave of ROTULOS_DE_DESCRICAO) {
+      if (bloco[chave]) { descricao = bloco[chave]; break; }
+    }
+    if (!descricao && bloco['tipo do movimento']) {
+      descricao = bloco['tipo do movimento'];
+    }
+    guardarMovimento(data, hora, descricao, 'bloco de rotulos da tela');
   }
 
   // A ESTRUTURA das tabelas, para apertar esta leitura contra a tela real. Vai

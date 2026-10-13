@@ -4947,7 +4947,10 @@ def test_as_partes_NAO_entram_na_capa_do_processo():
     dados = _ler_em_navegador(TELA_COMO_A_DO_PORTAL)
     for parte in ("Autor", "Réu", "Advogado"):
         assert parte not in dados["principais"], parte
-    assert dados["principais"]["Data da juntada"] == "27/04/2018"
+    # "Data da juntada" tambem nao e campo da capa: e rotulo de MOVIMENTO, e
+    # sai em `movimentacoes`, nao em `principais`.
+    assert "Data da juntada" not in dados["principais"]
+    assert dados["movimentacoes"][0]["data"] == "27/04/2018"
 
 
 @semNavegador
@@ -5010,3 +5013,92 @@ def test_o_resumo_conta_o_que_o_botao_do_historico_fez():
     texto = " ".join(resumo_seguro(dados))
     assert "partes: 4" in texto
     assert "'Todos Os Movimentos': clicado, 1 -> 141" in texto
+
+
+# ---------------- o movimento desta tela e um BLOCO DE ROTULOS ----------------
+#
+# Depois do clique em "Todos Os Movimentos", em 13/10/2026, a estrutura mostrou
+# o que estava acontecendo: "Data da juntada:" e "Descricao da Juntada:"
+# passaram de 1 para 4 ocorrencias, "Data:" e "Descricao:" apareceram 3 vezes
+# cada, e os titulos "Descricao Detalhada" passaram de 2 para 11. O historico
+# chegou. A leitura e que procurava movimento em tabela, e aqui ele nao esta em
+# tabela nenhuma. Pior: os dez blocos colapsavam em UM, porque o rotulo repetido
+# era descartado como se fosse o mesmo campo da capa.
+
+TELA_COM_MOVIMENTOS_EM_BLOCOS = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>Processo</title></head>
+<body><div id="detalhes-processo">
+  <h5>Processo n: 0000000-00.0000.0.00.0000</h5>
+  <div id="modal-geral">
+    <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+    <label id="Data: ">Data: </label><span>27/04/2018</span>
+    <label id="Descricao: ">Descricao: </label><span>Juntada de Peticao</span>
+    <label id="Data da juntada: ">Data da juntada: </label><span>28/04/2018</span>
+  </div>
+  <div id="modal-geral">
+    <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+    <label id="Data: ">Data: </label><span>03/05/2018</span>
+    <label id="Descricao: ">Descricao: </label><span>Conclusao ao Juiz</span>
+  </div>
+  <div id="modal-geral">
+    <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+    <label id="Data do expediente:">Data do expediente:</label><span>15/06/2019</span>
+    <label id="Descricao da Juntada: ">Descricao da Juntada: </label><span>Sentenca publicada</span>
+  </div>
+  <table id="pn_id_1-table"><tr><th>Tipo</th><th>Personagem</th></tr>
+    <tr><td>Autor</td><td>Fulano de Tal</td></tr></table>
+</div></body></html>"""
+
+
+@semNavegador
+def test_cada_bloco_de_rotulos_e_uma_movimentacao():
+    dados = _ler_em_navegador(TELA_COM_MOVIMENTOS_EM_BLOCOS)
+    assert [(m["data"], m["descricao"]) for m in dados["movimentacoes"]] == [
+        ("27/04/2018", "Juntada de Peticao"),
+        ("03/05/2018", "Conclusao ao Juiz"),
+        ("15/06/2019", "Sentenca publicada"),
+    ]
+    for movimento in dados["movimentacoes"]:
+        assert movimento["origem"] == "bloco de rotulos da tela"
+
+
+@semNavegador
+def test_bloco_com_rotulos_DIFERENTES_nao_se_funde_ao_anterior():
+    """A primeira versao separava os blocos so pela repeticao de rotulo, e
+    perdia o movimento cujos rotulos nao repetiam os do anterior: 'Data do
+    expediente' e 'Descricao da Juntada' entravam no bloco de 'Data' e
+    'Descricao' como se fossem o mesmo movimento."""
+    dados = _ler_em_navegador(TELA_COM_MOVIMENTOS_EM_BLOCOS)
+    assert dados["totais"]["movimentacoes"] == 3
+    descricoes = [m["descricao"] for m in dados["movimentacoes"]]
+    assert "Sentenca publicada" in descricoes
+
+
+@semNavegador
+def test_os_rotulos_de_movimento_NAO_viram_campos_da_capa():
+    """Enquanto viravam, o ultimo movimento ocupava o lugar do processo e os
+    outros nove sumiam, porque a capa guarda o PRIMEIRO valor de cada rotulo."""
+    dados = _ler_em_navegador(TELA_COM_MOVIMENTOS_EM_BLOCOS)
+    for rotulo in ("Data", "Descricao", "Data da juntada", "Data do expediente",
+                   "Tipo do Movimento"):
+        assert rotulo not in dados["principais"], rotulo
+
+
+TELA_COM_MOVIMENTOS_SEM_CONTAINER = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>Processo</title></head><body><div>
+  <label>Data: </label><span>27/04/2018</span>
+  <label>Descricao: </label><span>Juntada de Peticao</span>
+  <label>Data: </label><span>03/05/2018</span>
+  <label>Descricao: </label><span>Conclusao ao Juiz</span>
+</div></body></html>"""
+
+
+@semNavegador
+def test_tela_que_poe_tudo_num_container_so_ainda_separa_os_movimentos():
+    """Agrupar pelo container nao basta sozinho: ha tela que nao tem container
+    por movimento. A repeticao do rotulo separa esses."""
+    dados = _ler_em_navegador(TELA_COM_MOVIMENTOS_SEM_CONTAINER)
+    assert [(m["data"], m["descricao"]) for m in dados["movimentacoes"]] == [
+        ("27/04/2018", "Juntada de Peticao"),
+        ("03/05/2018", "Conclusao ao Juiz"),
+    ]
