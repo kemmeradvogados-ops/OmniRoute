@@ -5505,7 +5505,8 @@ def test_a_paginacao_junta_todas_as_paginas_na_ordem():
     assert resultado["paginas"] == 3
     assert [m["descricao"] for m in resultado["movimentacoes"]] == [
         "um", "dois", "tres", "quatro", "cinco"]
-    assert quadro.clicadas == [2, 3]
+    # O 1 no fim e a volta: quem pagina devolve a tela como a encontrou.
+    assert quadro.clicadas == [2, 3, 1]
 
 
 def test_pagina_que_nao_chega_encerra_a_volta_e_avisa():
@@ -5563,3 +5564,39 @@ def test_tela_sem_paginador_nao_e_tratada_como_erro():
     assert resultado["paginas"] == 1
     assert "nao tem paginacao" in resultado["situacao"]
     assert len(resultado["movimentacoes"]) == 1
+
+
+# ---------------- quem pagina devolve a tela como a encontrou ----------------
+#
+# Em 13/10/2026 a paginacao deixou a tela na pagina 21 e a etapa seguinte, que
+# abre o Visualizador, nao achou mais o botao dela: o relato mostrou so os
+# botoes '19', '20' e '21'. Consertar a leitura e quebrar o download e trocar
+# um defeito por outro.
+
+
+def test_a_paginacao_volta_para_a_primeira_pagina():
+    from justica_mcp.dcp import percorrer_as_paginas_de_movimentos
+
+    quadro = _QuadroPaginado([
+        [("01/01/2020", "um")],
+        [("02/01/2020", "dois")],
+        [("03/01/2020", "tres")],
+    ])
+    resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda())
+    assert quadro.clicadas == [2, 3, 1]
+    assert quadro.atual == 0
+    assert "voltou para a pagina 1" in resultado["situacao"]
+
+
+def test_a_volta_acontece_mesmo_quando_a_paginacao_falha():
+    """A tela nao pode ficar na pagina errada so porque o percurso parou."""
+    from justica_mcp.dcp import percorrer_as_paginas_de_movimentos
+
+    quadro = _QuadroPaginado([
+        [("01/01/2020", "um")],
+        [("02/01/2020", "dois")],
+        [("03/01/2020", "tres")],
+    ], trava_na=3)
+    resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda(), segundos=4)
+    assert quadro.clicadas[-1] == 1
+    assert "voltou para a pagina 1" in resultado["situacao"]

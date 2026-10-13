@@ -6546,3 +6546,35 @@ def test_a_rota_do_processo_basta_mesmo_sem_o_botao(monkeypatch, tmp_path):
     dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(),
                                _EstadoFalso())
     assert dados["leitura"]["tela_do_processo_confirmada"] is True
+
+
+def test_a_leitura_pode_pular_o_historico(monkeypatch, tmp_path):
+    """Ler o historico custa abrir, esperar montar e percorrer 21 paginas. Quem
+    so quer um documento nao precisa pagar isso."""
+    from justica_mcp import dcp
+    from justica_mcp.portal import _ler_a_tela_do_dcp
+
+    _preparar_leitura(monkeypatch, tmp_path)
+
+    def _nao_deveria(*a, **k):
+        raise AssertionError("o historico nao devia ter sido pedido")
+
+    monkeypatch.setattr(dcp, "mostrar_todos_os_movimentos", _nao_deveria)
+    monkeypatch.setattr(dcp, "percorrer_as_paginas_de_movimentos", _nao_deveria)
+
+    dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(),
+                               _IdentidadeFalsa(), _EstadoFalso(),
+                               com_movimentacoes=False)
+    assert "nao pedido" in dados["leitura"]["todos_os_movimentos"]
+    assert "nao percorridas" in dados["leitura"]["paginas_de_movimentacao"]
+    # A capa e as partes continuam saindo.
+    assert dados["totais"]["principais"] == 1
+
+
+def test_a_bandeira_de_pular_o_historico_chega_na_leitura():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "com_movimentacoes=not sem_movimentacoes" in fonte

@@ -3594,7 +3594,8 @@ def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
 
 
 def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
-                       segundos: int = 45) -> dict:
+                       segundos: int = 45,
+                       com_movimentacoes: bool = True) -> dict:
     """Le a tela do processo do Portal de Servicos, grava e devolve os dados.
 
     Um lugar so para as tres coisas que a consulta precisa fazer depois da
@@ -3618,13 +3619,21 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     # botao "Todos Os Movimentos", lido na estrutura da tela real em
     # 13/10/2026. Sem este clique a consulta devolveria o ultimo andamento como
     # se fosse o historico, que e o erro que o e-SAJ ja ensinou a nao cometer.
-    historico = mostrar_todos_os_movimentos(quadro, guarda)
-
-    # A lista de movimentos e PAGINADA: dez `app-movimento` por vez, com um
-    # `p-paginator` ao lado, lidos na estrutura da tela real em 13/10/2026.
-    # Ler so a primeira pagina entregaria dez de um historico inteiro, e
-    # entregaria como se fosse tudo.
-    paginas = percorrer_as_paginas_de_movimentos(quadro, guarda)
+    # Ler o historico custa: abrir, esperar montar, e percorrer 21 paginas num
+    # processo grande. Quem so quer um documento nao precisa pagar isso, e foi
+    # o advogado quem pediu, em 13/10/2026, para o teste de download nao
+    # depender dele. A capa e as partes continuam saindo.
+    if com_movimentacoes:
+        historico = mostrar_todos_os_movimentos(quadro, guarda)
+        # A lista de movimentos e PAGINADA: dez `app-movimento` por vez, com um
+        # `p-paginator` ao lado, lidos na estrutura da tela real em 13/10/2026.
+        # Ler so a primeira pagina entregaria dez de um historico inteiro, e
+        # entregaria como se fosse tudo.
+        paginas = percorrer_as_paginas_de_movimentos(quadro, guarda)
+    else:
+        historico = {"situacao": "nao pedido (--sem-movimentacoes)"}
+        paginas = {"situacao": "nao percorridas (--sem-movimentacoes)",
+                   "paginas": 0, "movimentacoes": []}
 
     dados = extrair_dcp(quadro)
     if len(paginas["movimentacoes"]) > len(dados.get("movimentacoes") or []):
@@ -5459,6 +5468,7 @@ def consultar_processo(
     aceitar_termo: bool = False,
     motivo: Optional[str] = None,
     segundos_download: Optional[int] = None,
+    sem_movimentacoes: bool = False,
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -5780,7 +5790,8 @@ def consultar_processo(
             # de Janeiro ficava fora do monitoramento. A leitura e generica e
             # vem marcada como tal dentro do proprio arquivo.
             dados = _ler_a_tela_do_dcp(
-                pagina, guarda, numero, identidade, estado_local, segundos)
+                pagina, guarda, numero, identidade, estado_local, segundos,
+                com_movimentacoes=not sem_movimentacoes)
             print("\n  LIDO DA TELA DO PROCESSO:")
             for linha in resumo_seguro(dados):
                 print(f"    {linha}")
@@ -6477,6 +6488,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="justificativa do acesso aos autos, quando o portal a "
                          "pedir. O do Rio de Janeiro pede, no campo 'Motivo', "
                          "antes de abrir o Visualizador. Padrao: 'consulta'")
+    cp.add_argument("--sem-movimentacoes", action="store_true",
+                    dest="sem_movimentacoes",
+                    help="pula a leitura do historico de movimentacoes, que no "
+                         "DCP do Rio de Janeiro abre o historico e percorre "
+                         "todas as paginas dele. A capa e as partes continuam "
+                         "sendo lidas. Serve para testar o download sem "
+                         "esperar o historico inteiro")
     cp.add_argument("--documentos", default="auto",
                     help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
                          "'integra', 'ultimos:N' ou 'nenhum'. No DCP do Rio de "
@@ -6556,6 +6574,7 @@ def main(argv: list[str] | None = None) -> int:
                 documentos=args.documentos, confirmado=args.confirmado,
                 aceitar_termo=args.aceitar_termo, motivo=args.motivo,
                 segundos_download=args.segundos_download,
+                sem_movimentacoes=args.sem_movimentacoes,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
             )

@@ -2509,8 +2509,49 @@ def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
 
     if percorridas >= teto:
         parou_por = f"o teto de {teto} paginas foi atingido"
-    return {"situacao": f"{percorridas} pagina(s), {parou_por}",
+
+    # VOLTAR para a primeira pagina, e subir a tela.
+    #
+    # Em 13/10/2026 esta funcao deixou a tela na pagina 21 e a etapa seguinte,
+    # que abre o Visualizador, nao achou mais o botao dela: o relato mostrou so
+    # os botoes '19', '20' e '21'. Quem pagina tem de devolver a tela como a
+    # encontrou, senao conserta a leitura e quebra o download.
+    volta = _voltar_ao_comeco(quadro, guarda, endereco, paginas[0][0], segundos)
+    return {"situacao": f"{percorridas} pagina(s), {parou_por}; {volta}",
             "paginas": percorridas, "movimentacoes": acumulado}
+
+
+def _voltar_ao_comeco(quadro: Any, guarda: Any, endereco: str, primeira: int,
+                      segundos: int) -> str:
+    """Devolve a tela a primeira pagina e ao topo. Diz o que conseguiu."""
+    import time as _tempo
+
+    from .core.guarda_navegacao import Acao
+
+    recado = "a tela continuou onde a paginacao parou"
+    for numero, botao in _paginas_na_tela(quadro):
+        if numero != primeira:
+            continue
+        try:
+            guarda.pode_executar(Acao.CLICAR, SELETOR_DA_PAGINA, url=endereco)
+            clicar_com_jeito(botao)
+            recado = f"a tela voltou para a pagina {primeira}"
+        except Exception:
+            recado = f"a tela nao voltou para a pagina {primeira}"
+        break
+
+    limite = _tempo.monotonic() + max(1, min(segundos, 10))
+    while _tempo.monotonic() < limite:
+        try:
+            quadro.wait_for_timeout(500)
+        except Exception:
+            _tempo.sleep(0.5)
+        break
+    try:
+        quadro.evaluate("() => window.scrollTo(0, 0)")
+    except Exception:
+        pass
+    return recado
 
 
 def resumo_seguro(dados: dict) -> list:
