@@ -455,6 +455,47 @@ def indice_com_paginas(pagina: Any) -> list:
     return saida
 
 
+# Quanto esperar o INDICE montar. Prazo de tela, nao de arquivo.
+SEGUNDOS_DO_INDICE = 45
+
+
+def esperar_o_indice(pagina: Any, segundos: int = SEGUNDOS_DO_INDICE) -> list:
+    """Espera o indice de documentos montar, e para quando ele para de crescer.
+
+    Em 13/10/2026 a leitura do indice rodou com o Visualizador recem-aberto e
+    devolveu lista vazia: o relato da tela mostrou 12 botoes, contra os 543 das
+    corridas em que o indice existia. O comando parou dizendo "o indice nao foi
+    lido", que e verdade e nao ajuda, porque o indice ia aparecer um segundo
+    depois.
+
+    E o mesmo defeito que ja apareceu na tela de login, na de selecao de
+    sistemas, no menu, no botao de enviar o perfil e na tela do processo: ler a
+    tela antes de ela terminar de montar. Aqui ele custou uma tentativa de
+    autenticacao inteira.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    quantos = 0
+    estaveis = 0
+    while _tempo.monotonic() < limite:
+        agora = len(indice_com_paginas(pagina))
+        if agora > quantos:
+            quantos = agora
+            estaveis = 0
+        elif quantos:
+            estaveis += 1
+            if estaveis >= LEITURAS_ESTAVEIS:
+                break
+        try:
+            pagina.wait_for_timeout(1000)
+        except Exception:
+            _tempo.sleep(1)
+    # Relido agora: os elementos guardados nas voltas anteriores podem ter sido
+    # trocados pela propria montagem da tela.
+    return indice_com_paginas(pagina)
+
+
 def _gravar(baixado: Any, destino: Any, nome: str) -> str:
     from pathlib import Path
 
@@ -741,7 +782,8 @@ def permitir_o_download_marcado(pagina: Any, guarda: Any) -> None:
 
 def baixar_uma_peca(pagina: Any, guarda: Any, destino: Any, chave: str,
                     pagina_inicial: int,
-                    segundos: int = TETO_DO_DOWNLOAD) -> str:
+                    segundos: int = TETO_DO_DOWNLOAD,
+                    segundos_do_indice: int = SEGUNDOS_DO_INDICE) -> str:
     """Baixa UM documento, o que comeca na pagina indicada pelo operador.
 
     A pagina e a que aparece ao lado do nome no indice, como o advogado
@@ -754,10 +796,11 @@ def baixar_uma_peca(pagina: Any, guarda: Any, destino: Any, chave: str,
             f"O botao {BOTAO_CAIXA_DE_SELECAO!r} nao esta na barra. "
             "Sem a caixa de selecao nao da para escolher um documento.")
 
-    indice = indice_com_paginas(pagina)
+    indice = esperar_o_indice(pagina, segundos_do_indice)
     if not indice:
         raise DownloadIndisponivel(
-            "O indice de documentos nao foi lido. Nada foi baixado.")
+            f"O indice de documentos nao apareceu em {segundos_do_indice}s. "
+            "Nada foi baixado.")
 
     escolhidos = [t for t in indice if t[0] == pagina_inicial]
     if not escolhidos:
@@ -789,7 +832,8 @@ def baixar_uma_peca(pagina: Any, guarda: Any, destino: Any, chave: str,
 def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
                     tamanho: int = PAGINAS_POR_LOTE,
                     segundos: int = TETO_DO_DOWNLOAD,
-                    apenas: Optional[int] = None) -> list:
+                    apenas: Optional[int] = None,
+                    segundos_do_indice: int = SEGUNDOS_DO_INDICE) -> list:
     """Baixa o processo, de `tamanho` em `tamanho` paginas.
 
     Com `apenas`, baixa SO aquele lote, contado a partir de 1. A divisao nao
@@ -808,10 +852,11 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
             f"O botao {BOTAO_CAIXA_DE_SELECAO!r} nao esta na barra. "
             "Sem a caixa de selecao nao da para baixar em partes.")
 
-    indice = indice_com_paginas(pagina)
+    indice = esperar_o_indice(pagina, segundos_do_indice)
     if not indice:
         raise DownloadIndisponivel(
-            "O indice de documentos nao foi lido. Nada foi baixado.")
+            f"O indice de documentos nao apareceu em {segundos_do_indice}s. "
+            "Nada foi baixado.")
 
     sem_marca = [t[0] for t in indice if t[2] is None]
     if sem_marca:

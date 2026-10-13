@@ -3963,8 +3963,9 @@ def test_o_indice_vazio_para_antes_de_marcar_qualquer_coisa(tmp_path):
     from justica_mcp.dcp import DownloadIndisponivel, baixar_em_lotes
 
     tela = _VisualizadorComIndice([])
-    with pytest.raises(DownloadIndisponivel, match="nao foi lido"):
-        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2)
+    with pytest.raises(DownloadIndisponivel, match="nao apareceu em 2s"):
+        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2,
+                        segundos_do_indice=2)
     assert tela.downloads == 0
 
 
@@ -5600,3 +5601,74 @@ def test_a_volta_acontece_mesmo_quando_a_paginacao_falha():
     resultado = percorrer_as_paginas_de_movimentos(quadro, _Guarda(), segundos=4)
     assert quadro.clicadas[-1] == 1
     assert "voltou para a pagina 1" in resultado["situacao"]
+
+
+# ---------------- esperar o INDICE montar ----------------
+#
+# Em 13/10/2026 a leitura do indice rodou com o Visualizador recem-aberto e
+# devolveu lista vazia: o relato mostrou 12 botoes, contra os 543 das corridas
+# em que o indice existia. O comando parou dizendo "o indice nao foi lido", que
+# e verdade e nao ajuda, porque o indice ia aparecer um segundo depois. Custou
+# uma tentativa de autenticacao inteira.
+
+
+class _IndiceQueMontaAosPoucos:
+    """O Visualizador recem-aberto: o indice chega depois."""
+
+    viewport_size = {"width": 1280, "height": 800}
+    url = "https://www3.tjrj.jus.br/visproc/#/xyz"
+
+    def __init__(self, contagens):
+        self.contagens = list(contagens)
+        self.lidas = 0
+
+    def query_selector_all(self, seletor):
+        if seletor != "[aria-label]":
+            return []
+        indice = min(self.lidas, len(self.contagens) - 1)
+        quantos = self.contagens[indice]
+        self.lidas += 1
+        return [_ItemComMarca(n) for n in range(1, quantos + 1)]
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_a_leitura_do_indice_espera_ele_montar():
+    from justica_mcp.dcp import esperar_o_indice
+
+    # Zero nas primeiras leituras, como no Visualizador recem-aberto.
+    tela = _IndiceQueMontaAosPoucos([0, 0, 4, 9, 9, 9, 9, 9])
+    assert len(esperar_o_indice(tela, segundos=30)) == 9
+
+
+def test_indice_que_nunca_chega_devolve_vazio_sem_travar():
+    from justica_mcp.dcp import esperar_o_indice
+
+    tela = _IndiceQueMontaAosPoucos([0])
+    assert esperar_o_indice(tela, segundos=2) == []
+
+
+def test_o_indice_e_relido_depois_de_estabilizar():
+    """Os elementos guardados nas voltas anteriores podem ter sido trocados
+    pela propria montagem da tela."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.esperar_o_indice)
+    assert fonte.rstrip().endswith("return indice_com_paginas(pagina)")
+
+
+def test_os_dois_caminhos_de_download_esperam_o_indice():
+    """Uma peca e os lotes leem o mesmo indice, e os dois rodam logo depois de
+    o Visualizador abrir."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    for funcao in (dcp.baixar_uma_peca, dcp.baixar_em_lotes):
+        fonte = inspect.getsource(funcao)
+        assert "esperar_o_indice(pagina, segundos_do_indice)" in fonte, (
+            funcao.__name__)
+        assert "indice = indice_com_paginas(pagina)" not in fonte
