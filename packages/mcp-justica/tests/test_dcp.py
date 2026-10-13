@@ -4775,7 +4775,8 @@ def test_cada_movimentacao_diz_de_que_regra_veio():
     ter de adivinhar qual delas achou cada uma."""
     dados = _ler_em_navegador(TELA_COM_SEQUENCIA)
     for movimento in dados["movimentacoes"]:
-        assert movimento["origem"] == "celula de data na tabela tbMovimentos"
+        assert movimento["origem"] == (
+            "celula de data na tabela tbMovimentos [Seq. | Data | Movimento]")
 
 
 @semNavegador
@@ -4813,3 +4814,76 @@ def test_o_bloco_de_estrutura_pode_ser_mostrado_a_terceiros():
     texto = json.dumps(dados["estrutura"], ensure_ascii=False)
     for conteudo in ("Niteroi", "Fulano", "Juntada", "100.000", "Procedimento"):
         assert conteudo not in texto, conteudo
+
+
+# ---------------- a estrutura da tela real, lida em 13/10/2026 ----------------
+#
+# O bloco de estrutura existe para poder ser MOSTRADO: e por ele que esta
+# leitura se aperta contra a tela real. Tudo que entra nele e vocabulario da
+# tela, e ainda assim passa por `sem_dado_de_processo`, porque na tela real do
+# Portal de Servicos o titulo de secao e "Processo n. <numero>": o proprio
+# vocabulario da tela carrega o numero do processo dentro dele.
+
+TELA_NO_FORMATO_DO_PORTAL = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>Processo</title></head>
+<body><div id="detalhes-processo">
+  <h5 id="processo-n-0-0-0">Processo n. 0000000-00.0000.0.00.0000</h5>
+  <h4 id="descri-o-detalhada">Descricao Detalhada</h4>
+  <h4 id="todos-os-personagens">Todos os Personagens</h4>
+  <label id="Data da juntada: ">Data da juntada:</label>
+  <button aria-label="Ver historico">historico</button>
+  <button>Visualizar Processo</button>
+  <button aria-label="Alternar 3 - Peticao Inicial">expand_more</button>
+  <button aria-label="Alternar 12 - CPF do autor">expand_more</button>
+  <button aria-label="Alternar 45 - Juntada de GRERJ">expand_more</button>
+  <table id="tbMandados">
+    <tr><th>Numero do Mandado</th><th>Data de Envio</th><th>Status</th></tr>
+    <tr><td>123</td><td>27/04/2018</td><td>Devolvido</td></tr>
+  </table>
+</div></body></html>"""
+
+
+@semNavegador
+def test_as_secoes_da_tela_saem_sem_o_numero_do_processo():
+    dados = _ler_em_navegador(TELA_NO_FORMATO_DO_PORTAL)
+    titulos = [s["titulo"] for s in dados["estrutura"]["secoes"]]
+    assert "Descricao Detalhada" in titulos
+    assert "Todos os Personagens" in titulos
+    assert "Processo n. <numero de processo>" in titulos
+    assert "0000000-00" not in " ".join(titulos)
+
+
+@semNavegador
+def test_botao_que_se_repete_aos_montes_nao_mostra_rotulo():
+    """No Visualizador o rotulo do item de arvore e o proprio andamento. Aqui
+    vale a mesma regra do relato de tela: grupo grande vira contagem."""
+    dados = _ler_em_navegador(TELA_NO_FORMATO_DO_PORTAL)
+    botoes = {b["texto"]: b for b in dados["estrutura"]["botoes"]}
+    assert botoes["expand_more"]["quantas"] == 3
+    assert botoes["expand_more"]["rotulos"] == []
+    assert botoes["historico"]["rotulos"] == ["Ver historico"]
+    import json
+    texto = json.dumps(dados["estrutura"], ensure_ascii=False)
+    for conteudo in ("Peticao Inicial", "CPF do autor", "GRERJ"):
+        assert conteudo not in texto, conteudo
+
+
+@semNavegador
+def test_o_movimento_diz_de_que_tabela_veio_pelo_cabecalho():
+    """Em 13/10/2026 a segunda passada achou UMA movimentacao, e ela vinha do
+    Historico de Mandados. Sem o cabecalho na origem isso passaria por
+    andamento do processo."""
+    dados = _ler_em_navegador(TELA_NO_FORMATO_DO_PORTAL)
+    origem = dados["movimentacoes"][0]["origem"]
+    assert "tbMandados" in origem
+    assert "Numero do Mandado" in origem
+
+
+@semNavegador
+def test_o_bloco_de_estrutura_so_tem_as_CHAVES_do_que_foi_lido():
+    """Rotulo e vocabulario da tela; valor e dado de processo."""
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    lidos = dados["estrutura"]["rotulos_lidos"]
+    assert "Classe" in lidos and "Comarca" in lidos
+    for valor in ("Procedimento Comum Civel", "Niteroi", "Fulano de Tal"):
+        assert valor not in " ".join(lidos), valor

@@ -1679,7 +1679,20 @@ JS_DA_TELA_DO_PROCESSO = r"""
     }
     const dona = linha.closest('table');
     const nome = dona ? (dona.id || corta(dona.className, 30) || 'sem id') : 'sem tabela';
-    guardarMovimento(data, hora, descricao, 'celula de data na tabela ' + nome);
+    // O cabecalho vai junto porque e ele que denuncia a tabela errada. Em
+    // 13/10/2026 esta segunda passada achou UMA "movimentacao" que vinha, na
+    // verdade, do Historico de Mandados, e sem o cabecalho na origem isso
+    // passaria por andamento do processo.
+    let cabecalho = '';
+    if (dona) {
+      const topo = dona.querySelector('tr');
+      const celulas = topo ? Array.from(topo.children) : [];
+      if (celulas.length > 0 && celulas.every(c => c.tagName === 'TH')) {
+        cabecalho = ' [' + celulas.map(c => corta(c.innerText, 30)).join(' | ') + ']';
+      }
+    }
+    guardarMovimento(data, hora, descricao,
+                     'celula de data na tabela ' + nome + cabecalho);
   }
 
   // A ESTRUTURA das tabelas, para apertar esta leitura contra a tela real. Vai
@@ -1728,6 +1741,39 @@ JS_DA_TELA_DO_PROCESSO = r"""
     if (rotulosCandidatos.length >= 80) break;
   }
 
+  // As SECOES da tela, pelos titulos. Lido na estrutura real em 13/10/2026:
+  // esta tela tem "Descricao Detalhada", "Todos os Personagens", "Historico de
+  // Mandados" e "Peticoes Pendentes", e NENHUMA tabela de andamentos. Saber em
+  // que secao o que se procura mora, ou que ele nao esta ali, vale mais do que
+  // qualquer regra nova de leitura.
+  const secoes = [];
+  for (const e of document.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+    const t = corta(e.innerText, 60);
+    if (!t) continue;
+    secoes.push([e.tagName.toLowerCase(), t]);
+    if (secoes.length >= 40) break;
+  }
+
+  // Os BOTOES da tela, agrupados pelo texto visivel. A mesma regra do relato de
+  // tela: controle que se repete aos montes e item de lista, e o rotulo dele e
+  // conteudo do processo, entao vira contagem sem rotulo nenhum.
+  const porTexto = {};
+  for (const e of document.querySelectorAll(
+      'button, a[role=button], input[type=submit], input[type=button], [role=tab]')) {
+    if (!visivel(e)) continue;
+    const t = corta(e.innerText || e.value || '', 50);
+    const rotulo = corta(e.getAttribute('aria-label') || e.getAttribute('title') || '', 50);
+    if (!porTexto[t]) porTexto[t] = [];
+    porTexto[t].push(rotulo);
+  }
+  const botoes = [];
+  for (const t of Object.keys(porTexto)) {
+    const rotulos = porTexto[t];
+    botoes.push(rotulos.length > 2 ? [t, rotulos.length, []]
+                                   : [t, rotulos.length, rotulos]);
+    if (botoes.length >= 60) break;
+  }
+
   const familias = {};
   for (const e of document.querySelectorAll('[id]')) {
     const marcador = e.tagName.toLowerCase();
@@ -1738,9 +1784,24 @@ JS_DA_TELA_DO_PROCESSO = r"""
 
   return {pares: pares, movimentacoes: movimentacoes,
           tabelas: tabelas, familias: familias,
-          rotulosCandidatos: rotulosCandidatos};
+          rotulosCandidatos: rotulosCandidatos,
+          secoes: secoes, botoes: botoes};
 }
 """
+
+
+def _sem_dado(texto: Any) -> str:
+    """Segunda rede sobre tudo que entra no bloco de ESTRUTURA.
+
+    O bloco existe para poder ser mostrado a terceiros, e por isso nao pode
+    carregar dado de processo. Nao basta escolher bem o que entra: na tela real
+    do Portal de Servicos, lida em 13/10/2026, o titulo de secao e "Processo n.
+    <numero>", entao o proprio vocabulario da tela traz o numero do processo
+    dentro dele.
+    """
+    from .portal import sem_dado_de_processo
+
+    return sem_dado_de_processo(str(texto or ""))
 
 
 def _leitura_vazia(falha: Optional[str] = None) -> dict:
@@ -1752,7 +1813,8 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
     return {
         "principais": {},
         "movimentacoes": [],
-        "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": []},
+        "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": [],
+                      "secoes": [], "botoes": [], "rotulos_lidos": []},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -1834,8 +1896,16 @@ def extrair(quadro: Any) -> dict:
         # Vocabulario de rotulos da TELA, nao valor de campo: folha de texto
         # terminada em dois pontos. E por ele que se ve como a capa esta
         # montada quando a leitura generica acha pouco.
-        "rotulos_candidatos": [str(r) for r in
+        "rotulos_candidatos": [_sem_dado(r) for r in
                                (bruto.get("rotulosCandidatos") or [])],
+        "secoes": [{"nivel": str(s[0]), "titulo": _sem_dado(s[1])}
+                   for s in (bruto.get("secoes") or []) if len(s) > 1],
+        "botoes": [{"texto": _sem_dado(b[0]), "quantas": int(b[1]),
+                    "rotulos": [_sem_dado(r) for r in (b[2] if len(b) > 2 else [])]}
+                   for b in (bruto.get("botoes") or []) if len(b) > 1],
+        # So as CHAVES do que foi lido. O valor e dado de processo e fica fora
+        # deste bloco, que existe para poder ser mostrado.
+        "rotulos_lidos": sorted(_sem_dado(r) for r in principais),
     }
     saida["totais"] = {"principais": len(principais),
                        "movimentacoes": len(movimentacoes)}
