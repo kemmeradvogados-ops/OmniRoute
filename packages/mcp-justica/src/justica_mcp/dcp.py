@@ -1635,25 +1635,97 @@ JS_DA_TELA_DO_PROCESSO = r"""
   const movimentacoes = [];
   const jaVistas = new Set();
   const comecaPorData = /^(\d{2}\/\d{2}\/\d{4})(?:[\s,]+(\d{2}:\d{2}(?::\d{2})?))?/;
+  const soData = /^(\d{2}\/\d{2}\/\d{4})(?:[\s,]+(\d{2}:\d{2}(?::\d{2})?))?$/;
+  const guardarMovimento = (data, hora, descricao, origem) => {
+    descricao = corta(descricao, 300);
+    if (!data || !descricao) return;
+    const chave = data + '\u0000' + descricao;
+    if (jaVistas.has(chave)) return;
+    jaVistas.add(chave);
+    movimentacoes.push([data, hora || '', descricao, origem]);
+  };
+
+  // Primeira passada: a linha COMECA por data.
   for (const linha of document.querySelectorAll('tr, [role=row], li')) {
     if (linha.querySelector('tr, [role=row]')) continue;
     const texto = corta(linha.innerText, 400);
     const m = texto.match(comecaPorData);
     if (!m) continue;
-    const descricao = corta(texto.slice(m[0].length).replace(/^[\s\-|]+/, ''), 300);
-    if (!descricao) continue;
-    const chave = m[1] + '\u0000' + descricao;
-    if (jaVistas.has(chave)) continue;
-    jaVistas.add(chave);
-    movimentacoes.push([m[1], m[2] || '', descricao]);
+    guardarMovimento(m[1], m[2],
+                     texto.slice(m[0].length).replace(/^[\s\-|]+/, ''),
+                     'linha que comeca por data');
   }
 
+  // Segunda passada: a data esta em ALGUMA celula, nao necessariamente na
+  // primeira. Em 13/10/2026 a tela do processo do Portal de Servicos devolveu
+  // quatro tabelas e nenhuma movimentacao pela primeira regra, e coluna de
+  // sequencia antes da data e arranjo comum. A origem fica gravada em cada
+  // movimento para que ninguem precise adivinhar de onde ele veio.
+  for (const linha of document.querySelectorAll('tr')) {
+    if (linha.querySelector('tr')) continue;
+    const celulas = Array.from(linha.children);
+    if (celulas.length < 2) continue;
+    let data = '', hora = '', posicao = -1;
+    for (let i = 0; i < celulas.length; i++) {
+      const m = corta(celulas[i].innerText, 40).match(soData);
+      if (m) { data = m[1]; hora = m[2] || ''; posicao = i; break; }
+    }
+    if (!data) continue;
+    let descricao = '';
+    for (let i = 0; i < celulas.length; i++) {
+      if (i === posicao) continue;
+      const t = corta(celulas[i].innerText, 300);
+      if (t.length > descricao.length) descricao = t;
+    }
+    const dona = linha.closest('table');
+    const nome = dona ? (dona.id || corta(dona.className, 30) || 'sem id') : 'sem tabela';
+    guardarMovimento(data, hora, descricao, 'celula de data na tabela ' + nome);
+  }
+
+  // A ESTRUTURA das tabelas, para apertar esta leitura contra a tela real. Vai
+  // junto o cabecalho de cada uma, que e vocabulario da TELA e nao dado de
+  // processo, e a contagem de linhas com data por coluna, que e so numero.
   const tabelas = [];
   for (const t of Array.from(document.querySelectorAll('table')).slice(0, 40)) {
-    const primeira = t.querySelector('tr');
-    tabelas.push([t.id || '', corta(t.className, 45),
-                  t.querySelectorAll('tr').length,
-                  primeira ? primeira.children.length : 0]);
+    const linhas = Array.from(t.querySelectorAll('tr'));
+    const primeira = linhas[0];
+    // So e cabecalho quando TODAS as celulas da primeira linha sao TH. A
+    // mesma regra que impede "Data" -> "Movimento" de virar rotulo e valor,
+    // ao contrario. Sem ela, numa tabela de capa cuja primeira linha e
+    // "Comarca:" / "Niteroi", o VALOR entrava no bloco de estrutura, que e
+    // justamente o bloco feito para poder ser mostrado a terceiros.
+    const celulasDaPrimeira = primeira ? Array.from(primeira.children) : [];
+    const soCabecalho = celulasDaPrimeira.length > 0 &&
+      celulasDaPrimeira.every(c => c.tagName === 'TH');
+    const cabecalhos = soCabecalho
+      ? celulasDaPrimeira.map(c => corta(c.innerText, 40))
+      : [];
+    const datasPorColuna = {};
+    for (const linha of linhas) {
+      const celulas = Array.from(linha.children);
+      for (let i = 0; i < celulas.length; i++) {
+        if (soData.test(corta(celulas[i].innerText, 40))) {
+          datasPorColuna[i] = (datasPorColuna[i] || 0) + 1;
+        }
+      }
+    }
+    tabelas.push([t.id || '', corta(t.className, 45), linhas.length,
+                  celulasDaPrimeira.length, cabecalhos, datasPorColuna]);
+  }
+
+  // O vocabulario de rotulos da tela: folha de texto terminada em dois pontos.
+  // Rotulo e nome de campo, da TELA; o valor fica do lado de fora disto.
+  const rotulosCandidatos = [];
+  const rotulosVistos = new Set();
+  for (const e of folhas) {
+    if (e.children.length > 0) continue;
+    if (!visivel(e)) continue;
+    const t = corta(e.innerText, 60);
+    if (!/:$/.test(t)) continue;
+    if (rotulosVistos.has(t)) continue;
+    rotulosVistos.add(t);
+    rotulosCandidatos.push(t);
+    if (rotulosCandidatos.length >= 80) break;
   }
 
   const familias = {};
@@ -1665,7 +1737,8 @@ JS_DA_TELA_DO_PROCESSO = r"""
   }
 
   return {pares: pares, movimentacoes: movimentacoes,
-          tabelas: tabelas, familias: familias};
+          tabelas: tabelas, familias: familias,
+          rotulosCandidatos: rotulosCandidatos};
 }
 """
 
@@ -1679,7 +1752,7 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
     return {
         "principais": {},
         "movimentacoes": [],
-        "estrutura": {"tabelas": [], "familias": {}},
+        "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": []},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -1727,24 +1800,43 @@ def extrair(quadro: Any) -> dict:
     movimentacoes = []
     for item in bruto.get("movimentacoes") or []:
         try:
-            movimentacoes.append({"data": str(item[0]), "hora": str(item[1]),
-                                  "descricao": str(item[2])})
+            movimentacoes.append({
+                "data": str(item[0]), "hora": str(item[1]),
+                "descricao": str(item[2]),
+                # De onde o movimento veio. Duas regras diferentes acham
+                # linhas diferentes, e quem conferir o arquivo nao pode ter de
+                # adivinhar qual delas achou cada uma.
+                "origem": str(item[3]) if len(item) > 3 else "",
+            })
         except Exception:
             continue
 
     tabelas = []
     for item in bruto.get("tabelas") or []:
         try:
-            tabelas.append({"id": str(item[0]), "classe": str(item[1]),
-                            "linhas": int(item[2]), "colunas": int(item[3])})
+            tabelas.append({
+                "id": str(item[0]), "classe": str(item[1]),
+                "linhas": int(item[2]), "colunas": int(item[3]),
+                "cabecalhos": [str(c) for c in (item[4] if len(item) > 4 else [])],
+                "linhas_com_data_por_coluna": {
+                    str(k): int(v) for k, v in
+                    (item[5] if len(item) > 5 else {}).items()},
+            })
         except Exception:
             continue
 
     saida = _leitura_vazia()
     saida["principais"] = principais
     saida["movimentacoes"] = movimentacoes
-    saida["estrutura"] = {"tabelas": tabelas,
-                          "familias": dict(bruto.get("familias") or {})}
+    saida["estrutura"] = {
+        "tabelas": tabelas,
+        "familias": dict(bruto.get("familias") or {}),
+        # Vocabulario de rotulos da TELA, nao valor de campo: folha de texto
+        # terminada em dois pontos. E por ele que se ve como a capa esta
+        # montada quando a leitura generica acha pouco.
+        "rotulos_candidatos": [str(r) for r in
+                               (bruto.get("rotulosCandidatos") or [])],
+    }
     saida["totais"] = {"principais": len(principais),
                        "movimentacoes": len(movimentacoes)}
     return saida
@@ -1764,7 +1856,9 @@ def resumo_seguro(dados: dict) -> list:
         f"rotulos lidos: {totais.get('principais', 0)}   "
         f"movimentacoes: {totais.get('movimentacoes', 0)}",
         f"tabelas na tela: {len(estrutura.get('tabelas') or [])}   "
-        f"familias de identificador: {len(estrutura.get('familias') or {})}",
+        f"familias de identificador: {len(estrutura.get('familias') or {})}   "
+        f"rotulos que a tela oferece: "
+        f"{len(estrutura.get('rotulos_candidatos') or [])}",
     ]
     leitura = dados.get("leitura") or {}
     if leitura.get("tela_do_processo_confirmada") is False:

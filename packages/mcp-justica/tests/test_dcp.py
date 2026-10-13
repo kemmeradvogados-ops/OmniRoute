@@ -4586,9 +4586,12 @@ def test_a_tabela_de_movimentos_NAO_entra_na_capa():
 def test_as_movimentacoes_saem_com_data_hora_e_sem_repetir():
     dados = _ler_em_navegador(TELA_DE_EXEMPLO)
     assert dados["movimentacoes"] == [
-        {"data": "27/04/2018", "hora": "", "descricao": "Juntada de Peticao"},
-        {"data": "03/05/2018", "hora": "14:22", "descricao": "Conclusao ao Juiz"},
-        {"data": "15/06/2019", "hora": "", "descricao": "Sentenca publicada"},
+        {"data": "27/04/2018", "hora": "", "descricao": "Juntada de Peticao",
+         "origem": "linha que comeca por data"},
+        {"data": "03/05/2018", "hora": "14:22", "descricao": "Conclusao ao Juiz",
+         "origem": "linha que comeca por data"},
+        {"data": "15/06/2019", "hora": "", "descricao": "Sentenca publicada",
+         "origem": "linha que comeca por data"},
     ]
 
 
@@ -4600,8 +4603,15 @@ def test_a_estrutura_da_tela_sai_sem_conteudo_nenhum():
 
     dados = _ler_em_navegador(TELA_DE_EXEMPLO)
     estrutura = dados["estrutura"]
-    assert {"id": "tbMovimentos", "classe": "", "linhas": 4,
-            "colunas": 2} in estrutura["tabelas"]
+    movimentos = [t for t in estrutura["tabelas"] if t["id"] == "tbMovimentos"][0]
+    assert movimentos["linhas"] == 4 and movimentos["colunas"] == 2
+    # Cabecalho e vocabulario da TELA, nao dado de processo: e por ele que se
+    # descobre em que coluna mora a data.
+    assert movimentos["cabecalhos"] == ["Data", "Movimento"]
+    # Tres celulas de data na coluna 0: duas iguais, que a leitura junta num
+    # movimento so, e a terceira com hora. A contagem e de CELULA, nao de
+    # movimento, e e assim que ela serve para achar a coluna da data.
+    assert movimentos["linhas_com_data_por_coluna"] == {"0": 3}
     assert estrutura["familias"]["span#rodape-N"] == 1
     texto = json.dumps(estrutura, ensure_ascii=False)
     for conteudo in ("Niteroi", "Fulano", "Juntada", "100.000"):
@@ -4726,3 +4736,80 @@ def _fonte_do_dcp() -> str:
     from justica_mcp import dcp
 
     return Path(dcp.__file__).read_text(encoding="utf-8")
+
+
+# ---------------- a data nem sempre abre a linha ----------------
+#
+# Em 13/10/2026 a tela do processo do Portal de Servicos foi lida, confirmada
+# como a tela certa, e devolveu quatro tabelas e NENHUMA movimentacao. Coluna
+# de sequencia antes da data e arranjo comum, e a regra de entao so enxergava
+# linha que comecasse por data.
+
+TELA_COM_SEQUENCIA = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>Processo</title></head><body><div id="detalhes-processo">
+  <span>Classe:</span><span>Procedimento Comum Civel</span>
+  <table id="tbMovimentos">
+    <tr><th>Seq.</th><th>Data</th><th>Movimento</th></tr>
+    <tr><td>1</td><td>27/04/2018</td><td>Juntada de Peticao pela parte autora</td></tr>
+    <tr><td>2</td><td>03/05/2018</td><td>Conclusao ao Juiz</td></tr>
+  </table>
+  <table id="tbPartes">
+    <tr><th>Tipo</th><th>Nome</th></tr>
+    <tr><td>Autor</td><td>Fulano de Tal</td></tr>
+  </table>
+</div></body></html>"""
+
+
+@semNavegador
+def test_a_data_em_coluna_que_nao_e_a_primeira_tambem_e_movimentacao():
+    dados = _ler_em_navegador(TELA_COM_SEQUENCIA)
+    assert [(m["data"], m["descricao"]) for m in dados["movimentacoes"]] == [
+        ("27/04/2018", "Juntada de Peticao pela parte autora"),
+        ("03/05/2018", "Conclusao ao Juiz"),
+    ]
+
+
+@semNavegador
+def test_cada_movimentacao_diz_de_que_regra_veio():
+    """Duas regras acham linhas diferentes. Quem conferir o arquivo nao pode
+    ter de adivinhar qual delas achou cada uma."""
+    dados = _ler_em_navegador(TELA_COM_SEQUENCIA)
+    for movimento in dados["movimentacoes"]:
+        assert movimento["origem"] == "celula de data na tabela tbMovimentos"
+
+
+@semNavegador
+def test_a_estrutura_diz_em_que_coluna_mora_a_data():
+    """E este numero que permite trocar a regra generica por uma precisa."""
+    dados = _ler_em_navegador(TELA_COM_SEQUENCIA)
+    tabelas = {t["id"]: t for t in dados["estrutura"]["tabelas"]}
+    assert tabelas["tbMovimentos"]["cabecalhos"] == ["Seq.", "Data", "Movimento"]
+    assert tabelas["tbMovimentos"]["linhas_com_data_por_coluna"] == {"1": 2}
+    assert tabelas["tbPartes"]["linhas_com_data_por_coluna"] == {}
+
+
+@semNavegador
+def test_os_rotulos_candidatos_sao_da_tela_e_nao_do_processo():
+    """Folha terminada em dois pontos e nome de campo. O valor fica de fora."""
+    dados = _ler_em_navegador(TELA_COM_SEQUENCIA)
+    rotulos = dados["estrutura"]["rotulos_candidatos"]
+    assert rotulos == ["Classe:"]
+    for conteudo in ("Fulano", "Procedimento", "Juntada"):
+        assert conteudo not in " ".join(rotulos), conteudo
+
+
+@semNavegador
+def test_o_bloco_de_estrutura_pode_ser_mostrado_a_terceiros():
+    """Ele existe para ser mostrado: e por ele que esta leitura se aperta
+    contra a tela real. Em 13/10/2026 ele carregava VALOR de celula, porque a
+    primeira linha de uma tabela de capa e 'Comarca:' e 'Niteroi', nao um
+    cabecalho. So vale como cabecalho a linha cujas celulas sao TODAS TH."""
+    import json
+
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    tabelas = {t["id"]: t for t in dados["estrutura"]["tabelas"]}
+    assert tabelas["tbDados"]["cabecalhos"] == []
+    assert tabelas["tbMovimentos"]["cabecalhos"] == ["Data", "Movimento"]
+    texto = json.dumps(dados["estrutura"], ensure_ascii=False)
+    for conteudo in ("Niteroi", "Fulano", "Juntada", "100.000", "Procedimento"):
+        assert conteudo not in texto, conteudo
