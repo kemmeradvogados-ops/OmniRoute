@@ -134,6 +134,30 @@ def pasta_de_descargas() -> "Path":
     return destino
 
 
+def nome_do_perfil() -> str:
+    """Um perfil por NAVEGADOR, nunca um perfil para todos.
+
+    O perfil guarda sessao e liberacao do desafio, e e escrito pelo navegador
+    que o abriu. Abrir com o Microsoft Edge um perfil criado pelo Chromium do
+    Playwright, ou o contrario, e pedir defeito silencioso: as duas coisas sao
+    Chromium, mas nao sao a mesma compilacao.
+
+    Trocar de navegador passa a significar sessao nova, e isso tem preco
+    honesto: login de novo, e possivelmente o desafio de verificacao humana de
+    novo. O que nao acontece e a sessao antiga ser corrompida pelo teste.
+    """
+    executavel = (os.environ.get("JUSTICA_CHROMIUM") or "").strip()
+    if not executavel:
+        return "navegador"
+    # A barra e separada na mao, nos dois sentidos: o programa roda no Windows
+    # e os testes rodam fora dele, e `Path` de uma plataforma nao reconhece o
+    # separador da outra. Lido num teste que passou um caminho do Windows e
+    # recebeu o caminho inteiro como nome de pasta.
+    ultimo = executavel.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    marca = "".join(c for c in ultimo.rsplit(".", 1)[0].lower() if c.isalnum())
+    return f"navegador-{marca or 'outro'}"
+
+
 def pasta_do_navegador() -> "Path":
     """Perfil persistente do navegador, na pasta de estado.
 
@@ -144,7 +168,7 @@ def pasta_do_navegador() -> "Path":
 
     from .core.estado import diretorio_estado
 
-    destino = _P(diretorio_estado()) / "navegador"
+    destino = _P(diretorio_estado()) / nome_do_perfil()
     destino.mkdir(parents=True, exist_ok=True)
     return destino
 
@@ -197,6 +221,13 @@ def abrir_navegador(p, oculto: bool, executavel):
     """
     descargas = str(pasta_de_descargas())
     bandeiras = bandeiras_do_navegador()
+    # Dito em voz alta: o operador precisa saber que nao esta no navegador
+    # padrao, porque a sessao e outra e o comportamento pode ser outro.
+    if executavel:
+        from pathlib import Path as _P
+
+        print(f"  Navegador: {_P(executavel).name} (JUSTICA_CHROMIUM), "
+              f"perfil proprio '{nome_do_perfil()}'.")
     if _perfil_efemero():
         navegador = p.chromium.launch(
             headless=oculto, executable_path=executavel,

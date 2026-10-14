@@ -6578,3 +6578,53 @@ def test_a_bandeira_de_pular_o_historico_chega_na_leitura():
 
     fonte = inspect.getsource(portal.consultar_processo)
     assert "com_movimentacoes=not sem_movimentacoes" in fonte
+
+
+# ---------------- um perfil por NAVEGADOR ----------------
+#
+# O perfil guarda sessao e liberacao do desafio, e e escrito pelo navegador que
+# o abriu. Abrir com o Microsoft Edge um perfil criado pelo Chromium do
+# Playwright, ou o contrario, e pedir defeito silencioso: as duas coisas sao
+# Chromium, mas nao sao a mesma compilacao.
+
+
+def test_sem_navegador_escolhido_o_perfil_e_o_de_sempre(monkeypatch):
+    from justica_mcp.portal import nome_do_perfil
+
+    monkeypatch.delenv("JUSTICA_CHROMIUM", raising=False)
+    assert nome_do_perfil() == "navegador"
+
+
+def test_cada_navegador_tem_o_seu_perfil(monkeypatch):
+    from justica_mcp.portal import nome_do_perfil
+
+    monkeypatch.setenv(
+        "JUSTICA_CHROMIUM",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+    assert nome_do_perfil() == "navegador-msedge"
+
+    monkeypatch.setenv("JUSTICA_CHROMIUM", "/usr/bin/google-chrome")
+    assert nome_do_perfil() == "navegador-googlechrome"
+
+
+def test_caminho_estranho_nao_vira_nome_de_pasta_estranho(monkeypatch):
+    """O nome do perfil vira pasta no disco do advogado."""
+    from justica_mcp.portal import nome_do_perfil
+
+    monkeypatch.setenv("JUSTICA_CHROMIUM", "/tmp/../x/.hidden")
+    nome = nome_do_perfil()
+    assert nome.startswith("navegador-")
+    for proibido in ("/", "\\", "..", " "):
+        assert proibido not in nome, proibido
+
+
+def test_a_troca_de_navegador_e_dita_em_voz_alta():
+    """A sessao e outra e o comportamento pode ser outro: o operador precisa
+    saber que nao esta no navegador padrao."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.abrir_navegador)
+    assert "JUSTICA_CHROMIUM" in fonte
+    assert "nome_do_perfil()" in fonte
