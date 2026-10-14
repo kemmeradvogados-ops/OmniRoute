@@ -5672,3 +5672,99 @@ def test_os_dois_caminhos_de_download_esperam_o_indice():
         assert "esperar_o_indice(pagina, segundos_do_indice)" in fonte, (
             funcao.__name__)
         assert "indice = indice_com_paginas(pagina)" not in fonte
+
+
+# ---------------- a falha do indice traz o reconhecimento ----------------
+#
+# Em 13/10/2026 o indice nao chegou em 45s e o relato mostrou 12 botoes, contra
+# os 543 das corridas em que ele existia. Isso ja nao parece demora: parece
+# arvore que nao esta no documento. Descobrir onde ela esta custava outra
+# tentativa de autenticacao, que e o recurso mais caro deste programa.
+
+TELA_DO_VISUALIZADOR = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>Visualizador</title></head><body>
+<div class="barra ferramentas">
+  <button aria-label="Ocultar Menu">menu_open</button>
+  <button aria-label="Ocultar caixa de selecao">unpublished</button>
+  <button aria-label="Baixar o processo atual em PDF">download_for_offline</button>
+</div>
+<div class="arvore indices">
+  <div class="item ng-star-inserted"><button aria-label="Alternar 3 - Peticao">expand_more</button>
+    <input type="checkbox"></div>
+  <div class="item ng-star-inserted"><button aria-label="Alternar 12 - CPF">expand_more</button>
+    <input type="checkbox"></div>
+</div></body></html>"""
+
+
+def _forma_em_navegador(html):
+    import tempfile
+    from pathlib import Path as _P
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import relatar_a_forma_do_visualizador
+
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = _P(pasta) / "tela.html"
+        arquivo.write_text(html, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(
+                executable_path=_navegador_de_teste(), args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                return relatar_a_forma_do_visualizador(pagina)
+            finally:
+                navegador.close()
+
+
+@semNavegador
+def test_a_forma_do_visualizador_mostra_onde_a_arvore_esta():
+    linhas = _forma_em_navegador(TELA_DO_VISUALIZADOR)
+    texto = " | ".join(linhas)
+    assert "2 caixa(s) de marcacao" in texto
+    assert "Alternar x2" in texto
+    assert "div.arvore.indices x1" in texto
+
+
+@semNavegador
+def test_a_forma_nao_carrega_conteudo_do_processo():
+    """So a PRIMEIRA palavra de cada rotulo, que e verbo de tela. O resto do
+    rotulo do item de indice e o proprio andamento."""
+    linhas = _forma_em_navegador(TELA_DO_VISUALIZADOR)
+    texto = " | ".join(linhas)
+    for conteudo in ("Peticao", "CPF", " 3 ", " 12 "):
+        assert conteudo not in texto, conteudo
+
+
+@semNavegador
+def test_tela_sem_arvore_nenhuma_tambem_se_descreve():
+    linhas = _forma_em_navegador(
+        """<!doctype html><html><body><div class="barra">
+        <button aria-label="Ocultar Menu">menu_open</button>
+        </div></body></html>""")
+    texto = " | ".join(linhas)
+    assert "0 caixa(s) de marcacao" in texto
+    assert "Alternar" not in texto
+
+
+def test_a_forma_ilegivel_nao_derruba_a_recusa():
+    """A recusa ja esta acontecendo; um erro aqui a transformaria em traceback."""
+    from justica_mcp.dcp import relatar_a_forma_do_visualizador
+
+    class _TelaQueRecusa:
+        def evaluate(self, _js):
+            raise RuntimeError("execution context was destroyed")
+
+    linhas = relatar_a_forma_do_visualizador(_TelaQueRecusa())
+    assert "nao pode ser lida" in linhas[0]
+
+
+def test_a_recusa_do_indice_carrega_a_forma_da_tela():
+    import inspect
+
+    from justica_mcp import dcp
+
+    for funcao in (dcp.baixar_uma_peca, dcp.baixar_em_lotes):
+        fonte = inspect.getsource(funcao)
+        assert "relatar_a_forma_do_visualizador(pagina)" in fonte, funcao.__name__

@@ -455,6 +455,97 @@ def indice_com_paginas(pagina: Any) -> list:
     return saida
 
 
+# A FORMA do Visualizador, para quando o indice nao aparece.
+#
+# Em 13/10/2026 o indice nao chegou em 45s e o relato da tela mostrou 12
+# botoes, contra os 543 das corridas em que ele existia. Isso ja nao parece
+# demora: parece arvore que nao esta no documento. Descobrir onde ela esta
+# custava outra tentativa de autenticacao, entao a propria falha passa a
+# trazer o reconhecimento.
+#
+# Sai so ESTRUTURA: marcador e classe por nivel, contagem de elementos com
+# rotulo acessivel, e a PRIMEIRA PALAVRA de cada rotulo, que e verbo de tela
+# ("Alternar", "Baixar", "Ocultar") e nao conteudo do processo.
+JS_DA_FORMA_DO_VISUALIZADOR = r"""
+() => {
+  const corta = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const assinatura = (e) => {
+    const classe = (typeof e.className === 'string' ? e.className : '');
+    const partes = corta(classe, 60).split(' ').filter(Boolean).slice(0, 2);
+    return e.tagName.toLowerCase() + (partes.length ? '.' + partes.join('.') : '');
+  };
+
+  const niveis = [];
+  let nivel = [document.body];
+  for (let d = 0; d < 6 && nivel.length; d++) {
+    const grupos = {};
+    const proximo = [];
+    for (const no of nivel) {
+      for (const filho of Array.from(no.children)) {
+        const a = assinatura(filho);
+        grupos[a] = (grupos[a] || 0) + 1;
+        proximo.push(filho);
+      }
+    }
+    if (Object.keys(grupos).length === 0) break;
+    niveis.push(grupos);
+    nivel = proximo.slice(0, 400);
+  }
+
+  const verbos = {};
+  let comRotulo = 0;
+  for (const e of document.querySelectorAll('[aria-label]')) {
+    const rotulo = corta(e.getAttribute('aria-label'), 60);
+    if (!rotulo) continue;
+    comRotulo += 1;
+    const verbo = rotulo.split(' ')[0];
+    verbos[verbo] = (verbos[verbo] || 0) + 1;
+  }
+
+  return {
+    niveis: niveis,
+    com_rotulo_acessivel: comRotulo,
+    primeira_palavra_do_rotulo: verbos,
+    elementos: document.querySelectorAll('*').length,
+    caixas_de_marcacao: document.querySelectorAll(
+      'input[type=checkbox], mat-checkbox, [role=checkbox]').length,
+  };
+}
+"""
+
+
+def forma_do_visualizador(pagina: Any) -> dict:
+    """A estrutura do Visualizador, sem nenhum texto dele."""
+    try:
+        bruto = pagina.evaluate(JS_DA_FORMA_DO_VISUALIZADOR)
+    except Exception as exc:
+        return {"falha": f"{type(exc).__name__}: {exc}"}
+    return bruto if isinstance(bruto, dict) else {"falha": "leitura invalida"}
+
+
+def relatar_a_forma_do_visualizador(pagina: Any, teto: int = 10) -> list:
+    """A forma em linhas, para entrar numa recusa sem despejar conteudo."""
+    forma = forma_do_visualizador(pagina)
+    if forma.get("falha"):
+        return [f"a forma da tela nao pode ser lida: {forma['falha']}"]
+
+    linhas = [
+        f"{forma.get('elementos', 0)} elemento(s) na tela, "
+        f"{forma.get('com_rotulo_acessivel', 0)} com rotulo acessivel, "
+        f"{forma.get('caixas_de_marcacao', 0)} caixa(s) de marcacao",
+    ]
+    verbos = forma.get("primeira_palavra_do_rotulo") or {}
+    if verbos:
+        maiores = sorted(verbos.items(), key=lambda par: -par[1])[:teto]
+        linhas.append("primeira palavra dos rotulos: " + ", ".join(
+            f"{_sem_dado(palavra)} x{quantas}" for palavra, quantas in maiores))
+    for profundidade, grupos in enumerate(forma.get("niveis") or []):
+        maiores = sorted((grupos or {}).items(), key=lambda par: -par[1])[:teto]
+        linhas.append(f"nivel {profundidade}: " + ", ".join(
+            f"{_sem_dado(nome)} x{quantas}" for nome, quantas in maiores))
+    return linhas
+
+
 # Quanto esperar o INDICE montar. Prazo de tela, nao de arquivo.
 SEGUNDOS_DO_INDICE = 45
 
@@ -800,7 +891,9 @@ def baixar_uma_peca(pagina: Any, guarda: Any, destino: Any, chave: str,
     if not indice:
         raise DownloadIndisponivel(
             f"O indice de documentos nao apareceu em {segundos_do_indice}s. "
-            "Nada foi baixado.")
+            "Nada foi baixado."
+            + "\n    A FORMA DA TELA, para achar onde o indice esta:\n    "
+            + "\n    ".join(relatar_a_forma_do_visualizador(pagina)))
 
     escolhidos = [t for t in indice if t[0] == pagina_inicial]
     if not escolhidos:
@@ -856,7 +949,9 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
     if not indice:
         raise DownloadIndisponivel(
             f"O indice de documentos nao apareceu em {segundos_do_indice}s. "
-            "Nada foi baixado.")
+            "Nada foi baixado."
+            + "\n    A FORMA DA TELA, para achar onde o indice esta:\n    "
+            + "\n    ".join(relatar_a_forma_do_visualizador(pagina)))
 
     sem_marca = [t[0] for t in indice if t[2] is None]
     if sem_marca:
