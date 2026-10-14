@@ -5768,3 +5768,46 @@ def test_a_recusa_do_indice_carrega_a_forma_da_tela():
     for funcao in (dcp.baixar_uma_peca, dcp.baixar_em_lotes):
         fonte = inspect.getsource(funcao)
         assert "relatar_a_forma_do_visualizador(pagina)" in fonte, funcao.__name__
+
+
+# ---------------- a janela do Visualizador vai para a FRENTE ----------------
+#
+# Esta escrito em `trazer_para_a_frente`, a partir do que o advogado observou
+# em 06/10/2026: o Chromium nao desenha nem calcula posicao de aba que esta
+# atras. O Visualizador abre em janela propria e monta o indice por script, e
+# ate 14/10/2026 ninguem a trazia para a frente. O indice de 164 documentos nao
+# aparecia em 45s de espera, com a tela mostrando 12 botoes.
+
+
+class _JanelaNova:
+    def __init__(self, falha_ao_focar=False):
+        self.frentes = 0
+        self.esperou = False
+        self.falha_ao_focar = falha_ao_focar
+
+    def bring_to_front(self):
+        self.frentes += 1
+        if self.falha_ao_focar:
+            raise RuntimeError("o navegador recusou o foco")
+
+    def wait_for_load_state(self, _estado, timeout=None):
+        self.esperou = True
+
+
+def test_a_janela_nova_e_trazida_para_a_frente():
+    from justica_mcp.dcp import _assentar_a_janela
+
+    janela = _JanelaNova()
+    assert _assentar_a_janela(janela, 10) is janela
+    assert janela.esperou is True
+    # Antes e depois de carregar: a carga pode devolver o foco a janela de origem.
+    assert janela.frentes == 2
+
+
+def test_foco_recusado_nao_derruba_a_consulta():
+    """Perder a consulta por causa do foco seria desproporcional."""
+    from justica_mcp.dcp import _assentar_a_janela
+
+    janela = _JanelaNova(falha_ao_focar=True)
+    assert _assentar_a_janela(janela, 10) is janela
+    assert janela.esperou is True

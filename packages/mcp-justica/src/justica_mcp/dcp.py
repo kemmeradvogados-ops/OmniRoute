@@ -2885,11 +2885,25 @@ def _recados_do_quadro(quadro: Any) -> list[str]:
 
 
 def _assentar_a_janela(janela: Any, segundos: int) -> Any:
+    """Espera a janela nova carregar, e a traz PARA A FRENTE.
+
+    A frente nao e detalhe. Esta escrito em `trazer_para_a_frente`, a partir do
+    que o advogado observou em 06/10/2026: o Chromium nao desenha nem calcula
+    posicao de aba que esta atras. O Visualizador abre em janela propria, monta
+    o indice por script, e ate 14/10/2026 ninguem a trazia para a frente: a aba
+    do portal era, esta nao.
+
+    O indice de 164 documentos nao aparecia em 45s de espera, com a tela
+    mostrando 12 botoes, e tres tentativas de autenticacao foram gastas nisso.
+    """
+    trazer_para_a_frente(janela)
     try:
         janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
     except Exception:
         pass
-    return janela
+    # De novo depois de carregar: a propria carga pode devolver o foco para a
+    # janela que abriu esta.
+    return trazer_para_a_frente(janela)
 
 
 # ---------------------------------------------------------------------------
