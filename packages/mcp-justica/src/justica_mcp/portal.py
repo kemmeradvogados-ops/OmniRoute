@@ -196,7 +196,24 @@ def bandeiras_do_navegador() -> list[str]:
     string vazia ao navegador.
     """
     bruto = (os.environ.get("JUSTICA_NAVEGADOR_ARGS") or "").strip()
-    return [pedaco for pedaco in bruto.split(" ") if pedaco]
+    escolhidas = [pedaco for pedaco in bruto.split(" ") if pedaco]
+    if not any(p.startswith("--window-size") for p in escolhidas):
+        escolhidas.append(f"--window-size={JANELA_LARGA}")
+    return escolhidas
+
+
+# Tamanho da janela, e ele NAO e cosmetico.
+#
+# O Visualizador de Processos poe o indice de documentos numa gaveta do Angular
+# Material. Em tela estreita a gaveta vira modo `over` e o conteudo dela nao e
+# desenhado; em tela larga ela fica ao lado e o indice existe.
+#
+# Em 14/10/2026 o acompanhamento conduzido pelo advogado, na janela de verdade,
+# mostrou `div#node-<n> x530` e 543 botoes. A corrida automatica, na mesma tela
+# e no mesmo processo, mostrou 12 botoes e nenhum item, e o relato trazia
+# `mat-drawer-backdrop`, que e a marca do modo `over`. Quatro tentativas de
+# autenticacao foram gastas procurando isso em outro lugar.
+JANELA_LARGA = "1920,1080"
 
 
 def abrir_navegador(p, oculto: bool, executavel):
@@ -233,7 +250,7 @@ def abrir_navegador(p, oculto: bool, executavel):
             headless=oculto, executable_path=executavel,
             downloads_path=descargas, args=bandeiras,
         )
-        return navegador, navegador.new_page()
+        return navegador, navegador.new_page(no_viewport=True)
 
     contexto = p.chromium.launch_persistent_context(
         str(pasta_do_navegador()),
@@ -242,6 +259,12 @@ def abrir_navegador(p, oculto: bool, executavel):
         accept_downloads=True,
         downloads_path=descargas,
         args=bandeiras,
+        # Sem isto o Playwright impoe uma area de 1280x720 a pagina, por mais
+        # larga que a janela esteja. `no_viewport` faz a pagina valer o
+        # tamanho real da janela, que e o que a pessoa ve e o que o Angular
+        # Material usa para decidir se a gaveta do indice fica ao lado ou por
+        # cima.
+        no_viewport=True,
     )
     pagina = contexto.pages[0] if contexto.pages else contexto.new_page()
     return contexto, pagina

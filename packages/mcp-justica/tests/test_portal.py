@@ -921,12 +921,18 @@ class _Chromium:
 class _Contexto:
     pages: list = []
 
-    def new_page(self):
+    def new_page(self, **_opcoes):
         return "pagina-do-contexto"
 
 
 class _Navegador:
-    def new_page(self):
+    def __init__(self):
+        self.opcoes_da_pagina = {}
+
+    # `no_viewport` chega aqui: sem ele a pagina valeria 1280x720 fixos, por
+    # mais larga que a janela esteja.
+    def new_page(self, **opcoes):
+        self.opcoes_da_pagina = opcoes
         return "pagina-efemera"
 
 
@@ -5666,32 +5672,43 @@ def test_barra_ilegivel_nao_quebra():
 # nao esta sendo desenhada, ou a pagina nao chegou.
 # ==========================================================================
 
-def test_sem_variavel_nenhuma_bandeira_e_passada():
-    from justica_mcp.portal import bandeiras_do_navegador
+def test_sem_variavel_so_o_tamanho_da_janela_e_passado(monkeypatch):
+    """Desde 14/10/2026 ha uma bandeira que o programa poe sozinho: o tamanho
+    da janela, de que depende o indice do Visualizador aparecer."""
+    from justica_mcp.portal import JANELA_LARGA, bandeiras_do_navegador
 
-    assert bandeiras_do_navegador() == []
+    monkeypatch.delenv("JUSTICA_NAVEGADOR_ARGS", raising=False)
+    assert bandeiras_do_navegador() == [f"--window-size={JANELA_LARGA}"]
 
 
 def test_bandeiras_vem_separadas_por_espaco(monkeypatch):
     from justica_mcp.portal import bandeiras_do_navegador
 
+    from justica_mcp.portal import JANELA_LARGA
+
     monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--disable-gpu --no-sandbox")
-    assert bandeiras_do_navegador() == ["--disable-gpu", "--no-sandbox"]
+    assert bandeiras_do_navegador() == [
+        "--disable-gpu", "--no-sandbox", f"--window-size={JANELA_LARGA}"]
 
 
 def test_variavel_vazia_nao_vira_bandeira_vazia(monkeypatch):
     """`ARGS=` mandaria uma string vazia ao navegador."""
     from justica_mcp.portal import bandeiras_do_navegador
 
+    from justica_mcp.portal import JANELA_LARGA
+
     monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "   ")
-    assert bandeiras_do_navegador() == []
+    assert bandeiras_do_navegador() == [f"--window-size={JANELA_LARGA}"]
 
 
 def test_espaco_a_mais_entre_bandeiras_nao_atrapalha(monkeypatch):
     from justica_mcp.portal import bandeiras_do_navegador
 
+    from justica_mcp.portal import JANELA_LARGA
+
     monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--disable-gpu   --mute-audio")
-    assert bandeiras_do_navegador() == ["--disable-gpu", "--mute-audio"]
+    assert bandeiras_do_navegador() == [
+        "--disable-gpu", "--mute-audio", f"--window-size={JANELA_LARGA}"]
 
 
 def test_as_bandeiras_chegam_aos_dois_jeitos_de_abrir():
@@ -6628,3 +6645,53 @@ def test_a_troca_de_navegador_e_dita_em_voz_alta():
     fonte = inspect.getsource(portal.abrir_navegador)
     assert "JUSTICA_CHROMIUM" in fonte
     assert "nome_do_perfil()" in fonte
+
+
+# ---------------- a janela precisa ser LARGA ----------------
+#
+# O Visualizador de Processos poe o indice numa gaveta do Angular Material. Em
+# tela estreita a gaveta vira modo `over` e o conteudo dela nao e desenhado; em
+# tela larga ela fica ao lado e o indice existe.
+#
+# Em 14/10/2026 o acompanhamento conduzido pelo advogado, na janela de verdade,
+# mostrou `div#node-<n> x530` e 543 botoes. A corrida automatica, na mesma tela
+# e no mesmo processo, mostrou 12 botoes e nenhum item, e o relato trazia
+# `mat-drawer-backdrop`, que e a marca do modo `over`.
+
+
+def test_a_janela_abre_larga_por_padrao(monkeypatch):
+    from justica_mcp.portal import JANELA_LARGA, bandeiras_do_navegador
+
+    monkeypatch.delenv("JUSTICA_NAVEGADOR_ARGS", raising=False)
+    assert f"--window-size={JANELA_LARGA}" in bandeiras_do_navegador()
+
+
+def test_o_operador_pode_escolher_outro_tamanho(monkeypatch):
+    """A bandeira do operador manda: ela existe para a maquina que precisa de
+    um detalhe que o programa nao tem como adivinhar."""
+    from justica_mcp.portal import bandeiras_do_navegador
+
+    monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--window-size=1366,768")
+    bandeiras = bandeiras_do_navegador()
+    assert bandeiras.count("--window-size=1366,768") == 1
+    assert not any(b == "--window-size=1920,1080" for b in bandeiras)
+
+
+def test_bandeira_do_operador_nao_perde_as_outras(monkeypatch):
+    from justica_mcp.portal import JANELA_LARGA, bandeiras_do_navegador
+
+    monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--disable-gpu")
+    bandeiras = bandeiras_do_navegador()
+    assert "--disable-gpu" in bandeiras
+    assert f"--window-size={JANELA_LARGA}" in bandeiras
+
+
+def test_a_pagina_vale_o_tamanho_da_JANELA_e_nao_720_fixos():
+    """Sem `no_viewport`, o Playwright impoe 1280x720 a pagina por mais larga
+    que a janela esteja, e o Angular Material decide pela area da pagina."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.abrir_navegador)
+    assert fonte.count("no_viewport=True") == 2
