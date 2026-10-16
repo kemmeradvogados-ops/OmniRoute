@@ -199,7 +199,49 @@ def bandeiras_do_navegador() -> list[str]:
     escolhidas = [pedaco for pedaco in bruto.split(" ") if pedaco]
     if not any(p.startswith("--window-size") for p in escolhidas):
         escolhidas.append(f"--window-size={JANELA_LARGA}")
+    if not any(p.startswith("--force-device-scale-factor") for p in escolhidas):
+        escolhidas.append(f"--force-device-scale-factor={escala_da_janela()}")
     return escolhidas
+
+
+# Quanto a janela encolhe o desenho para caber mais tela dentro dela.
+#
+# `--window-size` fala em pixel de APARELHO; a pagina e desenhada em pixel de
+# CSS, e a conta entre os dois e a escala do sistema. Em 16/10/2026, com
+# `--window-size=1920,1080`, a janela mediu 1522x744: o Windows do advogado
+# esta a 125%, entao 1920/1,25 da 1536, menos a barra de rolagem da 1522, e
+# 1080/1,25 da 864, menos a moldura do navegador da 744. A conta fecha nos dois
+# eixos, e nao sobra duvida sobre a causa.
+#
+# A consulta do Portal de Servicos do Tribunal de Justica do Rio de Janeiro
+# desenha o formulario em mais de 2140 de largura: os campos ficam a esquerda e
+# o botao `Pesquisar` em 1921, fora de uma janela de 1522. Aumentar
+# `--window-size` nao resolve, porque a tela do operador acaba: janela nao
+# cresce alem do monitor. O que resolve e encolher o desenho, que e o que esta
+# escala faz. A 0,8 uma janela de 1920 de aparelho vira 2400 de CSS, e o
+# formulario inteiro cabe.
+#
+# Fica ajustavel porque monitor e escala do sistema mudam de maquina para
+# maquina: `JUSTICA_ESCALA=1` desliga o encolhimento, e valor menor cabe mais.
+ESCALA_PADRAO = "0.8"
+
+
+def escala_da_janela() -> str:
+    """A escala pedida pelo operador, ou a padrao. Valor invalido nao passa."""
+    bruto = (os.environ.get("JUSTICA_ESCALA") or "").strip()
+    if not bruto:
+        return ESCALA_PADRAO
+    try:
+        valor = float(bruto.replace(",", "."))
+    except ValueError:
+        print(f"JUSTICA_ESCALA={bruto!r} nao e um numero; usando "
+              f"{ESCALA_PADRAO}.", file=sys.stderr)
+        return ESCALA_PADRAO
+    if not 0.3 <= valor <= 3:
+        print(f"JUSTICA_ESCALA={bruto!r} esta fora de 0,3 a 3; usando "
+              f"{ESCALA_PADRAO}.", file=sys.stderr)
+        return ESCALA_PADRAO
+    return f"{valor:g}"
 
 
 # Tamanho da janela, e ele NAO e cosmetico.
@@ -477,6 +519,30 @@ def na_tela_ou_rolar(elemento: Any, largura: int, altura: int) -> bool:
     return caixa_na_tela(caixa_de(elemento), largura, altura)
 
 
+def passou_da_borda(caixa: Optional[dict], largura: int, altura: int) -> bool:
+    """Caixa inteira em coordenada POSITIVA, so que adiante da borda direita ou
+    da de baixo.
+
+    E a diferenca entre as duas coisas que a conferencia de posicao trata como
+    uma so. Campo espelho e empurrado para coordenada NEGATIVA, tipicamente
+    `left:-9999px`, e nenhuma rolagem o traz. Conteudo adiante da borda esta no
+    lugar certo de um desenho mais largo que a janela: no Portal de Servicos do
+    Tribunal de Justica do Rio de Janeiro, em 16/10/2026, o unico botao
+    `Pesquisar` visivel media `x=1921` e o botao `Voltar` media `x=2062`, numa
+    janela de 1522 de largura. Os campos do mesmo formulario, mais a esquerda,
+    estavam dentro. O desenho da tela passa dos 2140, e a janela nao tem onde
+    crescer: a tela do operador acaba antes.
+
+    Coordenada negativa nunca passa por aqui. E isso que mantem de pe a
+    protecao que a conferencia existe para dar.
+    """
+    if caixa is None:
+        return False
+    if caixa["x"] < 0 or caixa["y"] < 0:
+        return False
+    return caixa["x"] >= largura or caixa["y"] >= altura
+
+
 def os_que_cabem_na_janela(candidatos: list, largura: int, altura: int) -> list:
     """Dos candidatos, os que estao na janela; so se NENHUM estiver, os que a
     rolagem traz.
@@ -493,10 +559,57 @@ def os_que_cabem_na_janela(candidatos: list, largura: int, altura: int) -> list:
               if caixa_na_tela(caixa_de(e), largura, altura)]
     if dentro:
         return dentro
-    return [e for e in candidatos if na_tela_ou_rolar(e, largura, altura)]
+    rolados = [e for e in candidatos if na_tela_ou_rolar(e, largura, altura)]
+    if rolados:
+        return rolados
+    # Terceira passagem: nem dentro, nem alcancavel rolando, e ainda assim em
+    # coordenada positiva. E tela desenhada mais larga do que a janela pode
+    # ficar, e recusar aqui seria recusar conteudo legitimo por um motivo que
+    # o operador nao tem como consertar. O clique do Playwright ainda confere
+    # por conta propria se alcanca o alvo, e reclama alto quando nao alcanca:
+    # errar para o lado de tentar devolve uma mensagem util; errar para o lado
+    # de recusar devolve "nao esta na tela", que foi a frase que parou quatro
+    # corridas.
+    return [e for e in candidatos
+            if passou_da_borda(caixa_de(e), largura, altura)]
 
 
 JANELA_SUPOSTA = {"width": 1280, "height": 720}
+
+# O que o desenho da tela ocupa, contra o que a janela mostra. Sem isso o
+# relato diz que um elemento esta fora da janela e nao diz se ha para onde
+# rolar, que e a pergunta seguinte e a que decide o conserto.
+JS_DA_MEDIDA_DO_CONTEUDO = (
+    "() => ({desenhoL: document.documentElement.scrollWidth,"
+    " desenhoA: document.documentElement.scrollHeight,"
+    " visivelL: document.documentElement.clientWidth,"
+    " visivelA: document.documentElement.clientHeight,"
+    " rolagemX: Math.round(window.scrollX),"
+    " rolagemY: Math.round(window.scrollY)})")
+
+
+def medida_do_conteudo(pagina: Any) -> Optional[dict]:
+    try:
+        lido = pagina.evaluate(JS_DA_MEDIDA_DO_CONTEUDO)
+    except Exception:
+        return None
+    return lido if isinstance(lido, dict) else None
+
+
+def relatar_a_medida_do_conteudo(pagina: Any) -> str:
+    """Uma linha dizendo se o desenho cabe na janela e onde a rolagem esta."""
+    medida = medida_do_conteudo(pagina)
+    if not medida:
+        return "DESENHO DA TELA: nao foi possivel medir"
+    desenho = f"{int(medida.get('desenhoL') or 0)}x{int(medida.get('desenhoA') or 0)}"
+    visivel = f"{int(medida.get('visivelL') or 0)}x{int(medida.get('visivelA') or 0)}"
+    rolagem = (f"{int(medida.get('rolagemX') or 0)},"
+               f"{int(medida.get('rolagemY') or 0)}")
+    sobra_lado = int(medida.get("desenhoL") or 0) - int(medida.get("visivelL") or 0)
+    veredicto = ("cabe na largura" if sobra_lado <= 0
+                 else f"passa {sobra_lado} de largura")
+    return (f"DESENHO DA TELA: {desenho}, visivel {visivel}, rolagem em "
+            f"{rolagem} ({veredicto})")
 
 
 def _pagina_dona(pagina: Any) -> Any:
@@ -4749,6 +4862,7 @@ def _relatar_tela(pagina, titulo: str) -> None:
     janela = janela_de(pagina)
     print(f"    JANELA MEDIDA: {janela['width']}x{janela['height']} "
           "(e contra ela que 'na tela' e decidido)")
+    print(f"    {relatar_a_medida_do_conteudo(pagina)}")
     visiveis = [b for b in botoes if b.na_tela]
     # Os campos vinham sendo coletados e NUNCA impressos. O relato existe para
     # que um seletor seja escrito a partir da tela real, e sem os campos ele
@@ -4799,6 +4913,7 @@ def _relatar_tela(pagina, titulo: str) -> None:
                   f"({type(exc).__name__})")
             continue
         print(f"\n    ----- DENTRO DO QUADRO {endereco_sem_dado(quadro.url, 90)} -----")
+        print(f"    {relatar_a_medida_do_conteudo(quadro)}")
         # A contagem e a dos que estao NA TELA, mesmo quando a lista impressa
         # e a de reserva. Antes a linha reaproveitava o tamanho da lista
         # impressa, e com a reserva de vinte itens ela anunciava "20 de 61" com

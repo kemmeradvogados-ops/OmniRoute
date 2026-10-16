@@ -5678,37 +5678,44 @@ def test_sem_variavel_so_o_tamanho_da_janela_e_passado(monkeypatch):
     from justica_mcp.portal import JANELA_LARGA, bandeiras_do_navegador
 
     monkeypatch.delenv("JUSTICA_NAVEGADOR_ARGS", raising=False)
-    assert bandeiras_do_navegador() == [f"--window-size={JANELA_LARGA}"]
+    monkeypatch.delenv("JUSTICA_ESCALA", raising=False)
+    assert bandeiras_do_navegador() == _bandeiras_da_casa()
+
+
+def _bandeiras_da_casa() -> list[str]:
+    """As que o programa acrescenta sozinho, na ordem em que as acrescenta: o
+    tamanho da janela e a escala do desenho."""
+    from justica_mcp.portal import ESCALA_PADRAO, JANELA_LARGA
+
+    return [f"--window-size={JANELA_LARGA}",
+            f"--force-device-scale-factor={ESCALA_PADRAO}"]
 
 
 def test_bandeiras_vem_separadas_por_espaco(monkeypatch):
     from justica_mcp.portal import bandeiras_do_navegador
 
-    from justica_mcp.portal import JANELA_LARGA
-
     monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--disable-gpu --no-sandbox")
+    monkeypatch.delenv("JUSTICA_ESCALA", raising=False)
     assert bandeiras_do_navegador() == [
-        "--disable-gpu", "--no-sandbox", f"--window-size={JANELA_LARGA}"]
+        "--disable-gpu", "--no-sandbox"] + _bandeiras_da_casa()
 
 
 def test_variavel_vazia_nao_vira_bandeira_vazia(monkeypatch):
     """`ARGS=` mandaria uma string vazia ao navegador."""
     from justica_mcp.portal import bandeiras_do_navegador
 
-    from justica_mcp.portal import JANELA_LARGA
-
     monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "   ")
-    assert bandeiras_do_navegador() == [f"--window-size={JANELA_LARGA}"]
+    monkeypatch.delenv("JUSTICA_ESCALA", raising=False)
+    assert bandeiras_do_navegador() == _bandeiras_da_casa()
 
 
 def test_espaco_a_mais_entre_bandeiras_nao_atrapalha(monkeypatch):
     from justica_mcp.portal import bandeiras_do_navegador
 
-    from justica_mcp.portal import JANELA_LARGA
-
     monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS", "--disable-gpu   --mute-audio")
+    monkeypatch.delenv("JUSTICA_ESCALA", raising=False)
     assert bandeiras_do_navegador() == [
-        "--disable-gpu", "--mute-audio", f"--window-size={JANELA_LARGA}"]
+        "--disable-gpu", "--mute-audio"] + _bandeiras_da_casa()
 
 
 def test_as_bandeiras_chegam_aos_dois_jeitos_de_abrir():
@@ -7038,3 +7045,182 @@ def test_nenhum_candidato_nao_devolve_ninguem():
     from justica_mcp.portal import os_que_cabem_na_janela
 
     assert os_que_cabem_na_janela([], 1280, 720) == []
+
+
+# ==========================================================================
+# Adiante da borda nao e campo espelho
+#
+# Em 16/10/2026 a recusa carregou a medida: na consulta do Portal de Servicos
+# do Tribunal de Justica do Rio de Janeiro havia 8 elementos com o texto
+# 'Pesquisar', 1 visivel, 0 dentro da janela de 1522x744, e o visivel media
+# x=1921. O botao 'Voltar' do mesmo formulario media x=2062. Os campos, mais a
+# esquerda, estavam dentro. O desenho passa dos 2140 e a janela nao cresce:
+# a tela do operador acaba antes.
+#
+# Coordenada positiva adiante da borda e conteudo legitimo. Coordenada negativa
+# e campo espelho. Tratar os dois como uma coisa so foi o que parou a corrida.
+# ==========================================================================
+
+def test_adiante_da_borda_direita_e_conteudo_e_nao_espelho():
+    from justica_mcp.portal import passou_da_borda
+
+    assert passou_da_borda(_caixa(1921, 404, 90, 36), 1522, 744) is True
+    assert passou_da_borda(_caixa(2062, 244, 78, 31), 1522, 744) is True
+
+
+def test_coordenada_negativa_nunca_passa_pela_terceira_passagem():
+    """E isto que mantem de pe a protecao contra campo espelho."""
+    from justica_mcp.portal import passou_da_borda
+
+    assert passou_da_borda(_caixa(-9999, 200), 1522, 744) is False
+    assert passou_da_borda(_caixa(10, -500), 1522, 744) is False
+    assert passou_da_borda(None, 1522, 744) is False
+
+
+def test_quem_esta_dentro_nao_e_contado_como_adiante():
+    from justica_mcp.portal import passou_da_borda
+
+    assert passou_da_borda(_caixa(300, 400), 1522, 744) is False
+
+
+class _ElementoPresoAdiante:
+    """Elemento adiante da borda que a rolagem NAO traz, porque o desenho esta
+    cortado e nao ha para onde rolar."""
+
+    def __init__(self, caixa):
+        self._caixa = caixa
+        self.rolagens = 0
+
+    def bounding_box(self):
+        return self._caixa
+
+    def scroll_into_view_if_needed(self, timeout=None):
+        self.rolagens += 1
+
+
+def test_botao_preso_adiante_da_borda_ainda_e_devolvido():
+    from justica_mcp.portal import os_que_cabem_na_janela
+
+    botao = _ElementoPresoAdiante(_caixa(1921, 404, 90, 36))
+    assert os_que_cabem_na_janela([botao], 1522, 744) == [botao]
+    assert botao.rolagens == 1, "a rolagem e tentada antes de aceitar assim"
+
+
+def test_campo_espelho_nao_sobe_pela_terceira_passagem():
+    """A terceira passagem nao pode virar porta dos fundos do espelho."""
+    from justica_mcp.portal import os_que_cabem_na_janela
+
+    espelho = _ElementoPresoAdiante(_caixa(-9999, 200))
+    assert os_que_cabem_na_janela([espelho], 1522, 744) == []
+
+
+def test_a_ordem_das_tres_passagens_e_dentro_rolado_adiante():
+    from justica_mcp.portal import os_que_cabem_na_janela
+
+    adiante = _ElementoPresoAdiante(_caixa(1921, 404))
+    rolavel = _ElementoQueRola(_caixa(300, 1340), _caixa(300, 620))
+    dentro = _ElementoQueRola(_caixa(300, 400), _caixa(0, 0))
+
+    assert os_que_cabem_na_janela([adiante, rolavel, dentro], 1522, 744) == [dentro]
+    assert os_que_cabem_na_janela([adiante, rolavel], 1522, 744) == [rolavel]
+    assert os_que_cabem_na_janela([adiante], 1522, 744) == [adiante]
+
+
+# ==========================================================================
+# O desenho da tela, medido contra a janela
+# ==========================================================================
+
+class _PaginaComMedida:
+    def __init__(self, medida):
+        self._medida = medida
+
+    def evaluate(self, js):
+        return self._medida
+
+
+def test_a_medida_diz_quanto_o_desenho_passa_da_janela():
+    from justica_mcp.portal import relatar_a_medida_do_conteudo
+
+    linha = relatar_a_medida_do_conteudo(_PaginaComMedida({
+        "desenhoL": 2140, "desenhoA": 1830, "visivelL": 1522,
+        "visivelA": 744, "rolagemX": 0, "rolagemY": 0,
+    }))
+    assert "2140x1830" in linha
+    assert "visivel 1522x744" in linha
+    assert "passa 618 de largura" in linha
+
+
+def test_a_medida_diz_quando_o_desenho_cabe():
+    from justica_mcp.portal import relatar_a_medida_do_conteudo
+
+    linha = relatar_a_medida_do_conteudo(_PaginaComMedida({
+        "desenhoL": 1400, "desenhoA": 900, "visivelL": 1522,
+        "visivelA": 744, "rolagemX": 0, "rolagemY": 120,
+    }))
+    assert "cabe na largura" in linha
+    assert "rolagem em 0,120" in linha
+
+
+def test_a_medida_nao_derruba_o_relato_quando_a_pagina_nao_responde():
+    from justica_mcp.portal import relatar_a_medida_do_conteudo
+
+    class _Muda:
+        def evaluate(self, js):
+            raise RuntimeError("pagina fechou")
+
+    assert "nao foi possivel medir" in relatar_a_medida_do_conteudo(_Muda())
+
+
+# ==========================================================================
+# A escala da janela
+# ==========================================================================
+
+def test_a_escala_padrao_entra_nas_bandeiras(monkeypatch):
+    from justica_mcp.portal import ESCALA_PADRAO, bandeiras_do_navegador
+
+    monkeypatch.delenv("JUSTICA_NAVEGADOR_ARGS", raising=False)
+    monkeypatch.delenv("JUSTICA_ESCALA", raising=False)
+    bandeiras = bandeiras_do_navegador()
+    assert f"--force-device-scale-factor={ESCALA_PADRAO}" in bandeiras
+    assert "--window-size=1920,1080" in bandeiras
+
+
+def test_a_escala_do_operador_vence_a_padrao(monkeypatch):
+    from justica_mcp.portal import bandeiras_do_navegador
+
+    monkeypatch.delenv("JUSTICA_NAVEGADOR_ARGS", raising=False)
+    monkeypatch.setenv("JUSTICA_ESCALA", "1")
+    assert "--force-device-scale-factor=1" in bandeiras_do_navegador()
+
+
+def test_a_bandeira_escrita_a_mao_nao_e_duplicada(monkeypatch):
+    """Quem passa a propria bandeira manda nela, como no tamanho da janela."""
+    from justica_mcp.portal import bandeiras_do_navegador
+
+    monkeypatch.setenv("JUSTICA_NAVEGADOR_ARGS",
+                       "--force-device-scale-factor=0.5")
+    monkeypatch.delenv("JUSTICA_ESCALA", raising=False)
+    bandeiras = bandeiras_do_navegador()
+    assert len([b for b in bandeiras
+                if b.startswith("--force-device-scale-factor")]) == 1
+    assert "--force-device-scale-factor=0.5" in bandeiras
+
+
+def test_escala_invalida_cai_na_padrao_e_avisa(monkeypatch, capsys):
+    from justica_mcp.portal import ESCALA_PADRAO, escala_da_janela
+
+    monkeypatch.setenv("JUSTICA_ESCALA", "grande")
+    assert escala_da_janela() == ESCALA_PADRAO
+    assert "nao e um numero" in capsys.readouterr().err
+
+    monkeypatch.setenv("JUSTICA_ESCALA", "9")
+    assert escala_da_janela() == ESCALA_PADRAO
+    assert "fora de 0,3 a 3" in capsys.readouterr().err
+
+
+def test_escala_com_virgula_e_aceita(monkeypatch):
+    """O operador escreve numero como se escreve em portugues."""
+    from justica_mcp.portal import escala_da_janela
+
+    monkeypatch.setenv("JUSTICA_ESCALA", "0,75")
+    assert escala_da_janela() == "0.75"

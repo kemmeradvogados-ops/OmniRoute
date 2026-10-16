@@ -1397,7 +1397,8 @@ def onde_estao_os_botoes(quadro: Any, texto: str) -> str:
     Nenhum rotulo de item e impresso: em grupo grande, rotulo de botao e
     conteudo do processo.
     """
-    from .portal import caixa_na_tela, janela_de, sem_acento
+    from .portal import (caixa_na_tela, janela_de,
+                         relatar_a_medida_do_conteudo, sem_acento)
 
     alvo = sem_acento(texto).strip()
     janela = janela_de(quadro)
@@ -1434,6 +1435,10 @@ def onde_estao_os_botoes(quadro: Any, texto: str) -> str:
     ]
     if posicoes:
         partes.append(" Fora da janela em: " + "; ".join(posicoes) + ".")
+        # Se ha para onde rolar, o conserto e rolar; se o desenho esta cortado,
+        # rolar nao alcanca e o conserto e encolher a tela (JUSTICA_ESCALA).
+        # Sao dois consertos diferentes para a mesma frase de recusa.
+        partes.append(" " + relatar_a_medida_do_conteudo(quadro) + ".")
     if iguais == 0:
         partes.append(" Nenhum elemento tem este texto: ou a tela mudou, ou a "
                       "consulta nao chegou a se montar.")

@@ -2132,7 +2132,10 @@ class _BotaoDeTela:
         return ({"x": 10, "y": 300, "width": 90, "height": 34} if self._dentro
                 else {"x": 10, "y": 3000, "width": 90, "height": 34})
 
-    def scroll_into_view_if_needed(self):
+    def scroll_into_view_if_needed(self, timeout=None):
+        # `timeout` existe na assinatura do Playwright; o duble aceita porque a
+        # busca por texto passa prazo, para nao ficar presa 30 segundos por
+        # candidato quando a tela tem dezenas deles.
         self.rolou = True
 
     def click(self):
@@ -5914,3 +5917,23 @@ def test_o_reconhecimento_da_recusa_nao_imprime_rotulo_de_item():
     fonte = inspect.getsource(dcp.onde_estao_os_botoes)
     assert "aria-label" not in fonte
     assert "inner_text()" in fonte
+
+
+def test_a_recusa_diz_se_ha_para_onde_rolar():
+    """Fora da janela tem dois consertos diferentes: rolar, quando o desenho
+    continua adiante, ou encolher a tela, quando ele esta cortado. A recusa
+    tem de dizer qual dos dois, senao a frase cobre os dois e nao resolve
+    nenhum."""
+    from justica_mcp.dcp import onde_estao_os_botoes
+
+    class _QuadroQueMede(_QuadroDeBotoes):
+        def evaluate(self, js):
+            return {"desenhoL": 2140, "desenhoA": 1830, "visivelL": 1522,
+                    "visivelA": 744, "rolagemX": 0, "rolagemY": 0}
+
+    quadro = _QuadroQueMede([
+        _BotaoDeQuadro("Pesquisar", {"x": 1921, "y": 404, "width": 90, "height": 36}),
+    ])
+    relato = onde_estao_os_botoes(quadro, "Pesquisar")
+    assert "x=1921" in relato
+    assert "passa 618 de largura" in relato
