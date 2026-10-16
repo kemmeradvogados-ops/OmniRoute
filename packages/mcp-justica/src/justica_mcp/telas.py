@@ -333,15 +333,21 @@ def _linhas_de_clicaveis(nos: list, contem: str,
                 "processo. Confira antes de colar.")
             for no in membros[:5]:
                 rotulo = sem_dado_de_processo(_rotulo_do_no(no))
-                saida.append(f"      {_alvo(no):34s} rotulo={rotulo!r}  {_onde(no)}")
+                # A ETIQUETA entra aqui. Em 16/10/2026 cinco linhas de
+                # resultado sairam como `.ng-tns-c816854197-0` e eu nao tinha
+                # como saber se eram `a`, `button` ou `td`, que e exatamente o
+                # que decide por onde procura-las.
+                saida.append(f"      <{no.get('t')}> {_alvo(no):30s} "
+                             f"rotulo={rotulo!r}  dentro de {no.get('p') or '-'}"
+                             f"  {_onde(no)}")
             if len(membros) > 5:
                 saida.append(f"      (+{len(membros) - 5} nao mostrados)")
             continue
         for no in membros:
             rotulo = _rotulo_do_no(no)
             marca = f"  rotulo={sem_dado_de_processo(rotulo)!r}" if rotulo else ""
-            saida.append(f"    {_alvo(no):36s} {sem_dado_de_processo(texto)!r}"
-                         f"{marca}  {_onde(no)}")
+            saida.append(f"    <{no.get('t')}> {_alvo(no):32s} "
+                         f"{sem_dado_de_processo(texto)!r}{marca}  {_onde(no)}")
     return saida
 
 

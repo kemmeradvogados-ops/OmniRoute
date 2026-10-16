@@ -1599,6 +1599,46 @@ ALVO_DO_RESULTADO = "linha-do-resultado-com-o-numero-pesquisado"
 ESPERA_DA_LISTA = 20
 
 
+# Como a linha da lista e encontrada, e por que nao e pela lista de clicaveis.
+#
+# `ALVOS_CLICAVEIS` cobre `button`, `input` de botao e `a`. A lista de
+# resultado deste portal e uma `p-datatable` do PrimeNG, e nela a celula que
+# leva ao processo pode ser `td`, `span` ou `div` com tratador de clique, sem
+# ser nenhuma daquelas quatro etiquetas. Procurar so entre elas pode nao achar
+# linha nenhuma numa tela que tem cinco.
+#
+# Entao a procura e pelo TEXTO PROPRIO de qualquer elemento: os algarismos dos
+# nos de texto FILHOS DIRETOS, e nao `textContent`, que soma os descendentes.
+# A diferenca e o que separa a celula do numero da tabela inteira que a contem:
+# com `textContent`, `<table>`, `<tbody>`, `<tr>` e `<td>` casariam todos, e o
+# clique iria parar na tabela.
+#
+# A marca `data-justica-linha` e posta e retirada pelo proprio script, a cada
+# chamada. E a unica escrita que este programa faz na pagina, e existe porque
+# devolver elementos de dentro do navegador exige um seletor: sem a marca
+# seriam mil e duzentas idas e vindas para perguntar o texto de cada no, uma
+# por vez.
+JS_DAS_LINHAS_DO_RESULTADO = r"""(alvo) => {
+  const so = (s) => (s || '').replace(/\D/g, '');
+  let achados = 0;
+  for (const e of document.querySelectorAll('[data-justica-linha]')) {
+    e.removeAttribute('data-justica-linha');
+  }
+  for (const e of document.querySelectorAll('*')) {
+    let proprio = '';
+    for (const f of e.childNodes) {
+      if (f.nodeType === 3) proprio += f.nodeValue;
+    }
+    if (so(proprio) !== alvo) continue;
+    const r = e.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) continue;
+    e.setAttribute('data-justica-linha', String(achados));
+    achados += 1;
+  }
+  return achados;
+}"""
+
+
 def _digitos_do_texto(elemento: Any) -> str:
     """So os algarismos do texto VISIVEL do elemento."""
     try:
@@ -1609,15 +1649,28 @@ def _digitos_do_texto(elemento: Any) -> str:
 
 
 def processos_na_lista(quadro: Any, numero: Any) -> list:
-    """Os clicaveis da lista cujo numero CONFERE com o pesquisado.
+    """Os elementos da lista cujo numero CONFERE com o pesquisado.
 
     Comparacao por algarismo, e nao por texto: a lista escreve o numero
     formatado e o pedido pode vir de qualquer jeito. Exata, e nunca por
     conter: um numero pode ser pedaco de outro.
     """
+    alvo = numero.apenas_digitos
+    try:
+        quantas = quadro.evaluate(JS_DAS_LINHAS_DO_RESULTADO, alvo)
+    except Exception:
+        quantas = 0
+    if quantas:
+        try:
+            achados = quadro.query_selector_all("[data-justica-linha]") or []
+        except Exception:
+            achados = []
+        if achados:
+            return achados
+
+    # Caminho de reserva, para a tela que o script nao conseguiu varrer.
     from .portal import ALVOS_CLICAVEIS
 
-    alvo = numero.apenas_digitos
     try:
         candidatos = quadro.query_selector_all(ALVOS_CLICAVEIS) or []
     except Exception:
@@ -1653,6 +1706,28 @@ def esperar_a_lista_de_resultado(quadro: Any, numero: Any,
             _tempo.sleep(0.5)
 
 
+def resumo_da_lista(quadro: Any) -> str:
+    """Quantas linhas a lista tem, sem imprimir nenhuma delas.
+
+    "Nao achei o numero" cobre duas coisas muito diferentes: lista vazia, que e
+    busca sem resultado, e lista cheia em que o numero nao bate, que e defeito
+    da comparacao ou processo que nao e o pedido. Contar separa as duas sem
+    mostrar conteudo.
+    """
+    try:
+        contagem = quadro.evaluate(
+            "() => ({tabelas: document.querySelectorAll('table').length,"
+            " linhas: document.querySelectorAll('tbody tr').length,"
+            " paginadores: document.querySelectorAll('p-paginator').length})")
+    except Exception:
+        return "Nao foi possivel contar a lista."
+    if not isinstance(contagem, dict):
+        return "Nao foi possivel contar a lista."
+    return (f"Na tela ha {contagem.get('tabelas', 0)} tabela(s), "
+            f"{contagem.get('linhas', 0)} linha(s) de corpo e "
+            f"{contagem.get('paginadores', 0)} paginador(es).")
+
+
 def abrir_o_processo_da_lista(quadro: Any, guarda: Any, numero: Any,
                               segundos: int = ESPERA_DA_LISTA) -> dict:
     """Clica, na lista de resultado, no processo cujo numero confere.
@@ -1667,7 +1742,9 @@ def abrir_o_processo_da_lista(quadro: Any, guarda: Any, numero: Any,
 
     achados = esperar_a_lista_de_resultado(quadro, numero, segundos)
     if not achados:
-        return {"situacao": "nenhuma linha com este numero na lista",
+        gravar_a_tela(quadro, "sem-linha-com-o-numero-na-lista")
+        return {"situacao": "nenhuma linha com este numero na lista. "
+                            + resumo_da_lista(quadro),
                 "linhas": 0, "clicado": False}
 
     if len(achados) > 1:

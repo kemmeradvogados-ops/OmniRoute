@@ -6126,3 +6126,148 @@ def test_a_trava_nomeia_a_linha_do_resultado():
 
     fonte = inspect.getsource(dcp.buscar)
     assert "ALVO_DO_RESULTADO" in fonte
+
+
+# A procura pela linha deixou de ser por ETIQUETA e passou a ser por TEXTO
+# PROPRIO. Em 16/10/2026 a tela gravada mostrou cinco linhas de resultado
+# impressas como `.ng-tns-c816854197-0`, sem etiqueta a vista, e a procura
+# entre `button`/`a` nao achou nenhuma delas numa tela que tinha cinco.
+
+class _QuadroQueMarca(_QuadroComLista):
+    """Duble do quadro que sabe marcar, como o navegador de verdade."""
+
+    def __init__(self, linhas, marcaveis=None, erro=False):
+        super().__init__(linhas)
+        self._marcaveis = marcaveis if marcaveis is not None else []
+        self._erro = erro
+        self.marcou = 0
+
+    def evaluate(self, js, *args):
+        if "data-justica-linha" in js:
+            if self._erro:
+                raise RuntimeError("script barrado")
+            self.marcou += 1
+            return len(self._marcaveis)
+        return {"tabelas": 1, "linhas": 5, "paginadores": 1}
+
+    def query_selector_all(self, seletor):
+        if seletor == "[data-justica-linha]":
+            return list(self._marcaveis)
+        return list(self._linhas)
+
+
+def test_a_linha_e_achada_mesmo_sem_ser_botao_nem_ligacao():
+    """Celula de `p-datatable` com tratador de clique nao e `button` nem `a`."""
+    from justica_mcp.dcp import processos_na_lista
+
+    celula = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    quadro = _QuadroQueMarca(linhas=[], marcaveis=[celula])
+    assert processos_na_lista(quadro, _NumeroFalso()) == [celula]
+    assert quadro.marcou == 1
+
+
+def test_sem_marca_nenhuma_cai_no_caminho_de_reserva():
+    from justica_mcp.dcp import processos_na_lista
+
+    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    quadro = _QuadroQueMarca(linhas=[certa], marcaveis=[])
+    assert processos_na_lista(quadro, _NumeroFalso()) == [certa]
+
+
+def test_script_barrado_nao_impede_o_caminho_de_reserva():
+    from justica_mcp.dcp import processos_na_lista
+
+    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    quadro = _QuadroQueMarca(linhas=[certa], marcaveis=[], erro=True)
+    assert processos_na_lista(quadro, _NumeroFalso()) == [certa]
+
+
+def test_a_recusa_conta_a_lista_sem_mostrar_conteudo():
+    """"Nao achei o numero" cobre lista vazia e lista cheia que nao bate. Sao
+    defeitos diferentes, e contar separa os dois sem mostrar linha nenhuma."""
+    from justica_mcp.dcp import resumo_da_lista
+
+    relato = resumo_da_lista(_QuadroQueMarca(linhas=[], marcaveis=[]))
+    assert "1 tabela(s)" in relato
+    assert "5 linha(s)" in relato
+    assert "1 paginador(es)" in relato
+
+
+def test_o_marcador_procura_pelo_texto_PROPRIO_e_nao_pelo_dos_filhos():
+    """Guarda de fonte: com `textContent`, a tabela inteira casaria com o
+    numero de uma celula e o clique iria parar na tabela."""
+    from justica_mcp.dcp import JS_DAS_LINHAS_DO_RESULTADO
+
+    assert "nodeType === 3" in JS_DAS_LINHAS_DO_RESULTADO
+    assert "textContent" not in JS_DAS_LINHAS_DO_RESULTADO
+    assert "removeAttribute" in JS_DAS_LINHAS_DO_RESULTADO
+
+
+import pytest as _pytest_dcp
+
+semNavegadorDcp = _pytest_dcp.mark.skipif(
+    _navegador_de_teste() is None, reason="sem Chromium instalado")
+
+
+TELA_DA_LISTA = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>Resultado</title></head><body>
+<div id="pn_id_1" class="p-datatable"><div class="p-datatable-wrapper">
+<table id="pn_id_1-table" class="p-datatable-table">
+  <thead class="p-datatable-thead"><tr>
+    <th>Código CNJ</th><th>Nome Comarca</th><th>Classe</th></tr></thead>
+  <tbody class="p-datatable-tbody">
+    <tr><td class="ng-tns-c816854197-0">0011111-11.2015.8.19.0001</td>
+        <td>Comarca A</td><td>Classe A</td></tr>
+    <tr><td class="ng-tns-c816854197-0">0004724-51.2013.8.19.0078</td>
+        <td>Comarca B</td><td>Classe B</td></tr>
+    <tr><td class="ng-tns-c816854197-0">0022222-22.2016.8.19.0002</td>
+        <td>Comarca C</td><td>Classe C</td></tr>
+  </tbody>
+</table></div><p-paginator></p-paginator></div>
+</body></html>"""
+
+
+def _marcar_em_navegador(html, digitos):
+    """Roda o marcador num Chromium de verdade e devolve (quantas, etiquetas)."""
+    import tempfile
+    from pathlib import Path as _P
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import JS_DAS_LINHAS_DO_RESULTADO
+
+    executavel = _navegador_de_teste()
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = _P(pasta) / "lista.html"
+        arquivo.write_text(html, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(executable_path=executavel,
+                                          args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                quantas = pagina.evaluate(JS_DAS_LINHAS_DO_RESULTADO, digitos)
+                achados = pagina.query_selector_all("[data-justica-linha]")
+                etiquetas = [e.evaluate("e => e.tagName.toLowerCase()")
+                             for e in achados]
+                return quantas, etiquetas, pagina
+            finally:
+                navegador.close()
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_so_a_CELULA_do_numero_e_marcada():
+    """Com `textContent`, `table`, `tbody`, `tr` e `td` casariam todos, e o
+    clique iria parar na tabela inteira. Com texto proprio, so a celula."""
+    quantas, etiquetas, _ = _marcar_em_navegador(
+        TELA_DA_LISTA, "00047245120138190078")
+    assert quantas == 1
+    assert etiquetas == ["td"]
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_o_numero_de_outra_linha_nao_e_marcado():
+    quantas, _, _ = _marcar_em_navegador(TELA_DA_LISTA, "00111111120158190001")
+    assert quantas == 1
+    quantas, _, _ = _marcar_em_navegador(TELA_DA_LISTA, "99999999920999990000")
+    assert quantas == 0
