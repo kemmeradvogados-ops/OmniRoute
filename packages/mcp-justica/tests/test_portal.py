@@ -6695,3 +6695,99 @@ def test_a_pagina_vale_o_tamanho_da_JANELA_e_nao_720_fixos():
 
     fonte = inspect.getsource(portal.abrir_navegador)
     assert fonte.count("no_viewport=True") == 2
+
+
+# ---------------- a janela sem area imposta ainda tem tamanho ----------------
+#
+# Com `no_viewport`, que existe para a pagina valer o tamanho real da janela, o
+# Playwright nao impoe area nenhuma e `viewport_size` devolve nada. O chute de
+# 1280x720 passava a valer numa janela de 1920x1080, e tudo alem dessa dobra
+# era lido como "fora da tela": o relato de 16/10/2026 mostrou "0 de 29"
+# botoes, com a pagina inteira desenhada, e o comando parou dizendo que o botao
+# 'Pesquisar' nao estava na tela quando havia oito deles.
+
+
+class _PaginaComArea:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def evaluate(self, _js):
+        raise AssertionError("nao devia perguntar: a area ja veio")
+
+
+class _PaginaSemArea:
+    viewport_size = None
+
+    def __init__(self, largura=1920, altura=1080):
+        self.largura, self.altura = largura, altura
+        self.perguntas = 0
+
+    def evaluate(self, _js):
+        self.perguntas += 1
+        return {"width": self.largura, "height": self.altura}
+
+
+class _QuadroDeUmaPagina:
+    """Quadro embutido: nao tem `viewport_size`, tem `page`."""
+
+    def __init__(self, dona):
+        self.page = dona
+
+    def evaluate(self, js):
+        return self.page.evaluate(js)
+
+
+def test_area_imposta_e_usada_como_esta():
+    from justica_mcp.portal import janela_de
+
+    assert janela_de(_PaginaComArea()) == {"width": 1280, "height": 720}
+
+
+def test_sem_area_imposta_a_pagina_e_perguntada():
+    from justica_mcp.portal import janela_de
+
+    pagina = _PaginaSemArea(1920, 1080)
+    assert janela_de(pagina) == {"width": 1920, "height": 1080}
+    assert pagina.perguntas == 1
+
+
+def test_quadro_embutido_usa_a_area_da_pagina_dona():
+    from justica_mcp.portal import janela_de
+
+    assert janela_de(_QuadroDeUmaPagina(_PaginaComArea())) == {
+        "width": 1280, "height": 720}
+
+
+def test_quadro_de_pagina_sem_area_tambem_pergunta():
+    from justica_mcp.portal import janela_de
+
+    dona = _PaginaSemArea(1600, 900)
+    assert janela_de(_QuadroDeUmaPagina(dona)) == {"width": 1600, "height": 900}
+
+
+def test_pagina_que_nao_responde_volta_ao_chute():
+    """Perder a consulta porque a medida nao veio seria desproporcional."""
+    from justica_mcp.portal import JANELA_SUPOSTA, janela_de
+
+    class _Muda:
+        viewport_size = None
+
+        def evaluate(self, _js):
+            raise RuntimeError("execution context was destroyed")
+
+    assert janela_de(_Muda()) == JANELA_SUPOSTA
+
+
+def test_medida_zerada_nao_vale():
+    """Janela minimizada responde 0, e 0 esconderia a tela inteira."""
+    from justica_mcp.portal import JANELA_SUPOSTA, janela_de
+
+    assert janela_de(_PaginaSemArea(0, 0)) == JANELA_SUPOSTA
+
+
+def test_o_chute_nao_e_compartilhado_por_referencia():
+    """Quem receber o chute e mexer nele nao pode estragar o do proximo."""
+    from justica_mcp.portal import JANELA_SUPOSTA, janela_de
+
+    medida = janela_de(_PaginaSemArea(0, 0))
+    medida["width"] = 1
+    assert JANELA_SUPOSTA["width"] != 1

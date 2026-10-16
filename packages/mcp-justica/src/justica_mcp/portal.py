@@ -411,17 +411,60 @@ def _na_tela(elemento: Any, largura: int, altura: int) -> bool:
     )
 
 
+JANELA_SUPOSTA = {"width": 1280, "height": 720}
+
+
+def _pagina_dona(pagina: Any) -> Any:
+    """A pagina de um quadro embutido, ou o proprio objeto quando ja e pagina."""
+    return getattr(pagina, "page", None) or pagina
+
+
+def _medida_perguntada(pagina: Any) -> Optional[dict]:
+    """Pergunta o tamanho a PROPRIA pagina, que e quem sabe."""
+    try:
+        lido = _pagina_dona(pagina).evaluate(
+            "() => ({width: window.innerWidth, height: window.innerHeight})")
+    except Exception:
+        return None
+    try:
+        largura, altura = int(lido["width"]), int(lido["height"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    if largura > 0 and altura > 0:
+        return {"width": largura, "height": altura}
+    return None
+
+
 def janela_de(pagina: Any) -> dict:
-    """Tamanho da janela, tolerando QUADRO EMBUTIDO.
+    """Tamanho da janela, tolerando QUADRO EMBUTIDO e janela sem area imposta.
 
     Quadro embutido nao tem `viewport_size`: so a pagina tem. Ler a estrutura
     de dentro de um quadro quebrava com AttributeError, e o eproc do Rio abre a
     integra do processo justamente dentro de um quadro.
+
+    E desde 14/10/2026 ha um segundo caso. Com `no_viewport`, que existe para a
+    pagina valer o tamanho real da janela, o Playwright nao impoe area nenhuma
+    e `viewport_size` devolve nada. O chute de 1280x720 passava a valer numa
+    janela de 1920x1080, e TUDO que estivesse alem dessa dobra era lido como
+    "fora da tela": o relato de 16/10/2026 mostrou "0 de 29" botoes, com a
+    pagina inteira desenhada. Quem sabe o tamanho e a propria pagina, e agora
+    ela e perguntada antes de qualquer chute.
     """
     try:
-        return pagina.viewport_size or {"width": 1280, "height": 720}
+        medida = pagina.viewport_size
     except AttributeError:
-        return {"width": 1280, "height": 720}
+        medida = None
+    if medida:
+        return medida
+    dona = _pagina_dona(pagina)
+    if dona is not pagina:
+        try:
+            medida = dona.viewport_size
+        except AttributeError:
+            medida = None
+        if medida:
+            return medida
+    return _medida_perguntada(pagina) or dict(JANELA_SUPOSTA)
 
 
 # Quantas opcoes de uma lista de escolha cabem no relato, o tamanho maximo de
