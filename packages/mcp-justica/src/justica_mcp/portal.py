@@ -3967,8 +3967,11 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     from .dcp import (mostrar_todos_os_movimentos,
                       percorrer_as_paginas_de_movimentos)
 
+    from .telas import gravar_a_tela
+
     quadro, botao = esperar_a_tela_do_processo(pagina, segundos)
     endereco_do_quadro = getattr(quadro, "url", "") or ""
+    gravar_a_tela(quadro, "tela-do-processo")
 
     # A tela mostra UM movimento, o ultimo. O resto do historico esta atras do
     # botao "Todos Os Movimentos", lido na estrutura da tela real em
@@ -6916,6 +6919,25 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
                      help="segundos para o operador marcar a caixa do desafio do Cloudflare")
 
+    tl = sub.add_parser(
+        "telas", help="lista as telas ja gravadas, da mais recente para a mais antiga")
+    tl.add_argument("--teto", type=int, default=40)
+
+    tv = sub.add_parser(
+        "tela",
+        help="imprime UMA FATIA de uma tela gravada, sem valor de campo, para "
+             "poder ser colada numa conversa")
+    tv.add_argument("--arquivo", required=True,
+                    help="o arquivo .json da tela (ver `justica-portal telas`)")
+    tv.add_argument("--parte", default="resumo",
+                    help="resumo (padrao), botoes, campos, mensagens, tabelas "
+                         "ou nos")
+    tv.add_argument("--contem", default="",
+                    help="filtra por texto no identificador, na classe, no "
+                         "rotulo ou no texto do elemento")
+    tv.add_argument("--teto", type=int, default=60,
+                    help="quantos nos imprimir em --parte nos")
+
     es = sub.add_parser(
         "estrutura",
         help="imprime SO a forma da tela de uma consulta ja gravada, sem valor "
@@ -7013,6 +7035,12 @@ def main(argv: list[str] | None = None) -> int:
                          "N paginas, 300 por padrao, e 'lote:K' baixa SO o "
                          "K-esimo desses lotes, para conferir o caminho ou "
                          "repetir um que falhou")
+    cp.add_argument("--gravar-telas", action="store_true", dest="gravar_telas",
+                    help="grava em disco a FORMA de cada tela que a corrida "
+                         "tocar (etiquetas, identificadores, rotulos, geometria "
+                         "e mensagens), sem valor de campo nenhum. Serve para "
+                         "descobrir o que a tela oferecia sem gastar outra "
+                         "autenticacao. Ver `justica-portal telas`")
     cp.add_argument("--confirmo-tentativa-unica", action="store_true", dest="confirmado")
     cp.add_argument("--aceito-o-termo", action="store_true", dest="aceitar_termo",
                     help="aceita o aviso de responsabilidade que o PJe levanta ao abrir "
@@ -7038,7 +7066,7 @@ def main(argv: list[str] | None = None) -> int:
         # `estrutura` le um arquivo ja gravado: nao tem tribunal, nao tem
         # sistema e nao abre navegador nenhum.
         if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente",
-                                "estrutura"):
+                                "estrutura", "telas", "tela"):
             _do_ambiente(args)
             completar_seletores(args)
         if args.comando == "reconhecer":
@@ -7063,6 +7091,14 @@ def main(argv: list[str] | None = None) -> int:
             return mostrar_ambiente()
         if args.comando == "estrutura":
             return mostrar_estrutura(args.arquivo)
+        if args.comando == "telas":
+            from .telas import listar_telas
+
+            return listar_telas(args.teto)
+        if args.comando == "tela":
+            from .telas import mostrar_tela
+
+            return mostrar_tela(args.arquivo, args.parte, args.contem, args.teto)
         if args.comando == "reindexar":
             return reindexar(args.processo, confirmar=args.confirmar)
         if args.comando == "mapear":
@@ -7071,6 +7107,16 @@ def main(argv: list[str] | None = None) -> int:
             return conferir_sessao(args.url, args.tribunal, args.sistema,
                                    oculto=args.oculto, segundos=args.segundos)
         if args.comando == "consultar":
+            # A gravacao e ligada por variavel de ambiente, e nao passada de mao
+            # em mao: ela e lida nas pontas, dentro de `dcp.py`, a sete camadas
+            # de chamada daqui, e enfiar um parametro por todas elas so para
+            # carregar um sim ou nao sujaria sete assinaturas.
+            if getattr(args, "gravar_telas", False):
+                from .telas import ligar_gravacao, pasta_das_telas
+
+                ligar_gravacao()
+                print(f"Gravando a FORMA de cada tela em {pasta_das_telas()}.")
+                print("Nenhum valor de campo e gravado. Ver `justica-portal telas`.")
             if not args.processo:
                 print(
                     "Nenhum processo informado. Passe --processo, ou defina no .env:\n"

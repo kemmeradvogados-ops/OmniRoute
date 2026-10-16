@@ -1468,6 +1468,9 @@ def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
 
     pesquisar = elemento_visivel(quadro, f"texto={BOTAO_PESQUISAR}")
     if pesquisar is None:
+        from .telas import gravar_a_tela
+
+        gravar_a_tela(quadro, "recusa-botao-pesquisar")
         raise ConsultaIndisponivel(
             f"O botao {BOTAO_PESQUISAR!r} nao esta na tela. Nada foi digitado."
             + onde_estao_os_botoes(quadro, BOTAO_PESQUISAR))
@@ -1539,9 +1542,20 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
             f"O numero montado na tela ficou com {len(digitado)} digito(s) e nao "
             f"confere com {numero.formatado}. Nada foi pesquisado.")
 
+    from .telas import gravar_a_tela
+
+    gravar_a_tela(quadro, "consulta-preenchida-antes-de-pesquisar")
     guarda.pode_executar(Acao.CLICAR, f"texto={BOTAO_PESQUISAR}", url=pagina.url)
     pesquisar.click()
     _assentar(pagina, segundos)
+    # A TELA QUE FALTAVA. Em 16/10/2026 a pesquisa foi enviada com o numero
+    # certo, conferido na tela, e as seis tabelas de "Resultado da Pesquisa"
+    # voltaram com uma linha cada, que e so o cabecalho. Nao havia como saber
+    # dali se o portal disse "nenhum registro encontrado", se pediu mais um
+    # filtro ou se devolveu a tela do processo noutro lugar: o relato nao lia
+    # mensagem dentro de quadro. Agora esta tela fica gravada SEMPRE, deu certo
+    # ou nao, e a proxima pergunta sobre ela nao custa outra autenticacao.
+    gravar_a_tela(quadro_da_consulta(pagina) or quadro, "consulta-depois-de-pesquisar")
     return quadro
 
 
@@ -2827,6 +2841,9 @@ def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
     # que eu mesmo mexi no mesmo dia.
     quadro, botao = esperar_a_tela_do_processo(pagina, segundos)
     if botao is None:
+        from .telas import gravar_a_tela
+
+        gravar_a_tela(quadro, "recusa-botao-visualizador")
         raise ConsultaIndisponivel(
             f"O botao {BOTAO_VISUALIZADOR!r} nao apareceu na tela do processo "
             f"em {min(segundos, 30)}s. Endereco do quadro: "
@@ -2979,7 +2996,11 @@ def _assentar_a_janela(janela: Any, segundos: int) -> Any:
         pass
     # De novo depois de carregar: a propria carga pode devolver o foco para a
     # janela que abriu esta.
-    return trazer_para_a_frente(janela)
+    frente = trazer_para_a_frente(janela)
+    from .telas import gravar_a_tela
+
+    gravar_a_tela(frente or janela, "visualizador-recem-aberto")
+    return frente
 
 
 # ---------------------------------------------------------------------------
