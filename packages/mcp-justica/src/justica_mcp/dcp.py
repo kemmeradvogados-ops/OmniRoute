@@ -225,6 +225,74 @@ def caixa_de_selecao_aberta(pagina: Any) -> bool:
     return elemento_por_rotulo(pagina, BOTAO_OCULTAR_SELECAO) is not None
 
 
+# A TELA DO VISUALIZADOR SE MONTA DEPOIS DE ABRIR, e esta e a oitava vez que
+# esta mesma classe de defeito aparece neste portal. Em 16/10/2026 a janela do
+# Visualizador abriu, foi lida no mesmo instante e o relato saiu com
+# "CAMPOS NA TELA (0 de 0)" e "BOTOES NA TELA (0 de 0)": nao e tela sem botao,
+# e tela que ainda nao existe. A recusa dizia que o botao da caixa de selecao
+# nao estava na barra, o que era verdade e nao era o problema.
+#
+# Entao a janela e ESPERADA ate parar de crescer, e so entao lida. Mesma regra
+# do indice, em `esperar_o_indice`, pelo mesmo motivo.
+JS_DO_VISUALIZADOR_MONTADO = r"""() => {
+  const controles = document.querySelectorAll(
+    'button, a, [role=button], [aria-label], input, mat-checkbox');
+  return {
+    controles: controles.length,
+    nos: document.querySelectorAll('*').length,
+    comRotulo: document.querySelectorAll('[aria-label]').length,
+  };
+}"""
+
+# Quanto esperar a janela do Visualizador se montar.
+ESPERA_DO_VISUALIZADOR = 30
+
+
+def medida_do_visualizador(pagina: Any) -> dict:
+    """Quantos controles e quantos nos a tela tem AGORA."""
+    try:
+        lido = pagina.evaluate(JS_DO_VISUALIZADOR_MONTADO)
+    except Exception:
+        return {"controles": 0, "nos": 0, "comRotulo": 0}
+    if not isinstance(lido, dict):
+        return {"controles": 0, "nos": 0, "comRotulo": 0}
+    # NORMALIZADA, sempre com as tres chaves. Quem le a medida le por chave, e
+    # uma tela que devolva outra coisa nao pode derrubar a espera com KeyError:
+    # a espera existe justamente para telas que ainda nao sao o que deveriam.
+    return {chave: int(lido.get(chave) or 0)
+            for chave in ("controles", "nos", "comRotulo")}
+
+
+def esperar_o_visualizador_montar(pagina: Any,
+                                  segundos: int = ESPERA_DO_VISUALIZADOR) -> dict:
+    """Espera a tela do Visualizador PARAR de crescer, e devolve a medida.
+
+    Parar de crescer, e nao so comecar: a barra de ferramentas aparece antes
+    do indice, e desistir no primeiro controle visto leva a procurar botao
+    numa barra pela metade.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    anterior, estaveis = -1, 0
+    medida = medida_do_visualizador(pagina)
+    while True:
+        medida = medida_do_visualizador(pagina)
+        if medida["controles"] > 0 and medida["controles"] == anterior:
+            estaveis += 1
+            if estaveis >= LEITURAS_ESTAVEIS:
+                return medida
+        else:
+            estaveis = 0
+        anterior = medida["controles"]
+        if _tempo.monotonic() >= limite:
+            return medida
+        try:
+            pagina.wait_for_timeout(500)
+        except Exception:
+            _tempo.sleep(0.5)
+
+
 def abrir_caixa_de_selecao(pagina: Any, guarda: Any) -> bool:
     """Liga as marcas de selecao do indice, se ja nao estiverem ligadas.
 
@@ -239,8 +307,19 @@ def abrir_caixa_de_selecao(pagina: Any, guarda: Any) -> bool:
     if caixa_de_selecao_aberta(pagina):
         return True
 
+    # Procura PRIMEIRO, espera depois. A barra pode ainda nao existir, e por
+    # isso a espera esta aqui tambem, e nao so no assentamento da janela: esta
+    # funcao e chamada de quatro lugares e nem todos passam por la. Mas quem ja
+    # tem a barra pronta nao paga espera nenhuma.
     botao = elemento_por_rotulo(pagina, BOTAO_CAIXA_DE_SELECAO)
+    medida = {"controles": 0, "comRotulo": 0}
     if botao is None:
+        medida = esperar_o_visualizador_montar(pagina)
+        botao = elemento_por_rotulo(pagina, BOTAO_CAIXA_DE_SELECAO)
+    if botao is None:
+        print(f"      A tela do Visualizador tem {medida['controles']} "
+              f"controle(s) e {medida['comRotulo']} com rotulo acessivel, e "
+              f"nenhum deles e {BOTAO_CAIXA_DE_SELECAO!r}.")
         return False
     alvo = f'[aria-label="{BOTAO_CAIXA_DE_SELECAO}"]'
     guarda.permissoes.append(Permissao(
@@ -3217,6 +3296,14 @@ def _assentar_a_janela(janela: Any, segundos: int) -> Any:
     # De novo depois de carregar: a propria carga pode devolver o foco para a
     # janela que abriu esta.
     frente = trazer_para_a_frente(janela)
+
+    # `domcontentloaded` diz que o DOCUMENTO chegou, e nao que a aplicacao se
+    # montou. Em 16/10/2026 a tela foi lida e gravada neste ponto com zero
+    # controles: a gravacao de uma tela vazia nao serve para nada, e a recusa
+    # seguinte culpou a barra por nao ter um botao que ainda nao existia.
+    medida = esperar_o_visualizador_montar(frente or janela, segundos)
+    print(f"      Visualizador montado: {medida['controles']} controle(s), "
+          f"{medida['nos']} no(s).")
     from .telas import gravar_a_tela
 
     gravar_a_tela(frente or janela, "visualizador-recem-aberto")

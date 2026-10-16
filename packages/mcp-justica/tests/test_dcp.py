@@ -6318,3 +6318,163 @@ def test_a_busca_informa_o_endereco_da_pagina_ao_abrir_a_linha():
 
     fonte = inspect.getsource(dcp.buscar)
     assert "abrir_o_processo_da_lista(atual, guarda, numero, pagina.url" in fonte
+
+
+# ==========================================================================
+# A tela do Visualizador se monta DEPOIS de abrir
+#
+# Oitava vez desta classe de defeito neste portal. Em 16/10/2026 a janela do
+# Visualizador abriu, foi lida no mesmo instante, e o relato saiu com
+# "CAMPOS NA TELA (0 de 0)" e "BOTOES NA TELA (0 de 0)". Nao e tela sem botao:
+# e tela que ainda nao existe. A recusa culpou a barra por nao ter um botao que
+# ainda nao tinha sido desenhado.
+# ==========================================================================
+
+class _VisualizadorQueMonta:
+    """A tela cresce a cada leitura, como aplicacao de pagina unica de
+    verdade, e depois para."""
+
+    def __init__(self, medidas):
+        self._medidas = list(medidas)
+        self.leituras = 0
+
+    def evaluate(self, js, *args):
+        self.leituras += 1
+        if self._medidas:
+            atual = self._medidas.pop(0)
+        else:
+            atual = self._ultima
+        self._ultima = atual
+        return {"controles": atual, "nos": atual * 10, "comRotulo": atual}
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_a_tela_vazia_nao_e_tomada_por_tela_pronta():
+    """Zero controle e tela que ainda nao existe."""
+    from justica_mcp.dcp import esperar_o_visualizador_montar
+
+    tela = _VisualizadorQueMonta([0, 0, 0, 12, 12, 12, 12])
+    medida = esperar_o_visualizador_montar(tela, segundos=5)
+    assert medida["controles"] == 12
+
+
+def test_a_espera_so_termina_quando_a_tela_PARA_de_crescer():
+    """A barra aparece antes do indice. Desistir no primeiro controle visto
+    leva a procurar botao numa barra pela metade."""
+    from justica_mcp.dcp import esperar_o_visualizador_montar
+
+    tela = _VisualizadorQueMonta([3, 9, 40, 543, 543, 543, 543])
+    medida = esperar_o_visualizador_montar(tela, segundos=5)
+    assert medida["controles"] == 543
+
+
+def test_a_espera_tem_prazo_e_devolve_o_que_achou():
+    from justica_mcp.dcp import esperar_o_visualizador_montar
+
+    class _NuncaMonta:
+        def evaluate(self, js, *args):
+            return {"controles": 0, "nos": 1, "comRotulo": 0}
+
+        def wait_for_timeout(self, _ms):
+            import time
+            time.sleep(0.05)
+
+    medida = esperar_o_visualizador_montar(_NuncaMonta(), segundos=1)
+    assert medida["controles"] == 0
+
+
+def test_tela_ilegivel_nao_derruba_a_espera():
+    from justica_mcp.dcp import medida_do_visualizador
+
+    class _Muda:
+        def evaluate(self, js, *args):
+            raise RuntimeError("janela fechada")
+
+    assert medida_do_visualizador(_Muda())["controles"] == 0
+
+
+def test_a_caixa_de_selecao_espera_a_barra_antes_de_recusar():
+    """Guarda de fonte: procurar o botao antes de a barra existir foi o que
+    parou a corrida de 16/10/2026 com o Visualizador ja aberto."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.abrir_caixa_de_selecao)
+    assert "esperar_o_visualizador_montar(" in fonte
+    # A ordem e procurar, esperar, procurar de novo: quem ja tem a barra
+    # pronta nao paga espera nenhuma, e quem nao tem ganha a espera antes da
+    # recusa.
+    depois_da_espera = fonte.split("esperar_o_visualizador_montar(")[1]
+    assert "elemento_por_rotulo(pagina, BOTAO_CAIXA_DE_SELECAO)" in depois_da_espera
+
+
+def test_a_janela_recem_aberta_e_esperada_antes_de_ser_gravada():
+    """Gravar uma tela vazia nao serve para nada, e foi o que a corrida de
+    16/10/2026 guardou."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp._assentar_a_janela)
+    assert "esperar_o_visualizador_montar(" in fonte
+    assert (fonte.index("esperar_o_visualizador_montar(")
+            < fonte.index('gravar_a_tela(frente or janela'))
+
+
+def test_a_medida_do_visualizador_vem_sempre_com_as_tres_chaves():
+    """Quem le a medida le por chave. Uma tela que devolva outra coisa nao
+    pode derrubar a espera com KeyError: a espera existe justamente para telas
+    que ainda nao sao o que deveriam ser."""
+    from justica_mcp.dcp import medida_do_visualizador
+
+    class _TelaQueDevolveOutraCoisa:
+        def evaluate(self, js, *args):
+            return {"outra": "coisa"}
+
+    medida = medida_do_visualizador(_TelaQueDevolveOutraCoisa())
+    assert medida == {"controles": 0, "nos": 0, "comRotulo": 0}
+
+
+def test_quem_ja_tem_a_barra_pronta_nao_paga_espera():
+    """A espera e para a tela que ainda nao existe. Impo-la a toda chamada
+    custaria trinta segundos em cada uma das quatro que existem."""
+    from justica_mcp.dcp import BOTAO_CAIXA_DE_SELECAO, abrir_caixa_de_selecao
+
+    class _BarraPronta:
+        url = "https://www3.tjrj.jus.br/visproc/#/abc"
+
+        def __init__(self):
+            self.mediu = 0
+            self.botao = _BotaoDeTela("")
+
+        def evaluate(self, js, *args):
+            # So a MEDIDA do visualizador conta. A tela responde a outras
+            # perguntas no caminho, como o tamanho da janela.
+            if "comRotulo" in js:
+                self.mediu += 1
+                return {"controles": 9, "nos": 90, "comRotulo": 9}
+            return {"width": 1920, "height": 1080}
+
+        def query_selector_all(self, seletor):
+            return [self.botao] if "aria-label" in seletor else []
+
+        def query_selector(self, _s):
+            return None
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    tela = _BarraPronta()
+    tela.botao.get_attribute = lambda nome: (
+        BOTAO_CAIXA_DE_SELECAO if nome == "aria-label" else None)
+
+    guarda = _GuardaQueLibera()
+    guarda.permissoes = []
+    try:
+        abrir_caixa_de_selecao(tela, guarda)
+    except Exception:
+        pass
+    assert tela.mediu == 0, "nao se mede uma barra que ja respondeu"
