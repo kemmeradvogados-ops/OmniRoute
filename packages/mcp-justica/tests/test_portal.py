@@ -7224,3 +7224,156 @@ def test_escala_com_virgula_e_aceita(monkeypatch):
 
     monkeypatch.setenv("JUSTICA_ESCALA", "0,75")
     assert escala_da_janela() == "0.75"
+
+
+# ==========================================================================
+# `estrutura`: a forma da tela, sem o conteudo dela
+#
+# O arquivo da consulta tem dado de cliente e nao se cola em lugar nenhum. O
+# bloco de estrutura, sim: ele foi feito para ser mostrado. O comando existe
+# para nao gastar mais uma autenticacao do advogado so para descobrir o que a
+# tela oferecia, que foi o custo recorrente deste projeto.
+# ==========================================================================
+
+def _arquivo_de_consulta(tmp_path, estrutura=None, leitura=None):
+    import json
+
+    dados = {
+        "numero": "0004724-51.2013.8.19.0078",
+        "principais": {"Processo": "0004724-51.2013.8.19.0078",
+                       "Comarca": "Niteroi"},
+        "partes": [{"tipo": "Autor", "nome": "Fulano de Tal"},
+                   {"tipo": "Reu", "nome": "Banco Exemplo S/A"}],
+        "movimentacoes": [{"data": "10/02/2014", "hora": "",
+                           "descricao": "Juntada de peticao", "origem": ""}],
+        "totais": {"principais": 2, "partes": 2, "movimentacoes": 1},
+        "leitura": leitura if leitura is not None else {
+            "tela_do_processo_confirmada": False,
+            "endereco_do_quadro": "https://exemplo/#/consultaportal",
+            "todos_os_movimentos": "nao pedido",
+            "paginas_de_movimentacao": "nao percorridas",
+        },
+        "estrutura": estrutura if estrutura is not None else {
+            "tabelas": [{"id": "tabelaResultado", "classe": "p-datatable-table",
+                         "linhas": 2, "colunas": 6,
+                         "cabecalhos": ["Processo", "Comarca"],
+                         "linhas_com_data_por_coluna": {}}],
+            "familias": {"botao": 30, "campo": 12},
+            "rotulos_candidatos": ["Numero do processo:"],
+            "secoes": [{"nivel": "h2", "titulo": "Resultado da pesquisa"}],
+            "botoes": [{"texto": "", "quantas": 4,
+                        "rotulos": ["Visualizar autos"]}],
+            "rotulos_lidos": ["Processo", "Comarca"],
+            "diagnostico_dos_blocos": {"blocos_formados": 0},
+            "caixas_de_movimentacao": [],
+            "componentes_de_movimento": 0,
+        },
+    }
+    alvo = tmp_path / "consulta.json"
+    alvo.write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
+    return alvo
+
+
+def test_estrutura_mostra_a_forma_da_tela(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    assert mostrar_estrutura(str(_arquivo_de_consulta(tmp_path))) == 0
+    saida = capsys.readouterr().out
+    assert "tela do processo confirmada: nao" in saida
+    assert "tabelaResultado" in saida
+    assert "Visualizar autos" in saida
+    assert "Resultado da pesquisa" in saida
+    assert "botao x30" in saida
+
+
+def test_estrutura_nao_imprime_dado_de_cliente(tmp_path, capsys):
+    """A razao de ser do comando: a saida existe para ser colada numa conversa.
+    Nome de parte, valor de campo e numero de processo nao podem aparecer."""
+    from justica_mcp.portal import mostrar_estrutura
+
+    mostrar_estrutura(str(_arquivo_de_consulta(tmp_path)))
+    saida = capsys.readouterr().out
+    for proibido in ("Fulano", "Banco Exemplo", "Niteroi", "0004724",
+                     "8.19.0078", "Juntada de peticao", "10/02/2014"):
+        assert proibido not in saida, proibido
+
+
+def test_estrutura_mascara_numero_que_veio_dentro_do_proprio_bloco(tmp_path, capsys):
+    """Segunda rede: se um titulo de secao ou rotulo de botao trouxer numero de
+    processo, ele ainda e mascarado na saida."""
+    from justica_mcp.portal import mostrar_estrutura
+
+    alvo = _arquivo_de_consulta(tmp_path, estrutura={
+        "tabelas": [],
+        "familias": {},
+        "rotulos_candidatos": [],
+        "secoes": [{"nivel": "h1", "titulo": "Processo 0004724-51.2013.8.19.0078"}],
+        "botoes": [{"texto": "Abrir", "quantas": 1,
+                    "rotulos": ["Autos de 0004724-51.2013.8.19.0078"]}],
+        "rotulos_lidos": [],
+        "diagnostico_dos_blocos": {},
+        "caixas_de_movimentacao": [],
+        "componentes_de_movimento": 0,
+    })
+    mostrar_estrutura(str(alvo))
+    saida = capsys.readouterr().out
+    assert "0004724" not in saida
+    assert "<numero de processo>" in saida
+
+
+def test_estrutura_reclama_de_arquivo_que_nao_existe(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    assert mostrar_estrutura(str(tmp_path / "nao-existe.json")) == 1
+    assert "nao encontrado" in capsys.readouterr().err
+
+
+def test_estrutura_reclama_de_json_quebrado(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    alvo = tmp_path / "quebrado.json"
+    alvo.write_text("{isto nao e json", encoding="utf-8")
+    assert mostrar_estrutura(str(alvo)) == 1
+    assert "nao e JSON valido" in capsys.readouterr().err
+
+
+def test_estrutura_reclama_de_arquivo_sem_o_bloco(tmp_path, capsys):
+    import json
+
+    from justica_mcp.portal import mostrar_estrutura
+
+    alvo = tmp_path / "sem-bloco.json"
+    alvo.write_text(json.dumps({"numero": "x"}), encoding="utf-8")
+    assert mostrar_estrutura(str(alvo)) == 1
+    assert "nao tem bloco de estrutura" in capsys.readouterr().err
+
+
+def test_estrutura_nao_abre_navegador_nem_exige_tribunal():
+    """Guarda de fonte: o comando le um arquivo. Passar por `_do_ambiente`
+    quebraria por falta de `--tribunal`, e abrir navegador seria absurdo."""
+    import inspect
+
+    from justica_mcp import portal
+
+    import re
+
+    fonte = inspect.getsource(portal.main)
+    assert '"estrutura")' in fonte or '"estrutura",' in fonte
+    corpo = inspect.getsource(portal.mostrar_estrutura)
+    for proibido in ("sync_playwright", "abrir_navegador", "config_portal"):
+        assert proibido not in corpo, proibido
+    # Do arquivo so saem tres chaves de primeiro nivel. `principais`, `partes`
+    # e `movimentacoes` guardam VALOR de campo e nao podem ser lidos aqui; as
+    # contagens vem de `totais`, que e numero.
+    lidas = set(re.findall(r'bruto\.get\("([a-z_]+)"\)', corpo))
+    assert lidas == {"estrutura", "leitura", "totais"}, lidas
+
+
+def test_a_lista_do_relato_corta_no_teto_e_diz_quanto_sobrou():
+    from justica_mcp.portal import _linha_de_lista
+
+    linhas = _linha_de_lista("ROTULOS", [f"r{i}" for i in range(50)], teto=10)
+    assert "ROTULOS (50):" in linhas[0]
+    assert "(+40)" in linhas[0]
+    assert len(linhas) == 11
+    assert _linha_de_lista("VAZIO", [])[0].endswith("(0): (nenhum)")

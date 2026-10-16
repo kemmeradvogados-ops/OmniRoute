@@ -6665,6 +6665,127 @@ def _do_ambiente(args) -> None:
                   f"({'2º' if grau == 2 else '1º'} grau).")
 
 
+# Quantas familias de identificador o relato mostra. Elas servem para
+# reconhecer o desenho da tela, e as maiores ja dizem isso.
+TETO_DE_FAMILIAS = 20
+
+
+def _linha_de_lista(titulo: str, itens: list, teto: int = 40) -> list[str]:
+    """Titulo com contagem e os itens, cortados no teto, ja filtrados."""
+    if not itens:
+        return [f"  {titulo} (0): (nenhum)"]
+    mostrados = [sem_dado_de_processo(str(x)) for x in itens[:teto]]
+    sobra = f"  (+{len(itens) - teto})" if len(itens) > teto else ""
+    return [f"  {titulo} ({len(itens)}):{sobra}"] + [f"    {x}" for x in mostrados]
+
+
+def mostrar_estrutura(caminho: str) -> int:
+    """Imprime SO o bloco de estrutura de uma consulta ja gravada.
+
+    O arquivo da consulta tem dado de cliente e por isso nao se cola em lugar
+    nenhum. O bloco `estrutura`, nao: ele foi feito para ser mostrado, nao
+    guarda valor de campo, so a FORMA da tela (tabelas com cabecalho,
+    familias de identificador, nomes de botao, titulos de secao e o
+    vocabulario de rotulos). Tudo ainda passa por `sem_dado_de_processo` na
+    saida, como segunda rede.
+
+    Existe para evitar o que custou mais caro neste projeto: gastar uma
+    autenticacao do advogado so para descobrir o que a tela oferecia. Quando
+    uma corrida para sem achar um botao, a resposta ja esta no arquivo que ela
+    acabou de gravar.
+    """
+    import json
+    import pathlib
+
+    alvo = pathlib.Path(caminho).expanduser()
+    try:
+        bruto = json.loads(alvo.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print(f"Arquivo nao encontrado: {alvo}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as erro:
+        print(f"O arquivo nao e JSON valido: {erro.msg} (linha {erro.lineno}).",
+              file=sys.stderr)
+        return 1
+    if not isinstance(bruto, dict):
+        print("O arquivo nao tem a forma de uma consulta.", file=sys.stderr)
+        return 1
+
+    estrutura = bruto.get("estrutura") or {}
+    leitura = bruto.get("leitura") or {}
+    totais = bruto.get("totais") or {}
+    if not estrutura:
+        print("Este arquivo nao tem bloco de estrutura.", file=sys.stderr)
+        return 1
+
+    linhas = ["", "ESTRUTURA DA TELA LIDA (sem valor de campo)", "=" * 60]
+    confirmada = leitura.get("tela_do_processo_confirmada")
+    linhas.append(f"  tela do processo confirmada: "
+                  f"{'sim' if confirmada else 'nao'}")
+    linhas.append(f"  endereco do quadro: "
+                  f"{leitura.get('endereco_do_quadro') or '(nao registrado)'}")
+    linhas.append(f"  todos os movimentos: "
+                  f"{leitura.get('todos_os_movimentos') or '(nao registrado)'}")
+    linhas.append(f"  paginas de movimentacao: "
+                  f"{leitura.get('paginas_de_movimentacao') or '(nao registrado)'}")
+    linhas.append(f"  totais: principais={totais.get('principais', 0)} "
+                  f"partes={totais.get('partes', 0)} "
+                  f"movimentacoes={totais.get('movimentacoes', 0)}")
+
+    tabelas = estrutura.get("tabelas") or []
+    linhas.append(f"  TABELAS ({len(tabelas)}):")
+    if not tabelas:
+        linhas.append("    (nenhuma)")
+    for tabela in tabelas:
+        cabecalhos = ", ".join(
+            sem_dado_de_processo(str(c)) for c in (tabela.get("cabecalhos") or []))
+        linhas.append(
+            f"    id={tabela.get('id') or '-'}  classe="
+            f"{(tabela.get('classe') or '-')[:40]}  "
+            f"linhas={tabela.get('linhas', 0)}  colunas={tabela.get('colunas', 0)}"
+            + (f"  cabecalhos=[{cabecalhos}]" if cabecalhos else ""))
+
+    botoes = estrutura.get("botoes") or []
+    linhas.append(f"  BOTOES ({len(botoes)} textos distintos):")
+    if not botoes:
+        linhas.append("    (nenhum)")
+    for botao in botoes:
+        rotulos = [sem_dado_de_processo(str(r)) for r in (botao.get("rotulos") or [])]
+        marca = f"  rotulos=[{', '.join(rotulos)}]" if rotulos else ""
+        linhas.append(f"    {sem_dado_de_processo(str(botao.get('texto') or ''))!r}"
+                      f" x{botao.get('quantas', 0)}{marca}")
+
+    secoes = estrutura.get("secoes") or []
+    linhas.append(f"  SECOES ({len(secoes)}):")
+    if not secoes:
+        linhas.append("    (nenhuma)")
+    for secao in secoes:
+        linhas.append(f"    {secao.get('nivel') or '-'}  "
+                      f"{sem_dado_de_processo(str(secao.get('titulo') or ''))}")
+
+    linhas += _linha_de_lista("ROTULOS QUE A TELA OFERECE",
+                              estrutura.get("rotulos_candidatos") or [])
+    linhas += _linha_de_lista("ROTULOS LIDOS", estrutura.get("rotulos_lidos") or [])
+
+    familias = estrutura.get("familias") or {}
+    maiores = sorted(familias.items(), key=lambda par: -int(par[1] or 0))
+    linhas.append(f"  FAMILIAS DE IDENTIFICADOR ({len(familias)}), as maiores:")
+    if not maiores:
+        linhas.append("    (nenhuma)")
+    for prefixo, quantas in maiores[:TETO_DE_FAMILIAS]:
+        linhas.append(f"    {sem_dado_de_processo(str(prefixo))} x{quantas}")
+
+    linhas.append(f"  COMPONENTES DE MOVIMENTO: "
+                  f"{estrutura.get('componentes_de_movimento', 0)}")
+    linhas.append(f"  DIAGNOSTICO DOS BLOCOS: "
+                  f"{estrutura.get('diagnostico_dos_blocos') or '(sem)'}")
+    caixas = estrutura.get("caixas_de_movimentacao") or []
+    linhas += _linha_de_lista("CAIXAS DE MOVIMENTACAO", caixas, teto=10)
+    linhas.append("")
+    print("\n".join(linhas))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="justica-portal",
@@ -6749,6 +6870,14 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--segundos", type=int, default=30)
     e.add_argument("--espera-humana", type=int, default=ESPERA_HUMANA_PADRAO, dest="espera_humana",
                      help="segundos para o operador marcar a caixa do desafio do Cloudflare")
+
+    es = sub.add_parser(
+        "estrutura",
+        help="imprime SO a forma da tela de uma consulta ja gravada, sem valor "
+             "de campo, para poder ser colada numa conversa")
+    es.add_argument("--arquivo", required=True,
+                    help="o arquivo .json que a consulta gravou (o caminho que "
+                         "ela imprimiu em 'Conteudo completo em:')")
 
     t = sub.add_parser("entrar", help="envia o login UMA vez e le a tela seguinte")
     t.add_argument("--url", default=None, help=AJUDA_URL)
@@ -6861,7 +6990,10 @@ def main(argv: list[str] | None = None) -> int:
     carregar_env()
 
     try:
-        if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente"):
+        # `estrutura` le um arquivo ja gravado: nao tem tribunal, nao tem
+        # sistema e nao abre navegador nenhum.
+        if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente",
+                                "estrutura"):
             _do_ambiente(args)
             completar_seletores(args)
         if args.comando == "reconhecer":
@@ -6884,6 +7016,8 @@ def main(argv: list[str] | None = None) -> int:
                                     segundos=args.segundos)
         if args.comando == "ambiente":
             return mostrar_ambiente()
+        if args.comando == "estrutura":
+            return mostrar_estrutura(args.arquivo)
         if args.comando == "reindexar":
             return reindexar(args.processo, confirmar=args.confirmar)
         if args.comando == "mapear":
