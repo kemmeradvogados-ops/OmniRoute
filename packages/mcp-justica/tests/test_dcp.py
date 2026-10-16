@@ -5954,6 +5954,13 @@ def test_a_recusa_diz_se_ha_para_onde_rolar():
 # processo de outra pessoa.
 # ==========================================================================
 
+# O endereco da PAGINA, que e o que a permissao desta tela nomeia. O quadro
+# embutido mora noutro caminho do mesmo dominio, e confundir os dois foi o que
+# barrou o clique em 16/10/2026.
+ENDERECO_DA_PAGINA = "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal"
+ENDERECO_DO_QUADRO = "https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal"
+
+
 class _NumeroFalso:
     def __init__(self, digitos="00047245120138190078"):
         self.apenas_digitos = digitos
@@ -6064,7 +6071,8 @@ def test_sem_linha_nenhuma_a_busca_nao_levanta_erro():
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
     resposta = abrir_o_processo_da_lista(
-        _QuadroComLista([]), _GuardaQueLibera(), _NumeroFalso(), segundos=1)
+        _QuadroComLista([]), _GuardaQueLibera(), _NumeroFalso(),
+        ENDERECO_DA_PAGINA, segundos=1)
     assert resposta["clicado"] is False
     assert "nenhuma linha" in resposta["situacao"]
 
@@ -6075,7 +6083,8 @@ def test_abrir_o_processo_passa_pela_trava_antes_de_clicar():
     certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
     guarda = _GuardaQueLibera()
     resposta = abrir_o_processo_da_lista(
-        _QuadroComLista([certa]), guarda, _NumeroFalso(), segundos=1)
+        _QuadroComLista([certa]), guarda, _NumeroFalso(),
+        ENDERECO_DA_PAGINA, segundos=1)
 
     assert resposta["clicado"] is True
     assert certa.cliques == 1
@@ -6090,7 +6099,8 @@ def test_mais_de_uma_linha_com_o_mesmo_numero_e_dita_em_voz_alta(capsys):
     duas = [_LinhaDeResultado("0004724-51.2013.8.19.0078"),
             _LinhaDeResultado("0004724-51.2013.8.19.0078")]
     resposta = abrir_o_processo_da_lista(
-        _QuadroComLista(duas), _GuardaQueLibera(), _NumeroFalso(), segundos=1)
+        _QuadroComLista(duas), _GuardaQueLibera(), _NumeroFalso(),
+        ENDERECO_DA_PAGINA, segundos=1)
 
     assert resposta["linhas"] == 2
     assert duas[0].cliques == 1 and duas[1].cliques == 0
@@ -6102,7 +6112,8 @@ def test_clique_que_falha_e_relatado_e_nao_derruba():
 
     linha = _LinhaDeResultado("0004724-51.2013.8.19.0078", erro_ao_clicar=True)
     resposta = abrir_o_processo_da_lista(
-        _QuadroComLista([linha]), _GuardaQueLibera(), _NumeroFalso(), segundos=1)
+        _QuadroComLista([linha]), _GuardaQueLibera(), _NumeroFalso(),
+        ENDERECO_DA_PAGINA, segundos=1)
     assert resposta["clicado"] is False
     assert "nao aceitou o clique" in resposta["situacao"]
 
@@ -6271,3 +6282,39 @@ def test_na_tela_de_verdade_o_numero_de_outra_linha_nao_e_marcado():
     assert quantas == 1
     quantas, _, _ = _marcar_em_navegador(TELA_DA_LISTA, "99999999920999990000")
     assert quantas == 0
+
+
+def test_a_trava_e_consultada_com_o_endereco_da_PAGINA_e_nao_do_quadro():
+    """A permissao desta tela foi escrita a partir de `pagina.url`, e o quadro
+    embutido mora noutro caminho do mesmo dominio. Pedir autorizacao com o
+    endereco do quadro faz a trava nao achar permissao nenhuma e barrar o
+    clique, com a lista na tela e a linha certa ja encontrada."""
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    quadro = _QuadroComLista([certa])
+    quadro.url = ENDERECO_DO_QUADRO
+
+    class _GuardaQueAnotaOEndereco:
+        def __init__(self):
+            self.enderecos = []
+
+        def pode_executar(self, acao, alvo, url=""):
+            self.enderecos.append(url)
+            return True
+
+    guarda = _GuardaQueAnotaOEndereco()
+    abrir_o_processo_da_lista(quadro, guarda, _NumeroFalso(),
+                              ENDERECO_DA_PAGINA, segundos=1)
+    assert guarda.enderecos == [ENDERECO_DA_PAGINA]
+    assert ENDERECO_DO_QUADRO not in guarda.enderecos
+
+
+def test_a_busca_informa_o_endereco_da_pagina_ao_abrir_a_linha():
+    """Guarda de fonte: quem chama tem de passar `pagina.url`."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.buscar)
+    assert "abrir_o_processo_da_lista(atual, guarda, numero, pagina.url" in fonte

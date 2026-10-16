@@ -7466,3 +7466,22 @@ def test_so_a_janela_do_visualizador_e_alargada():
                    dcp.abrir_consulta_pelo_menu, dcp.entrar_no_portal_de_servicos,
                    portal.abrir_navegador):
         assert "alargar_a_area(" not in _codigo(funcao), funcao.__name__
+
+
+def test_a_trava_barrando_a_busca_nao_sobe_como_traceback():
+    """Guarda de fonte: em 16/10/2026 a trava barrou o clique na linha do
+    resultado e o advogado recebeu vinte linhas de traceback. A trava barrando
+    o proprio programa e defeito deste lado, e o operador nao tem o que fazer
+    com um rastro de pilha."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    depois = fonte.split("buscar_dcp(pagina, guarda, numero, url, segundos)")[1]
+    # O trecho entre a busca e a linha seguinte do caminho normal e onde moram
+    # os tratamentos de parada dela.
+    tratamentos = depois.split('print(f"  Endereco:')[0]
+    assert "except ConsultaIndisponivel" in tratamentos
+    assert "except NavegacaoBloqueada" in tratamentos
+    assert "[PAROU]" in tratamentos

@@ -1564,7 +1564,8 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
 
     # A busca devolve uma LISTA, e a tela do processo mora atras de um clique
     # nela. Ver o bloco em `abrir_o_processo_da_lista`.
-    aberto = abrir_o_processo_da_lista(atual, guarda, numero, segundos)
+    aberto = abrir_o_processo_da_lista(atual, guarda, numero, pagina.url,
+                                       segundos)
     print(f"  Lista de resultado: {aberto['situacao']}.")
     if aberto["clicado"]:
         _assentar(pagina, segundos)
@@ -1729,8 +1730,17 @@ def resumo_da_lista(quadro: Any) -> str:
 
 
 def abrir_o_processo_da_lista(quadro: Any, guarda: Any, numero: Any,
+                              endereco_da_tela: str,
                               segundos: int = ESPERA_DA_LISTA) -> dict:
     """Clica, na lista de resultado, no processo cujo numero confere.
+
+    `endereco_da_tela` e o endereco da PAGINA, e nunca o do quadro. A permissao
+    desta tela foi escrita a partir de `pagina.url`, e o quadro embutido mora em
+    outro caminho do mesmo dominio: `/consultaprocessual/` contra
+    `/portalservicos/`. Pedir autorizacao com o endereco do quadro faz a trava
+    nao achar permissao nenhuma e barrar o clique, que foi o que aconteceu em
+    16/10/2026, depois de a procura pela linha finalmente funcionar. Os outros
+    cliques desta mesma tela ja usavam o da pagina; este nasceu diferente.
 
     Devolve o que aconteceu, para o relato dizer. NAO levanta erro quando nao
     acha a lista: ha telas em que a busca por numero unico ja cai direto no
@@ -1754,8 +1764,7 @@ def abrir_o_processo_da_lista(quadro: Any, guarda: Any, numero: Any,
         print(f"      [ATENCAO] {len(achados)} linhas trazem este mesmo numero. "
               "Abrindo a primeira.")
 
-    endereco = getattr(quadro, "url", "") or ""
-    guarda.pode_executar(Acao.CLICAR, ALVO_DO_RESULTADO, url=endereco)
+    guarda.pode_executar(Acao.CLICAR, ALVO_DO_RESULTADO, url=endereco_da_tela)
     try:
         achados[0].scroll_into_view_if_needed(timeout=2000)
     except Exception:

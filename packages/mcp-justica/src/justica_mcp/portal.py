@@ -6156,6 +6156,17 @@ def consultar_processo(
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(pagina, "TELA ONDE PAROU")
                 return 1
+            except NavegacaoBloqueada as exc:
+                # Mesma razao da escolha do perfil, logo acima, e o caso
+                # aconteceu em 16/10/2026: a trava barrou o clique na linha do
+                # resultado porque o pedido vinha com o endereco do QUADRO e a
+                # permissao estava escrita com o da PAGINA. Defeito deste lado,
+                # e chegou ao advogado como vinte linhas de traceback.
+                print(f"  [PAROU] A trava barrou uma acao do proprio comando: {exc}")
+                print("  Isto e defeito deste programa, nao do portal. Nada")
+                print("  foi feito na tela, e a sessao continua aberta.")
+                _relatar_tela(pagina, "TELA ONDE PAROU")
+                return 1
             print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
             for recado in _mensagens_de_erro(pagina):
                 print(f"    O portal disse: {recado}")
