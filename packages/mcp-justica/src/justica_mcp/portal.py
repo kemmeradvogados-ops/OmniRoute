@@ -319,6 +319,11 @@ class Campo:
     habilitado: bool = True
     formulario: Optional[str] = None
     extras: dict[str, str] = None  # type: ignore[assignment]
+    # Onde o elemento esta. So serve ao relato, e so aparece quando a posicao
+    # foi o motivo da recusa: sem isso o relato diz "fora da tela" e nao diz
+    # fora por onde, que e a unica informacao capaz de distinguir campo
+    # espelho (x negativo) de botao abaixo da dobra (y maior que a altura).
+    caixa: Optional[str] = None
 
     def linha(self) -> str:
         partes = [f"<{self.marcador}>", f"tipo={self.tipo or '-'}"]
@@ -336,10 +341,13 @@ class Campo:
         if not self.visivel:
             partes.append("OCULTO")
         elif not self.na_tela:
-            # Campo com caixa, porem posicionado fora da area visivel. E o
-            # padrao classico de campo espelho: o advogado digita num, o script
-            # da pagina copia para o outro. Preencher o errado falha calado.
-            partes.append("FORA DA TELA (provavel campo espelho)")
+            # Campo com caixa, porem posicionado fora da area visivel. Pode ser
+            # campo espelho (o advogado digita num, o script da pagina copia
+            # para o outro, e preencher o errado falha calado) ou so estar
+            # abaixo da dobra. A caixa diz qual dos dois.
+            partes.append("FORA DA TELA")
+            if self.caixa:
+                partes.append(f"({self.caixa})")
         else:
             partes.append("na tela")
         if not self.habilitado:
@@ -395,12 +403,16 @@ def permissao_efemera(url: str) -> Permissao:
     )
 
 
-def _na_tela(elemento: Any, largura: int, altura: int) -> bool:
-    """`is_visible` do Playwright aceita elemento jogado para fora da tela,
-    porque so exige caixa nao vazia. Aqui a posicao importa: campo empurrado
-    para `left:-9999px` e o padrao de campo espelho, e confundi-lo com o campo
-    real faz o preenchimento falhar sem mensagem."""
-    caixa = elemento.bounding_box()
+def caixa_de(elemento: Any) -> Optional[dict]:
+    """A caixa do elemento, ou None quando ele nao ocupa lugar nenhum."""
+    try:
+        return elemento.bounding_box()
+    except Exception:
+        return None
+
+
+def caixa_na_tela(caixa: Optional[dict], largura: int, altura: int) -> bool:
+    """Decide pela MEDIDA ja lida, sem tocar na pagina de novo."""
     if caixa is None:
         return False
     return not (
@@ -409,6 +421,79 @@ def _na_tela(elemento: Any, largura: int, altura: int) -> bool:
         or caixa["x"] >= largura
         or caixa["y"] >= altura
     )
+
+
+def descrever_caixa(caixa: Optional[dict]) -> str:
+    """Onde o elemento esta, em palavras, para o relato dizer POR QUE recusou."""
+    if caixa is None:
+        return "sem caixa"
+    return (f"x={caixa['x']:.0f} y={caixa['y']:.0f} "
+            f"largura={caixa['width']:.0f} altura={caixa['height']:.0f}")
+
+
+def _na_tela(elemento: Any, largura: int, altura: int) -> bool:
+    """`is_visible` do Playwright aceita elemento jogado para fora da tela,
+    porque so exige caixa nao vazia. Aqui a posicao importa: campo empurrado
+    para `left:-9999px` e o padrao de campo espelho, e confundi-lo com o campo
+    real faz o preenchimento falhar sem mensagem."""
+    return caixa_na_tela(caixa_de(elemento), largura, altura)
+
+
+# Quanto tempo esperar a pagina rolar ate o elemento, em milissegundos.
+ROLAGEM_ATE_O_ELEMENTO = 2000
+
+
+def _rolar_ate(elemento: Any) -> bool:
+    """Pede a pagina para trazer o elemento, e diz se o pedido passou."""
+    try:
+        elemento.scroll_into_view_if_needed(timeout=ROLAGEM_ATE_O_ELEMENTO)
+        return True
+    except Exception:
+        return False
+
+
+def na_tela_ou_rolar(elemento: Any, largura: int, altura: int) -> bool:
+    """Igual a `_na_tela`, mas ROLA antes de recusar por posicao.
+
+    Abaixo da dobra nao e escondido. O botao `Pesquisar` da consulta do Portal
+    de Servicos do Tribunal de Justica do Rio de Janeiro fica depois dos campos,
+    e numa tela cujo conteudo mora em quadro embutido a caixa que o Playwright
+    devolve e contada a partir da janela de fora: basta o quadro ser mais alto
+    que a janela para o botao medir `y` maior que a altura. A recusa saia como
+    "o botao nao esta na tela", que e verdade e nao e o problema: ele esta na
+    pagina, a um rolar de distancia. Em 09/10/2026 isso parou a corrida com
+    oito botoes `Pesquisar` presentes no quadro.
+
+    A protecao contra campo espelho continua de pe, e e por isso que a medida e
+    lida DE NOVO depois de rolar: pagina nao rola para coordenada negativa,
+    entao o campo em `left:-9999px` volta da rolagem com a mesma caixa negativa
+    e segue recusado. Ja o que estava so abaixo da dobra volta com caixa
+    dentro da janela.
+    """
+    if caixa_na_tela(caixa_de(elemento), largura, altura):
+        return True
+    if not _rolar_ate(elemento):
+        return False
+    return caixa_na_tela(caixa_de(elemento), largura, altura)
+
+
+def os_que_cabem_na_janela(candidatos: list, largura: int, altura: int) -> list:
+    """Dos candidatos, os que estao na janela; so se NENHUM estiver, os que a
+    rolagem traz.
+
+    A ordem das duas passagens importa. Rolar e mexer na tela, e quando ja ha
+    um alvo a vista nao ha o que ganhar mexendo: o eproc monta duas barras
+    superiores com os MESMOS identificadores, e o criterio que separa a boa da
+    inutil e justamente estar na janela. Se a rolagem entrasse na primeira
+    passagem, a escolha passaria a depender da ordem do documento, que e a
+    ordem errada. Assim, onde algo ja aparecia, nada muda; a rolagem so entra
+    onde antes a resposta era "nao esta na tela".
+    """
+    dentro = [e for e in candidatos
+              if caixa_na_tela(caixa_de(e), largura, altura)]
+    if dentro:
+        return dentro
+    return [e for e in candidatos if na_tela_ou_rolar(e, largura, altura)]
 
 
 JANELA_SUPOSTA = {"width": 1280, "height": 720}
@@ -571,6 +656,8 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             if resumo:
                 extras["opcoes"] = resumo
 
+        medida = caixa_de(elemento)
+        dentro_da_janela = caixa_na_tela(medida, largura, altura)
         campos.append(Campo(
             marcador=marcador,
             tipo=tipo,
@@ -585,7 +672,8 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
                 extras.get("autocomplete"),
             ),
             visivel=elemento.is_visible(),
-            na_tela=_na_tela(elemento, largura, altura),
+            na_tela=dentro_da_janela,
+            caixa=None if dentro_da_janela else descrever_caixa(medida),
             habilitado=elemento.is_enabled(),
             formulario=elemento.evaluate("e => e.form ? (e.form.id || e.form.name || 'sem-nome') : null"),
             extras=extras,
@@ -609,6 +697,8 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             if valor:
                 rotulo_acessivel = valor[:60]
                 break
+        medida = caixa_de(elemento)
+        dentro_da_janela = caixa_na_tela(medida, largura, altura)
         botoes.append(Campo(
             marcador=elemento.evaluate("e => e.tagName.toLowerCase()"),
             tipo=(elemento.get_attribute("type") or "").lower(),
@@ -618,7 +708,8 @@ def _coletar(pagina: Any) -> tuple[list[Campo], list[Campo]]:
             texto_visivel=texto[:50] or None,
             e_senha=False,
             visivel=elemento.is_visible(),
-            na_tela=_na_tela(elemento, largura, altura),
+            na_tela=dentro_da_janela,
+            caixa=None if dentro_da_janela else descrever_caixa(medida),
             habilitado=elemento.is_enabled(),
             formulario=elemento.evaluate("e => e.form ? (e.form.id || e.form.name || 'sem-nome') : null"),
             extras={},
@@ -1882,18 +1973,20 @@ ALVOS_CLICAVEIS = "button, input[type=submit], input[type=button], a"
 def _por_texto_exato(pagina: Any, texto: str) -> Optional[Any]:
     alvo = sem_acento(texto).strip()
     janela = janela_de(pagina)
+    candidatos = []
     for elemento in pagina.query_selector_all(ALVOS_CLICAVEIS):
         try:
             escrito = sem_acento(
                 elemento.inner_text() or elemento.get_attribute("value") or "").strip()
             if escrito != alvo:
                 continue
-            if elemento.is_visible() and _na_tela(
-                    elemento, janela["width"], janela["height"]):
-                return elemento
+            if elemento.is_visible():
+                candidatos.append(elemento)
         except Exception:
             continue
-    return None
+    cabem = os_que_cabem_na_janela(
+        candidatos, janela["width"], janela["height"])
+    return cabem[0] if cabem else None
 
 
 # Elementos que RECEBEM o que se digita. Custom element nao recebe: ele e so
@@ -1972,13 +2065,17 @@ def elemento_por_rotulo(pagina: Any, rotulo: str) -> Optional[Any]:
                     elemento.get_attribute(atributo) or "").strip()
                 if escrito != alvo:
                     continue
-                if elemento.is_visible() and _na_tela(
-                        elemento, janela["width"], janela["height"]):
+                if elemento.is_visible():
                     candidatos.append(elemento)
             except Exception:
                 continue
-        if candidatos:
-            return _controle_preferido(candidatos)
+        # A escolha entre casca e controle vem DEPOIS do corte por posicao: o
+        # par hospedeiro/`input` divide o mesmo rotulo, e so um dos dois esta
+        # na janela quando a tela monta duas vezes o mesmo componente.
+        cabem = os_que_cabem_na_janela(
+            candidatos, janela["width"], janela["height"])
+        if cabem:
+            return _controle_preferido(cabem)
     return None
 
 
@@ -1993,13 +2090,16 @@ def elemento_visivel(pagina: Any, seletor: str) -> Optional[Any]:
     if seletor.startswith(PREFIXO_DE_TEXTO):
         return _por_texto_exato(pagina, seletor[len(PREFIXO_DE_TEXTO):])
     janela = janela_de(pagina)
+    candidatos = []
     for elemento in pagina.query_selector_all(seletor):
         try:
-            if elemento.is_visible() and _na_tela(elemento, janela["width"], janela["height"]):
-                return elemento
+            if elemento.is_visible():
+                candidatos.append(elemento)
         except Exception:
             continue
-    return None
+    cabem = os_que_cabem_na_janela(
+        candidatos, janela["width"], janela["height"])
+    return cabem[0] if cabem else None
 
 
 # Quanto esperar uma tela de aplicacao de pagina unica terminar de se montar.
@@ -4563,16 +4663,29 @@ def linhas_de_botoes(botoes, prefixo: str = "") -> list[str]:
     saida = []
     for texto, membros in grupos.items():
         if len(membros) > TETO_DE_BOTOES_IGUAIS:
+            # Quantos do grupo estao de fato na janela. Um grupo de oito em que
+            # NENHUM esta na tela e exatamente o que parou a consulta em
+            # 09/10/2026, e a contagem antiga nao mostrava isso: dizia so
+            # "x8". Sem este numero o relato nao distingue "o botao nao existe"
+            # de "o botao existe e esta abaixo da dobra".
             saida.append(
-                f"{prefixo}{texto!r} x{len(membros)}  (itens de lista: rotulos "
-                "omitidos, sao conteudo do processo)")
+                f"{prefixo}{texto!r} x{len(membros)}  "
+                f"({sum(1 for b in membros if b.na_tela)} na tela)  "
+                "(rotulos omitidos: em grupo grande, rotulo e conteudo do processo)")
             continue
         for botao in membros:
             alvo = (botao.identificador and f"#{botao.identificador}") or (
                 botao.nome and f"[name={botao.nome}]") or "(sem id)"
             marca = (f" rotulo={sem_dado_de_processo(botao.rotulo)!r}"
                      if botao.rotulo else "")
-            saida.append(f"{prefixo}{alvo:40s} {sem_dado_de_processo(texto)!r}{marca}")
+            if not botao.visivel:
+                lugar = "  OCULTO"
+            elif not botao.na_tela:
+                lugar = f"  FORA DA TELA ({botao.caixa or 'sem caixa'})"
+            else:
+                lugar = "  na tela"
+            saida.append(
+                f"{prefixo}{alvo:40s} {sem_dado_de_processo(texto)!r}{marca}{lugar}")
     return saida
 
 
@@ -4633,6 +4746,9 @@ def _relatar_tela(pagina, titulo: str) -> None:
         primeira = " ".join(str(exc).split("\n")[0].split())[:160]
         print(f"    Nao foi possivel ler a estrutura: {type(exc).__name__}: {primeira}")
         return
+    janela = janela_de(pagina)
+    print(f"    JANELA MEDIDA: {janela['width']}x{janela['height']} "
+          "(e contra ela que 'na tela' e decidido)")
     visiveis = [b for b in botoes if b.na_tela]
     # Os campos vinham sendo coletados e NUNCA impressos. O relato existe para
     # que um seletor seja escrito a partir da tela real, e sem os campos ele
@@ -4683,15 +4799,21 @@ def _relatar_tela(pagina, titulo: str) -> None:
                   f"({type(exc).__name__})")
             continue
         print(f"\n    ----- DENTRO DO QUADRO {endereco_sem_dado(quadro.url, 90)} -----")
-        a_vista = [c for c in dentro if c.na_tela] or dentro[:20]
-        print(f"    CAMPOS NO QUADRO ({len(a_vista)} de {len(dentro)}):")
-        for c in a_vista:
+        # A contagem e a dos que estao NA TELA, mesmo quando a lista impressa
+        # e a de reserva. Antes a linha reaproveitava o tamanho da lista
+        # impressa, e com a reserva de vinte itens ela anunciava "20 de 61" com
+        # ZERO botoes na janela: o numero que importava desaparecia atras do
+        # teto da reserva, e a corrida de 09/10/2026 foi lida como se houvesse
+        # botao na tela quando nao havia nenhum.
+        na_tela_no_quadro = [c for c in dentro if c.na_tela]
+        print(f"    CAMPOS NO QUADRO ({len(na_tela_no_quadro)} de {len(dentro)} na tela):")
+        for c in (na_tela_no_quadro or dentro[:20]):
             print(f"      {c.linha()}")
         if not dentro:
             print("      (nenhum)")
-        visiveis_no_quadro = [b for b in acoes if b.na_tela] or acoes[:20]
-        print(f"    BOTOES NO QUADRO ({len(visiveis_no_quadro)} de {len(acoes)}):")
-        for linha in linhas_de_botoes(visiveis_no_quadro, prefixo="      "):
+        visiveis_no_quadro = [b for b in acoes if b.na_tela]
+        print(f"    BOTOES NO QUADRO ({len(visiveis_no_quadro)} de {len(acoes)} na tela):")
+        for linha in linhas_de_botoes(visiveis_no_quadro or acoes[:20], prefixo="      "):
             print(linha)
         if not acoes:
             print("      (nenhum)")

@@ -1385,6 +1385,61 @@ def abrir_consulta_pelo_menu(pagina: Any, guarda: Any, segundos: int = 45) -> No
             _tempo.sleep(0.4)
 
 
+def onde_estao_os_botoes(quadro: Any, texto: str) -> str:
+    """O que a tela tem com este texto, e onde cada um esta.
+
+    A recusa "o botao nao esta na tela" e verdadeira em quatro situacoes
+    diferentes: o botao nao existe, existe oculto, existe com outro texto, ou
+    existe visivel e fora da janela. Sem distinguir as quatro, cada corrida
+    gasta uma tentativa do advogado para descartar uma delas. Em 09/10/2026
+    foram tres corridas ate chegar na quarta, que era o caso.
+
+    Nenhum rotulo de item e impresso: em grupo grande, rotulo de botao e
+    conteudo do processo.
+    """
+    from .portal import caixa_na_tela, janela_de, sem_acento
+
+    alvo = sem_acento(texto).strip()
+    janela = janela_de(quadro)
+    try:
+        achados = quadro.query_selector_all(
+            "button, input[type=submit], input[type=button], a")
+    except Exception as erro:
+        return f" Nao foi possivel reconhecer a tela: {type(erro).__name__}."
+
+    iguais, visiveis, na_janela, posicoes = 0, 0, 0, []
+    for elemento in achados:
+        try:
+            escrito = sem_acento(
+                elemento.inner_text() or elemento.get_attribute("value") or ""
+            ).strip()
+            if escrito != alvo:
+                continue
+            iguais += 1
+            if not elemento.is_visible():
+                continue
+            visiveis += 1
+            caixa = elemento.bounding_box()
+            if caixa_na_tela(caixa, janela["width"], janela["height"]):
+                na_janela += 1
+            elif caixa is not None and len(posicoes) < 3:
+                posicoes.append(f"x={int(caixa['x'])} y={int(caixa['y'])}")
+        except Exception:
+            continue
+
+    partes = [
+        f" Na tela: {len(achados)} elemento(s) clicavel(is), {iguais} com este "
+        f"texto, {visiveis} visivel(is), {na_janela} dentro da janela de "
+        f"{janela['width']}x{janela['height']}."
+    ]
+    if posicoes:
+        partes.append(" Fora da janela em: " + "; ".join(posicoes) + ".")
+    if iguais == 0:
+        partes.append(" Nenhum elemento tem este texto: ou a tela mudou, ou a "
+                      "consulta nao chegou a se montar.")
+    return "".join(partes)
+
+
 def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
     """Acha os dois campos e o botao, e recusa a tela que nao bate.
 
@@ -1409,7 +1464,8 @@ def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
     pesquisar = elemento_visivel(quadro, f"texto={BOTAO_PESQUISAR}")
     if pesquisar is None:
         raise ConsultaIndisponivel(
-            f"O botao {BOTAO_PESQUISAR!r} nao esta na tela. Nada foi digitado.")
+            f"O botao {BOTAO_PESQUISAR!r} nao esta na tela. Nada foi digitado."
+            + onde_estao_os_botoes(quadro, BOTAO_PESQUISAR))
 
     unica = achar_opcional(quadro, OPCAO_NUMERACAO_UNICA)
     return inicio, origem, pesquisar, unica
@@ -3401,7 +3457,7 @@ PECAS_DA_LISTA = (
 
 def _estado_do_elemento(elemento: Any, janela: dict) -> str:
     """Como este elemento esta: visivel, onde, e dentro ou fora da janela."""
-    from .portal import _na_tela
+    from .portal import caixa_na_tela
 
     try:
         visivel = bool(elemento.is_visible())
@@ -3415,7 +3471,11 @@ def _estado_do_elemento(elemento: Any, janela: dict) -> str:
         return "visivel, sem caixa" if visivel else "oculto, sem caixa"
     onde = (f"x={int(caixa['x'])} y={int(caixa['y'])} "
             f"l={int(caixa['width'])} a={int(caixa['height'])}")
-    dentro = _na_tela(elemento, janela["width"], janela["height"])
+    # Decide pela MESMA medida que acabou de imprimir. Medir de novo deixava o
+    # diagnostico livre para se contradizer: a pagina pode ter rolado entre as
+    # duas leituras, e dai a linha dizia uma posicao e um veredicto que nao
+    # correspondia a ela.
+    dentro = caixa_na_tela(caixa, janela["width"], janela["height"])
     return (f"{'visivel' if visivel else 'oculto'}, {onde}, "
             f"{'dentro' if dentro else 'FORA'} da janela")
 

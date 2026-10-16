@@ -5811,3 +5811,106 @@ def test_foco_recusado_nao_derruba_a_consulta():
     janela = _JanelaNova(falha_ao_focar=True)
     assert _assentar_a_janela(janela, 10) is janela
     assert janela.esperou is True
+
+
+# ==========================================================================
+# A recusa carrega o reconhecimento
+#
+# "O botao 'Pesquisar' nao esta na tela" e verdadeira em quatro situacoes
+# diferentes: o botao nao existe, existe oculto, existe com outro texto, ou
+# existe visivel e fora da janela. Sem distinguir as quatro, cada corrida gasta
+# uma tentativa do advogado para descartar uma delas. Em 09/10/2026 foram tres
+# corridas ate chegar na quarta, que era o caso.
+# ==========================================================================
+
+class _BotaoDeQuadro:
+    def __init__(self, texto, caixa, visivel=True):
+        self._texto, self._caixa, self._visivel = texto, caixa, visivel
+
+    def inner_text(self):
+        return self._texto
+
+    def get_attribute(self, nome):
+        return None
+
+    def is_visible(self):
+        return self._visivel
+
+    def bounding_box(self):
+        return self._caixa
+
+
+class _QuadroDeBotoes:
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, botoes):
+        self._botoes = botoes
+
+    def query_selector_all(self, seletor):
+        return list(self._botoes)
+
+
+def test_a_recusa_conta_os_botoes_visiveis_e_os_que_cabem():
+    from justica_mcp.dcp import onde_estao_os_botoes
+
+    quadro = _QuadroDeBotoes([
+        _BotaoDeQuadro("Pesquisar", {"x": 300, "y": 1340, "width": 90, "height": 36}),
+        _BotaoDeQuadro("Pesquisar", {"x": 300, "y": 2600, "width": 90, "height": 36}),
+        _BotaoDeQuadro("Pesquisar", None, visivel=False),
+        _BotaoDeQuadro("Voltar", {"x": 10, "y": 10, "width": 90, "height": 36}),
+    ])
+    relato = onde_estao_os_botoes(quadro, "Pesquisar")
+    assert "4 elemento(s) clicavel(is)" in relato
+    assert "3 com este texto" in relato
+    assert "2 visivel(is)" in relato
+    assert "0 dentro da janela de 1280x720" in relato
+    assert "y=1340" in relato
+
+
+def test_a_recusa_diz_quando_o_texto_nao_existe_na_tela():
+    """Nenhum elemento com o texto e outro defeito: ou a tela mudou, ou a
+    consulta nao chegou a se montar. Nao se conserta posicao nesse caso."""
+    from justica_mcp.dcp import onde_estao_os_botoes
+
+    quadro = _QuadroDeBotoes(
+        [_BotaoDeQuadro("Voltar", {"x": 10, "y": 10, "width": 90, "height": 36})])
+    relato = onde_estao_os_botoes(quadro, "Pesquisar")
+    assert "0 com este texto" in relato
+    assert "Nenhum elemento tem este texto" in relato
+
+
+def test_a_recusa_nao_derruba_a_mensagem_quando_a_tela_e_ilegivel():
+    """O reconhecimento e um acrescimo a recusa. Se ele falhar, a recusa ainda
+    tem de sair: levantar erro aqui trocaria uma mensagem util por um rastro."""
+    from justica_mcp.dcp import onde_estao_os_botoes
+
+    class _QuadroQuebrado:
+        viewport_size = {"width": 1280, "height": 720}
+
+        def query_selector_all(self, seletor):
+            raise RuntimeError("quadro desapareceu")
+
+    assert "Nao foi possivel reconhecer a tela" in onde_estao_os_botoes(
+        _QuadroQuebrado(), "Pesquisar")
+
+
+def test_a_recusa_do_botao_de_pesquisa_carrega_o_reconhecimento():
+    """Guarda de fonte: a mensagem que parou tres corridas e esta."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.conferir_forma_do_formulario)
+    assert "onde_estao_os_botoes(quadro, BOTAO_PESQUISAR)" in fonte
+
+
+def test_o_reconhecimento_da_recusa_nao_imprime_rotulo_de_item():
+    """Em grupo grande, rotulo de botao e conteudo do processo. O relato da
+    recusa conta e posiciona, e nao transcreve."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.onde_estao_os_botoes)
+    assert "aria-label" not in fonte
+    assert "inner_text()" in fonte

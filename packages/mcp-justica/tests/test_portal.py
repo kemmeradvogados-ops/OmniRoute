@@ -6361,7 +6361,9 @@ def test_a_escolha_entre_candidatos_e_feita_por_uma_funcao_so():
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal.elemento_por_rotulo)
-    assert "_controle_preferido(candidatos)" in fonte
+    # Os candidatos passam pelo corte de posicao e so entao pelo desempate: o
+    # argumento e a lista que sobrou, nao a lista crua.
+    assert "_controle_preferido(cabem)" in fonte
     assert "return elemento" not in fonte
 
 
@@ -6791,3 +6793,248 @@ def test_o_chute_nao_e_compartilhado_por_referencia():
     medida = janela_de(_PaginaSemArea(0, 0))
     medida["width"] = 1
     assert JANELA_SUPOSTA["width"] != 1
+
+
+# ==========================================================================
+# Abaixo da dobra NAO e escondido
+#
+# A consulta do Portal de Servicos do Tribunal de Justica do Rio de Janeiro
+# parou em 09/10/2026 com a recusa "o botao 'Pesquisar' nao esta na tela",
+# tendo no quadro embutido OITO botoes `Pesquisar` e os quatro campos do
+# formulario marcados "na tela". Os campos ficam no alto e passavam; o botao
+# vem depois deles e nao passava.
+#
+# Numa tela cujo conteudo mora em quadro embutido, a caixa que o Playwright
+# devolve e contada a partir da janela DE FORA: basta o quadro ser mais alto
+# que a janela para o botao medir `y` maior que a altura. A recusa estava
+# tecnicamente certa e praticamente errada: o botao esta na pagina, a um rolar
+# de distancia.
+#
+# A protecao contra campo espelho (`left:-9999px`) continua, e por isso a
+# medida e lida DE NOVO depois de rolar: pagina nao rola para coordenada
+# negativa, entao o espelho volta igual e segue recusado.
+# ==========================================================================
+
+class _ElementoQueRola:
+    """Elemento cuja caixa MUDA quando a pagina rola ate ele, como no
+    navegador de verdade."""
+
+    def __init__(self, antes, depois, erro_ao_rolar=False):
+        self._caixa = antes
+        self._depois = depois
+        self._erro = erro_ao_rolar
+        self.rolagens = 0
+
+    def bounding_box(self):
+        return self._caixa
+
+    def scroll_into_view_if_needed(self, timeout=None):
+        self.rolagens += 1
+        if self._erro:
+            raise RuntimeError("elemento nao pode ser rolado")
+        self._caixa = self._depois
+
+
+def test_botao_abaixo_da_dobra_entra_na_tela_depois_de_rolar():
+    from justica_mcp.portal import na_tela_ou_rolar
+
+    botao = _ElementoQueRola(_caixa(300, 1340), _caixa(300, 620))
+    assert na_tela_ou_rolar(botao, 1280, 720) is True
+    assert botao.rolagens == 1
+
+
+def test_campo_espelho_continua_recusado_mesmo_depois_de_rolar():
+    """`left:-9999px` nao volta da rolagem: pagina nao rola para coordenada
+    negativa. Esta e a razao de medir de novo em vez de confiar na rolagem."""
+    from justica_mcp.portal import na_tela_ou_rolar
+
+    espelho = _ElementoQueRola(_caixa(-9999, 200), _caixa(-9999, 200))
+    assert na_tela_ou_rolar(espelho, 1280, 720) is False
+    assert espelho.rolagens == 1
+
+
+def test_quem_ja_esta_na_tela_nao_e_rolado():
+    """Rolar sem precisar mexe a tela debaixo de uma leitura que pode estar em
+    curso, e a corrida inteira depende de ler o que esta ali."""
+    from justica_mcp.portal import na_tela_ou_rolar
+
+    botao = _ElementoQueRola(_caixa(300, 400), _caixa(0, 0))
+    assert na_tela_ou_rolar(botao, 1280, 720) is True
+    assert botao.rolagens == 0
+
+
+def test_elemento_que_recusa_rolagem_fica_recusado():
+    from justica_mcp.portal import na_tela_ou_rolar
+
+    botao = _ElementoQueRola(_caixa(300, 1340), _caixa(300, 620), erro_ao_rolar=True)
+    assert na_tela_ou_rolar(botao, 1280, 720) is False
+
+
+def test_elemento_sem_caixa_nenhuma_nao_rola_para_dentro():
+    """`display:none` nao produz caixa, e rolar nao cria uma."""
+    from justica_mcp.portal import na_tela_ou_rolar
+
+    oculto = _ElementoQueRola(None, None)
+    assert na_tela_ou_rolar(oculto, 1280, 720) is False
+
+
+class _BotaoAbaixoDaDobra(_AlvoComTexto):
+    def __init__(self, texto):
+        super().__init__(texto)
+        self._caixa = {"x": 300, "y": 1340, "width": 90, "height": 36}
+        self.rolagens = 0
+
+    def bounding_box(self):
+        return self._caixa
+
+    def scroll_into_view_if_needed(self, timeout=None):
+        self.rolagens += 1
+        self._caixa = {"x": 300, "y": 620, "width": 90, "height": 36}
+
+
+def test_pesquisar_abaixo_da_dobra_e_encontrado_pelo_texto():
+    """O caso do campo: o alvo existe, esta visivel, e so nao cabia na janela."""
+    from justica_mcp.portal import elemento_visivel
+
+    tela = _TelaDeTextos([])
+    tela.alvos = [_BotaoAbaixoDaDobra("Pesquisar")]
+    achado = elemento_visivel(tela, "texto=Pesquisar")
+    assert achado is tela.alvos[0]
+    assert achado.rolagens == 1
+
+
+def test_os_tres_caminhos_de_clique_rolam_antes_de_recusar():
+    """Guarda de fonte: achar por texto, achar por rotulo acessivel e achar por
+    seletor sao os tres caminhos que terminam em clique. Se um deles voltar a
+    recusar por posicao sem rolar, o defeito de 09/10/2026 volta por ali."""
+    import inspect
+    from justica_mcp import portal
+
+    for funcao in (portal._por_texto_exato, portal.elemento_por_rotulo,
+                   portal.elemento_visivel):
+        fonte = inspect.getsource(funcao)
+        assert "os_que_cabem_na_janela(" in fonte, funcao.__name__
+        assert "_na_tela(" not in fonte, funcao.__name__
+    assert "na_tela_ou_rolar(" in inspect.getsource(portal.os_que_cabem_na_janela)
+
+
+# ==========================================================================
+# O relato precisa dizer ONDE o elemento esta, e nao mentir na contagem
+#
+# A corrida de 09/10/2026 imprimiu "BOTOES NO QUADRO (20 de 61)" com ZERO
+# botoes na janela: a linha reaproveitava o tamanho da lista impressa, e a
+# lista impressa era a de reserva, limitada a vinte itens. O numero que
+# importava sumiu atras do teto da reserva.
+# ==========================================================================
+
+def test_descrever_caixa_diz_onde_o_elemento_esta():
+    from justica_mcp.portal import descrever_caixa
+
+    assert descrever_caixa(None) == "sem caixa"
+    texto = descrever_caixa(_caixa(300, 1340, 90, 36))
+    assert "x=300" in texto and "y=1340" in texto
+
+
+def test_caixa_na_tela_decide_pela_medida_ja_lida():
+    from justica_mcp.portal import caixa_na_tela
+
+    assert caixa_na_tela(_caixa(10, 200), 1280, 720) is True
+    assert caixa_na_tela(_caixa(10, 5000), 1280, 720) is False
+    assert caixa_na_tela(None, 1280, 720) is False
+
+
+def test_linha_do_botao_diz_se_esta_na_tela_e_onde():
+    from justica_mcp.portal import linhas_de_botoes
+
+    fora = _botao_de_tela("Pesquisar", identificador="btnPesquisar")
+    fora.na_tela = False
+    fora.caixa = "x=300 y=1340 largura=90 altura=36"
+    dentro = _botao_de_tela("Voltar", identificador="btnVoltar")
+    linhas = "\n".join(linhas_de_botoes([fora, dentro]))
+    assert "FORA DA TELA (x=300 y=1340" in linhas
+    assert "na tela" in linhas
+
+
+def test_grupo_grande_de_botoes_diz_quantos_estao_na_tela():
+    """Oito `Pesquisar` dos quais nenhum na janela e um relato; oito dos quais
+    um esta na janela e outro completamente diferente."""
+    from justica_mcp.portal import linhas_de_botoes
+
+    grupo = []
+    for i in range(8):
+        botao = _botao_de_tela("Pesquisar", identificador=f"btn{i}")
+        botao.na_tela = False
+        grupo.append(botao)
+    linha = linhas_de_botoes(grupo)[0]
+    assert "x8" in linha and "0 na tela" in linha
+
+    grupo[3].na_tela = True
+    assert "1 na tela" in linhas_de_botoes(grupo)[0]
+
+
+class _TelaComQuadro(_TelaDeGeracao):
+    def __init__(self, url, url_do_quadro):
+        super().__init__([], url=url)
+        self.quadro = _TelaDeGeracao([], url=url_do_quadro)
+        self.frames = [_TelaDeGeracao([], url=url), self.quadro]
+
+
+def test_contagem_do_quadro_e_a_dos_que_estao_na_tela(monkeypatch, capsys):
+    """Com a lista de reserva no ar, a contagem tem de continuar sendo a dos
+    que estao na janela. Era aqui que "(20 de 61)" escondia o zero."""
+    from justica_mcp.portal import _relatar_tela
+
+    tela = _TelaComQuadro(
+        "https://www3.tjrj.jus.br/portalservicos/#/consproc",
+        "https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal")
+    acoes = []
+    for i in range(25):
+        botao = _botao_de_tela(f"Acao {i}", identificador=f"btn{i}")
+        botao.na_tela = False
+        acoes.append(botao)
+    monkeypatch.setattr(
+        "justica_mcp.portal._coletar",
+        lambda p: ([], acoes) if p is tela.quadro else ([], []))
+    _relatar_tela(tela, "TELA")
+    saida = capsys.readouterr().out
+    assert "BOTOES NO QUADRO (0 de 25 na tela)" in saida
+    assert "(20 de 25" not in saida
+
+
+def test_relato_diz_com_que_janela_mediu(monkeypatch, capsys):
+    """Sem a medida, "na tela" e um veredicto sem criterio a vista, e foi
+    exatamente a janela medida que estava errada em 08/10/2026."""
+    from justica_mcp.portal import _relatar_tela
+
+    pagina = _TelaDeGeracao([])
+    monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], []))
+    _relatar_tela(pagina, "TELA")
+    assert "JANELA MEDIDA:" in capsys.readouterr().out
+
+
+def test_quem_ja_aparece_vence_quem_precisa_de_rolagem():
+    """O eproc monta duas barras superiores com os MESMOS identificadores, e o
+    criterio que separa a util da inutil e estar na janela. Se a rolagem
+    entrasse na primeira passagem, a escolha passaria a depender da ordem do
+    documento, que e a ordem errada."""
+    from justica_mcp.portal import os_que_cabem_na_janela
+
+    fora = _ElementoQueRola(_caixa(300, 1340), _caixa(300, 620))
+    dentro = _ElementoQueRola(_caixa(300, 400), _caixa(0, 0))
+    assert os_que_cabem_na_janela([fora, dentro], 1280, 720) == [dentro]
+    assert fora.rolagens == 0, "nao se rola a tela tendo alvo a vista"
+
+
+def test_sem_ninguem_a_vista_a_rolagem_entra():
+    from justica_mcp.portal import os_que_cabem_na_janela
+
+    primeiro = _ElementoQueRola(_caixa(300, 1340), _caixa(300, 620))
+    segundo = _ElementoQueRola(_caixa(300, 2600), _caixa(300, 640))
+    cabem = os_que_cabem_na_janela([primeiro, segundo], 1280, 720)
+    assert cabem[0] is primeiro
+
+
+def test_nenhum_candidato_nao_devolve_ninguem():
+    from justica_mcp.portal import os_que_cabem_na_janela
+
+    assert os_que_cabem_na_janela([], 1280, 720) == []
