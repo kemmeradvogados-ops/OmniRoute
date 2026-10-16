@@ -2957,7 +2957,22 @@ def _assentar_a_janela(janela: Any, segundos: int) -> Any:
     O indice de 164 documentos nao aparecia em 45s de espera, com a tela
     mostrando 12 botoes, e tres tentativas de autenticacao foram gastas nisso.
     """
+    from .portal import AREA_DO_VISUALIZADOR, alargar_a_area
+
     trazer_para_a_frente(janela)
+    # A LARGURA ENTRA AQUI, e so aqui. A consulta roda na area estreita em que
+    # funcionou em 13/10/2026; alargar tudo, como fiz em 15/10, consertou a
+    # gaveta do indice e quebrou a consulta. Esta e a unica tela que precisa de
+    # largura: a gaveta do Angular Material fica ao lado em tela larga e vira
+    # modo `over` em tela estreita, e em modo `over` o conteudo dela nao e
+    # desenhado.
+    if alargar_a_area(janela, AREA_DO_VISUALIZADOR):
+        print(f"      Area da janela do Visualizador: "
+              f"{AREA_DO_VISUALIZADOR['width']}x{AREA_DO_VISUALIZADOR['height']} "
+              "(a gaveta do indice precisa de largura).")
+    else:
+        print("      [ATENCAO] Nao foi possivel alargar a area desta janela. "
+              "Se o indice vier vazio, e aqui que a causa esta.")
     try:
         janela.wait_for_load_state("domcontentloaded", timeout=segundos * 1000)
     except Exception:

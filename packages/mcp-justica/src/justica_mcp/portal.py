@@ -199,7 +199,14 @@ def bandeiras_do_navegador() -> list[str]:
     escolhidas = [pedaco for pedaco in bruto.split(" ") if pedaco]
     if not any(p.startswith("--window-size") for p in escolhidas):
         escolhidas.append(f"--window-size={JANELA_LARGA}")
-    if not any(p.startswith("--force-device-scale-factor") for p in escolhidas):
+    # A escala NAO entra sozinha. Ela foi acrescentada em 16/10/2026 para
+    # encolher o desenho e fazer caber uma tela larga numa janela que a escala
+    # do Windows tinha estreitado. Com area imposta esse problema nao existe
+    # mais: a pagina mede o que o programa mandar, em qualquer maquina. Fica
+    # como saida de emergencia, para quem precisar.
+    escala = (os.environ.get("JUSTICA_ESCALA") or "").strip()
+    if escala and not any(
+            p.startswith("--force-device-scale-factor") for p in escolhidas):
         escolhidas.append(f"--force-device-scale-factor={escala_da_janela()}")
     return escolhidas
 
@@ -257,6 +264,46 @@ def escala_da_janela() -> str:
 # autenticacao foram gastas procurando isso em outro lugar.
 JANELA_LARGA = "1920,1080"
 
+# A AREA DA PAGINA, imposta pelo programa, e por que ela voltou a ser imposta.
+#
+# Ate 14/10/2026 o Playwright impunha 1280x720 e ninguem tinha reparado. Em
+# 15/10, para o indice do Visualizador aparecer, troquei isso por `no_viewport`,
+# que faz a pagina valer o tamanho real da janela. O indice e gaveta do Angular
+# Material: em tela estreita ela vira modo `over` e o conteudo nao e desenhado.
+#
+# A troca consertou a gaveta e quebrou a consulta. Em 13/10, a 1280 de largura,
+# a busca devolvia a tela do processo e a leitura saiu com 207 movimentacoes em
+# 21 paginas. Em 16/10, a 1522 e depois a 1922, a mesma busca para na tela de
+# resultado e o botao do Visualizador nunca aparece. [Inferencia] A correlacao
+# e exata com a largura; nao tenho como provar daqui que o portal desenha outra
+# tela a partir de certa largura, mas e a unica coisa que mudou entre as duas
+# corridas, e mudou por minha mao.
+#
+# Entao a area volta a ser imposta, e por DUAS razoes alem dessa. Primeira: com
+# area imposta a corrida nao depende mais do monitor do operador nem da escala
+# do Windows, que foi o que fez 1920 virar 1522 e custou tres corridas.
+# Segunda: area imposta se TROCA em tempo de execucao, e e isso que resolve o
+# conflito de verdade. A consulta roda estreita, como no dia em que funcionou,
+# e a janela do Visualizador e alargada no momento em que abre, que e a unica
+# tela que precisa de largura.
+AREA_DA_CONSULTA = {"width": 1280, "height": 720}
+AREA_DO_VISUALIZADOR = {"width": 1920, "height": 1080}
+
+
+def alargar_a_area(pagina: Any, area: Optional[dict] = None) -> bool:
+    """Impoe outra area a esta pagina, e diz se conseguiu.
+
+    So funciona com area imposta no lancamento; com `no_viewport` o Playwright
+    recusa, e e por isso que o programa voltou a impor. Falhar aqui nao derruba
+    nada: a tela so continua do tamanho em que estava, e quem chama relata.
+    """
+    alvo = dict(area or AREA_DO_VISUALIZADOR)
+    try:
+        pagina.set_viewport_size(alvo)
+        return True
+    except Exception:
+        return False
+
 
 def abrir_navegador(p, oculto: bool, executavel):
     """Abre o navegador com PERFIL PERSISTENTE e devolve (contexto, pagina).
@@ -292,7 +339,7 @@ def abrir_navegador(p, oculto: bool, executavel):
             headless=oculto, executable_path=executavel,
             downloads_path=descargas, args=bandeiras,
         )
-        return navegador, navegador.new_page(no_viewport=True)
+        return navegador, navegador.new_page(viewport=dict(AREA_DA_CONSULTA))
 
     contexto = p.chromium.launch_persistent_context(
         str(pasta_do_navegador()),
@@ -301,12 +348,10 @@ def abrir_navegador(p, oculto: bool, executavel):
         accept_downloads=True,
         downloads_path=descargas,
         args=bandeiras,
-        # Sem isto o Playwright impoe uma area de 1280x720 a pagina, por mais
-        # larga que a janela esteja. `no_viewport` faz a pagina valer o
-        # tamanho real da janela, que e o que a pessoa ve e o que o Angular
-        # Material usa para decidir se a gaveta do indice fica ao lado ou por
-        # cima.
-        no_viewport=True,
+        # Area IMPOSTA, e a mesma em toda maquina. Quem precisa de largura e a
+        # gaveta do indice do Visualizador, e ela e alargada quando a janela
+        # dela abre, por `alargar_a_area`. Ver AREA_DA_CONSULTA.
+        viewport=dict(AREA_DA_CONSULTA),
     )
     pagina = contexto.pages[0] if contexto.pages else contexto.new_page()
     return contexto, pagina

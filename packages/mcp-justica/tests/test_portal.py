@@ -5683,12 +5683,12 @@ def test_sem_variavel_so_o_tamanho_da_janela_e_passado(monkeypatch):
 
 
 def _bandeiras_da_casa() -> list[str]:
-    """As que o programa acrescenta sozinho, na ordem em que as acrescenta: o
-    tamanho da janela e a escala do desenho."""
-    from justica_mcp.portal import ESCALA_PADRAO, JANELA_LARGA
+    """As que o programa acrescenta sozinho. So o tamanho da JANELA: a area da
+    PAGINA e imposta no lancamento, nao por bandeira, e a escala do desenho
+    deixou de ser padrao quando a area voltou a ser imposta."""
+    from justica_mcp.portal import JANELA_LARGA
 
-    return [f"--window-size={JANELA_LARGA}",
-            f"--force-device-scale-factor={ESCALA_PADRAO}"]
+    return [f"--window-size={JANELA_LARGA}"]
 
 
 def test_bandeiras_vem_separadas_por_espaco(monkeypatch):
@@ -6703,7 +6703,11 @@ def test_a_pagina_vale_o_tamanho_da_JANELA_e_nao_720_fixos():
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal.abrir_navegador)
-    assert fonte.count("no_viewport=True") == 2
+    # A area volta a ser IMPOSTA, nos dois jeitos de abrir, e a largura passa a
+    # ser dada por tela. Ver AREA_DA_CONSULTA: alargar tudo consertou a gaveta
+    # do indice em 15/10/2026 e quebrou a consulta, que funcionava a 1280.
+    assert "no_viewport" not in fonte
+    assert fonte.count("viewport=dict(AREA_DA_CONSULTA)") == 2
 
 
 # ---------------- a janela sem area imposta ainda tem tamanho ----------------
@@ -7175,13 +7179,16 @@ def test_a_medida_nao_derruba_o_relato_quando_a_pagina_nao_responde():
 # A escala da janela
 # ==========================================================================
 
-def test_a_escala_padrao_entra_nas_bandeiras(monkeypatch):
-    from justica_mcp.portal import ESCALA_PADRAO, bandeiras_do_navegador
+def test_a_escala_nao_entra_sozinha(monkeypatch):
+    """Ela encolhia o desenho para caber uma tela larga numa janela estreitada
+    pela escala do Windows. Com area imposta esse problema nao existe: a pagina
+    mede o que o programa mandar, em qualquer maquina."""
+    from justica_mcp.portal import bandeiras_do_navegador
 
     monkeypatch.delenv("JUSTICA_NAVEGADOR_ARGS", raising=False)
     monkeypatch.delenv("JUSTICA_ESCALA", raising=False)
     bandeiras = bandeiras_do_navegador()
-    assert f"--force-device-scale-factor={ESCALA_PADRAO}" in bandeiras
+    assert not any(b.startswith("--force-device-scale-factor") for b in bandeiras)
     assert "--window-size=1920,1080" in bandeiras
 
 
@@ -7377,3 +7384,85 @@ def test_a_lista_do_relato_corta_no_teto_e_diz_quanto_sobrou():
     assert "(+40)" in linhas[0]
     assert len(linhas) == 11
     assert _linha_de_lista("VAZIO", [])[0].endswith("(0): (nenhum)")
+
+
+# ==========================================================================
+# A largura entra por TELA, e nao de uma vez
+#
+# Historico, porque este e o defeito mais caro deste projeto e ele voltou:
+#
+#   13/10 22:52  a consulta funcionava, com area imposta de 1280x720 pelo
+#                proprio Playwright, e a leitura saiu com 207 movimentacoes
+#                em 21 paginas.
+#   15/10 16:41  troquei a area imposta por `no_viewport`, para a gaveta do
+#                indice do Visualizador deixar de nascer em modo `over`.
+#   16/10        a mesma consulta para na tela de resultado, com as seis
+#                tabelas de "Resultado da Pesquisa" com UMA linha cada, que e
+#                so o cabecalho.
+#
+# A gaveta precisa de largura e a consulta nao gostou dela. Alargar tudo e
+# estreitar tudo sao as duas maneiras de quebrar uma das duas telas. O que
+# resolve e impor a area e TROCA-LA quando a janela do Visualizador abre.
+# ==========================================================================
+
+def test_a_area_da_consulta_e_a_do_dia_em_que_funcionou():
+    from justica_mcp.portal import AREA_DA_CONSULTA
+
+    assert AREA_DA_CONSULTA == {"width": 1280, "height": 720}
+
+
+def test_a_area_do_visualizador_e_larga():
+    """Em tela estreita a gaveta do Angular Material vira modo `over` e o
+    conteudo dela nao e desenhado."""
+    from justica_mcp.portal import AREA_DA_CONSULTA, AREA_DO_VISUALIZADOR
+
+    assert AREA_DO_VISUALIZADOR["width"] > AREA_DA_CONSULTA["width"]
+
+
+class _PaginaQueAceitaArea:
+    def __init__(self):
+        self.areas = []
+
+    def set_viewport_size(self, area):
+        self.areas.append(dict(area))
+
+
+def test_alargar_a_area_impoe_a_medida_pedida():
+    from justica_mcp.portal import AREA_DO_VISUALIZADOR, alargar_a_area
+
+    pagina = _PaginaQueAceitaArea()
+    assert alargar_a_area(pagina) is True
+    assert pagina.areas == [dict(AREA_DO_VISUALIZADOR)]
+
+
+def test_alargar_a_area_nao_derruba_nada_quando_o_navegador_recusa():
+    """Com area nao imposta o Playwright recusa. Falhar aqui nao pode derrubar
+    a corrida: a tela so continua do tamanho em que estava."""
+    from justica_mcp.portal import alargar_a_area
+
+    class _PaginaQueRecusa:
+        def set_viewport_size(self, area):
+            raise RuntimeError("viewport nao imposto neste contexto")
+
+    assert alargar_a_area(_PaginaQueRecusa()) is False
+
+
+def test_so_a_janela_do_visualizador_e_alargada():
+    """Guarda de fonte: a consulta NAO alarga. Foi alargar tudo que a quebrou
+    em 15/10/2026, e o conserto seria perdido no dia em que alguem chamasse
+    `alargar_a_area` no caminho da busca para 'padronizar'."""
+    import inspect
+
+    from justica_mcp import dcp, portal
+
+    def _codigo(funcao) -> str:
+        """A fonte SEM comentario: comentario explica, nao alarga nada."""
+        return "\n".join(
+            linha for linha in inspect.getsource(funcao).splitlines()
+            if not linha.strip().startswith("#"))
+
+    assert "alargar_a_area(" in _codigo(dcp._assentar_a_janela)
+    for funcao in (dcp.buscar, dcp.conferir_forma_do_formulario,
+                   dcp.abrir_consulta_pelo_menu, dcp.entrar_no_portal_de_servicos,
+                   portal.abrir_navegador):
+        assert "alargar_a_area(" not in _codigo(funcao), funcao.__name__
