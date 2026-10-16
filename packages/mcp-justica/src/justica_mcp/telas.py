@@ -428,7 +428,19 @@ def mostrar_tela(caminho: str, parte: str = "resumo", contem: str = "",
     try:
         dados = json.loads(alvo.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        print(f"Arquivo nao encontrado: {alvo}", file=sys.stderr)
+        print(f"Arquivo nao encontrado: {alvo}\n"
+              "Confira o caminho. `justica-portal telas` lista os arquivos "
+              "gravados, com o nome exato de cada um.", file=sys.stderr)
+        return 1
+    except OSError as erro:
+        # Caminho invalido tem de sair como RECADO, e nao como rastro de pilha.
+        # Em 16/10/2026 o advogado colou o marcador de texto que eu tinha
+        # deixado na instrucao, e o Windows respondeu `Invalid argument` com
+        # dezoito linhas de traceback: a mensagem util ficou enterrada, e o
+        # erro parecia do programa quando era do caminho.
+        print(f"Nao foi possivel abrir {alvo}: {erro.strerror or type(erro).__name__}.\n"
+              "Confira o caminho. `justica-portal telas` lista os arquivos "
+              "gravados, com o nome exato de cada um.", file=sys.stderr)
         return 1
     except json.JSONDecodeError as erro:
         print(f"O arquivo nao e JSON valido: {erro.msg} (linha {erro.lineno}).",

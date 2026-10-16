@@ -6751,6 +6751,13 @@ def mostrar_estrutura(caminho: str) -> int:
     except FileNotFoundError:
         print(f"Arquivo nao encontrado: {alvo}", file=sys.stderr)
         return 1
+    except OSError as erro:
+        # Mesma razao do recado em `telas.py`: caminho invalido nao e defeito
+        # do programa, e o rastro de pilha enterra a unica frase util.
+        print(f"Nao foi possivel abrir {alvo}: "
+              f"{erro.strerror or type(erro).__name__}.\nConfira o caminho.",
+              file=sys.stderr)
+        return 1
     except json.JSONDecodeError as erro:
         print(f"O arquivo nao e JSON valido: {erro.msg} (linha {erro.lineno}).",
               file=sys.stderr)

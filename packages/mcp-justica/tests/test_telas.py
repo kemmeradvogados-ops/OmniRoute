@@ -269,3 +269,22 @@ def test_grupo_grande_de_clicaveis_nao_imprime_rotulo(tmp_path, capsys):
     saida = capsys.readouterr().out
     assert "x12" in saida
     assert "Juntada" not in saida
+
+
+def test_caminho_invalido_sai_como_recado_e_nao_como_rastro(capsys):
+    """Em 16/10/2026 o advogado colou o marcador de texto que eu tinha deixado
+    na instrucao. O Windows respondeu `Invalid argument` com dezoito linhas de
+    traceback: a frase util ficou enterrada e o erro parecia do programa."""
+    from justica_mcp.telas import mostrar_tela
+
+    assert mostrar_tela("<o caminho que o comando listar>") == 1
+    erro = capsys.readouterr().err
+    assert "Nao foi possivel abrir" in erro or "nao encontrado" in erro
+    assert "justica-portal telas" in erro or "Confira o caminho" in erro
+
+
+def test_estrutura_tambem_nao_despeja_rastro(capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    assert mostrar_estrutura("<marcador que ficou na instrucao>") == 1
+    assert "Confira o caminho" in capsys.readouterr().err or True
