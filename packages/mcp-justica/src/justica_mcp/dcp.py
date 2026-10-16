@@ -1508,7 +1508,11 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
         padrao_url=permissao_efemera(pagina.url).padrao_url,
         descricao="consulta processual, somente a busca",
         conferido_em="execucao atual",
-        seletores_clicaveis=(OPCAO_NUMERACAO_UNICA, f"texto={BOTAO_PESQUISAR}"),
+        # A linha do resultado entra aqui porque abrir o processo na lista e
+        # parte de CHEGAR nele, e nao de abrir os autos, que e ato separado e
+        # tem permissao propria.
+        seletores_clicaveis=(OPCAO_NUMERACAO_UNICA, f"texto={BOTAO_PESQUISAR}",
+                             ALVO_DO_RESULTADO),
         seletores_preenchiveis=(CAMPO_INICIO, CAMPO_ORIGEM),
     ))
 
@@ -1555,8 +1559,138 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     # filtro ou se devolveu a tela do processo noutro lugar: o relato nao lia
     # mensagem dentro de quadro. Agora esta tela fica gravada SEMPRE, deu certo
     # ou nao, e a proxima pergunta sobre ela nao custa outra autenticacao.
-    gravar_a_tela(quadro_da_consulta(pagina) or quadro, "consulta-depois-de-pesquisar")
-    return quadro
+    atual = quadro_da_consulta(pagina) or quadro
+    gravar_a_tela(atual, "consulta-depois-de-pesquisar")
+
+    # A busca devolve uma LISTA, e a tela do processo mora atras de um clique
+    # nela. Ver o bloco em `abrir_o_processo_da_lista`.
+    aberto = abrir_o_processo_da_lista(atual, guarda, numero, segundos)
+    print(f"  Lista de resultado: {aberto['situacao']}.")
+    if aberto["clicado"]:
+        _assentar(pagina, segundos)
+    return quadro_da_consulta(pagina) or atual
+
+
+# O PASSO QUE FALTAVA, e como ele foi descoberto.
+#
+# Ate 16/10/2026 o programa preenchia o numero, clicava em `Pesquisar` e ja
+# esperava o botao do Visualizador aparecer. Ele nunca aparecia, e a recusa
+# dizia "a pesquisa nao chegou a devolver o processo", que era falso.
+#
+# A tela gravada depois da pesquisa mostrou o que havia ali: uma
+# `p-datatable` com cabecalhos "Codigo CNJ, Nome Comarca, Descricao Serventia,
+# Classe, Assunto, ultimo Movimento", um `p-paginator` embaixo, e CINCO
+# clicaveis cujo texto visivel e um numero de processo, em x=50, um a cada
+# 190 de altura. O filtro de privacidade imprimiu os cinco como
+# `<numero de processo>`, que e a prova de que sao numero de processo.
+#
+# Ou seja: a busca SEMPRE funcionou. O que faltava era abrir o processo na
+# lista de resultado. A tela do processo mora atras desse clique.
+#
+# Por que o numero e CONFERIDO antes de clicar, e nao se clica na primeira
+# linha: a busca devolveu cinco linhas para um numero exato. Abrir o processo
+# errado e abrir o processo de outra pessoa, e isso nao se desfaz. So e
+# clicado o que confere digito por digito.
+ALVO_DO_RESULTADO = "linha-do-resultado-com-o-numero-pesquisado"
+
+# Quanto esperar a lista de resultado montar. Aplicacao de pagina unica
+# devolve a tela vazia e preenche depois, e esta ja foi a causa de seis
+# defeitos diferentes neste mesmo portal.
+ESPERA_DA_LISTA = 20
+
+
+def _digitos_do_texto(elemento: Any) -> str:
+    """So os algarismos do texto VISIVEL do elemento."""
+    try:
+        texto = elemento.inner_text() or ""
+    except Exception:
+        return ""
+    return "".join(c for c in texto if c.isdigit())
+
+
+def processos_na_lista(quadro: Any, numero: Any) -> list:
+    """Os clicaveis da lista cujo numero CONFERE com o pesquisado.
+
+    Comparacao por algarismo, e nao por texto: a lista escreve o numero
+    formatado e o pedido pode vir de qualquer jeito. Exata, e nunca por
+    conter: um numero pode ser pedaco de outro.
+    """
+    from .portal import ALVOS_CLICAVEIS
+
+    alvo = numero.apenas_digitos
+    try:
+        candidatos = quadro.query_selector_all(ALVOS_CLICAVEIS) or []
+    except Exception:
+        return []
+    achados = []
+    for elemento in candidatos:
+        try:
+            if _digitos_do_texto(elemento) != alvo:
+                continue
+            if not elemento.is_visible():
+                continue
+        except Exception:
+            continue
+        achados.append(elemento)
+    return achados
+
+
+def esperar_a_lista_de_resultado(quadro: Any, numero: Any,
+                                 segundos: int = ESPERA_DA_LISTA) -> list:
+    """Espera a lista montar e devolve as linhas que conferem."""
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    while True:
+        achados = processos_na_lista(quadro, numero)
+        if achados:
+            return achados
+        if _tempo.monotonic() >= limite:
+            return []
+        try:
+            quadro.wait_for_timeout(500)
+        except Exception:
+            _tempo.sleep(0.5)
+
+
+def abrir_o_processo_da_lista(quadro: Any, guarda: Any, numero: Any,
+                              segundos: int = ESPERA_DA_LISTA) -> dict:
+    """Clica, na lista de resultado, no processo cujo numero confere.
+
+    Devolve o que aconteceu, para o relato dizer. NAO levanta erro quando nao
+    acha a lista: ha telas em que a busca por numero unico ja cai direto no
+    processo, e nesse caso nao ha lista nenhuma e o passo seguinte e que vai
+    dizer se chegou.
+    """
+    from .core.guarda_navegacao import Acao
+    from .telas import gravar_a_tela
+
+    achados = esperar_a_lista_de_resultado(quadro, numero, segundos)
+    if not achados:
+        return {"situacao": "nenhuma linha com este numero na lista",
+                "linhas": 0, "clicado": False}
+
+    if len(achados) > 1:
+        # Mesmo numero em mais de uma linha acontece quando o processo aparece
+        # em graus ou serventias diferentes. Abre a primeira e DIZ que havia
+        # mais de uma, para o advogado conferir se era a que ele queria.
+        print(f"      [ATENCAO] {len(achados)} linhas trazem este mesmo numero. "
+              "Abrindo a primeira.")
+
+    endereco = getattr(quadro, "url", "") or ""
+    guarda.pode_executar(Acao.CLICAR, ALVO_DO_RESULTADO, url=endereco)
+    try:
+        achados[0].scroll_into_view_if_needed(timeout=2000)
+    except Exception:
+        pass
+    try:
+        achados[0].click()
+    except Exception as erro:
+        return {"situacao": f"a linha nao aceitou o clique ({type(erro).__name__})",
+                "linhas": len(achados), "clicado": False}
+    gravar_a_tela(quadro, "depois-de-abrir-o-processo-da-lista")
+    return {"situacao": f"aberta a linha que confere, de {len(achados)}",
+            "linhas": len(achados), "clicado": True}
 
 
 def _so_digitos(elemento: Any) -> str:

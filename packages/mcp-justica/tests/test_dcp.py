@@ -5937,3 +5937,192 @@ def test_a_recusa_diz_se_ha_para_onde_rolar():
     relato = onde_estao_os_botoes(quadro, "Pesquisar")
     assert "x=1921" in relato
     assert "passa 618 de largura" in relato
+
+
+# ==========================================================================
+# A lista de resultado, e o passo que faltava
+#
+# Ate 16/10/2026 o programa preenchia o numero, clicava em `Pesquisar` e ja
+# esperava o botao do Visualizador. A recusa dizia "a pesquisa nao chegou a
+# devolver o processo", e era falso: a tela gravada depois da pesquisa trouxe
+# uma `p-datatable` com cabecalhos de processo, um paginador embaixo e CINCO
+# clicaveis cujo texto visivel e um numero de processo. A busca sempre
+# funcionou; faltava abrir o processo na lista.
+#
+# O numero e conferido digito por digito antes do clique. A busca devolveu
+# cinco linhas para um numero exato, e abrir o processo errado e abrir o
+# processo de outra pessoa.
+# ==========================================================================
+
+class _NumeroFalso:
+    def __init__(self, digitos="00047245120138190078"):
+        self.apenas_digitos = digitos
+        self.formatado = "0004724-51.2013.8.19.0078"
+
+
+class _LinhaDeResultado:
+    def __init__(self, texto, visivel=True, erro_ao_clicar=False):
+        self._texto, self._visivel = texto, visivel
+        self._erro = erro_ao_clicar
+        self.cliques = 0
+        self.rolou = False
+
+    def inner_text(self):
+        return self._texto
+
+    def get_attribute(self, _n):
+        return None
+
+    def is_visible(self):
+        return self._visivel
+
+    def scroll_into_view_if_needed(self, timeout=None):
+        self.rolou = True
+
+    def click(self):
+        if self._erro:
+            raise RuntimeError("a linha sumiu")
+        self.cliques += 1
+
+
+class _QuadroComLista:
+    url = "https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal"
+
+    def __init__(self, linhas):
+        self._linhas = linhas
+
+    def query_selector_all(self, _s):
+        return list(self._linhas)
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+class _GuardaQueLibera:
+    def __init__(self):
+        self.pedidos = []
+
+    def pode_executar(self, acao, alvo, url=""):
+        self.pedidos.append((str(acao), alvo))
+        return True
+
+
+def test_a_linha_que_confere_e_a_unica_escolhida():
+    """Cinco linhas, uma com o numero pedido. Abrir outra e abrir o processo
+    de outra pessoa, e isso nao se desfaz."""
+    from justica_mcp.dcp import processos_na_lista
+
+    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    linhas = [
+        _LinhaDeResultado("0011111-11.2015.8.19.0001"),
+        certa,
+        _LinhaDeResultado("0022222-22.2016.8.19.0002"),
+    ]
+    achados = processos_na_lista(_QuadroComLista(linhas), _NumeroFalso())
+    assert achados == [certa]
+
+
+def test_numero_que_e_pedaco_de_outro_nao_confere():
+    """Comparacao exata, nunca por conter."""
+    from justica_mcp.dcp import processos_na_lista
+
+    linhas = [_LinhaDeResultado("10004724-51.2013.8.19.00789")]
+    assert processos_na_lista(_QuadroComLista(linhas), _NumeroFalso()) == []
+
+
+def test_linha_invisivel_nao_entra():
+    from justica_mcp.dcp import processos_na_lista
+
+    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078", visivel=False)]
+    assert processos_na_lista(_QuadroComLista(linhas), _NumeroFalso()) == []
+
+
+def test_a_lista_e_ESPERADA_e_nao_olhada_uma_vez():
+    """Aplicacao de pagina unica devolve a tela vazia e preenche depois. Esta
+    classe de defeito ja apareceu seis vezes neste mesmo portal."""
+    from justica_mcp.dcp import esperar_a_lista_de_resultado
+
+    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+
+    class _QuadroQueDemora(_QuadroComLista):
+        def __init__(self):
+            super().__init__([])
+            self.voltas = 0
+
+        def query_selector_all(self, _s):
+            self.voltas += 1
+            return [certa] if self.voltas >= 3 else []
+
+    quadro = _QuadroQueDemora()
+    assert esperar_a_lista_de_resultado(quadro, _NumeroFalso(), 5) == [certa]
+    assert quadro.voltas >= 3
+
+
+def test_sem_linha_nenhuma_a_busca_nao_levanta_erro():
+    """Ha tela em que a busca por numero unico cai direto no processo. Sem
+    lista, quem diz se chegou e o passo seguinte."""
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    resposta = abrir_o_processo_da_lista(
+        _QuadroComLista([]), _GuardaQueLibera(), _NumeroFalso(), segundos=1)
+    assert resposta["clicado"] is False
+    assert "nenhuma linha" in resposta["situacao"]
+
+
+def test_abrir_o_processo_passa_pela_trava_antes_de_clicar():
+    from justica_mcp.dcp import ALVO_DO_RESULTADO, abrir_o_processo_da_lista
+
+    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    guarda = _GuardaQueLibera()
+    resposta = abrir_o_processo_da_lista(
+        _QuadroComLista([certa]), guarda, _NumeroFalso(), segundos=1)
+
+    assert resposta["clicado"] is True
+    assert certa.cliques == 1
+    assert any(alvo == ALVO_DO_RESULTADO for _, alvo in guarda.pedidos)
+
+
+def test_mais_de_uma_linha_com_o_mesmo_numero_e_dita_em_voz_alta(capsys):
+    """Acontece quando o processo aparece em graus ou serventias diferentes.
+    Abre a primeira e avisa, para o advogado conferir se era a que queria."""
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    duas = [_LinhaDeResultado("0004724-51.2013.8.19.0078"),
+            _LinhaDeResultado("0004724-51.2013.8.19.0078")]
+    resposta = abrir_o_processo_da_lista(
+        _QuadroComLista(duas), _GuardaQueLibera(), _NumeroFalso(), segundos=1)
+
+    assert resposta["linhas"] == 2
+    assert duas[0].cliques == 1 and duas[1].cliques == 0
+    assert "2 linhas trazem este mesmo numero" in capsys.readouterr().out
+
+
+def test_clique_que_falha_e_relatado_e_nao_derruba():
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    linha = _LinhaDeResultado("0004724-51.2013.8.19.0078", erro_ao_clicar=True)
+    resposta = abrir_o_processo_da_lista(
+        _QuadroComLista([linha]), _GuardaQueLibera(), _NumeroFalso(), segundos=1)
+    assert resposta["clicado"] is False
+    assert "nao aceitou o clique" in resposta["situacao"]
+
+
+def test_a_busca_abre_o_processo_da_lista():
+    """Guarda de fonte: o passo nao pode sumir num refatoramento. Foi a falta
+    dele que produziu quatro corridas dizendo que a pesquisa nao devolvia."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.buscar)
+    assert "abrir_o_processo_da_lista(" in fonte
+    assert fonte.index("pesquisar.click()") < fonte.index("abrir_o_processo_da_lista(")
+
+
+def test_a_trava_nomeia_a_linha_do_resultado():
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.buscar)
+    assert "ALVO_DO_RESULTADO" in fonte
