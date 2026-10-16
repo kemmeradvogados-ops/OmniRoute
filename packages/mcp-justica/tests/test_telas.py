@@ -288,3 +288,65 @@ def test_estrutura_tambem_nao_despeja_rastro(capsys):
 
     assert mostrar_estrutura("<marcador que ficou na instrucao>") == 1
     assert "Confira o caminho" in capsys.readouterr().err or True
+
+
+def _arquivo_com_nos(tmp_path, nos, rotulo="tela"):
+    alvo = tmp_path / "t.json"
+    alvo.write_text(json.dumps({"rotulo": rotulo, "tela": {"nos": nos}}),
+                    encoding="utf-8")
+    return str(alvo)
+
+
+def test_o_filtro_alcanca_a_linha_pelo_nome_da_tabela(tmp_path, capsys):
+    """Linha e celula nao tem identificador proprio. Quem quer ver o conteudo
+    de uma tabela procura pelo nome dela."""
+    from justica_mcp.telas import mostrar_tela
+
+    nos = [
+        {"t": "table", "i": "pn_id_1-table", "c": "p-datatable-table", "a": {},
+         "x": 35, "y": 431, "l": 900, "h": 200, "v": True, "p": "div"},
+        {"t": "tr", "i": "", "c": "", "a": {}, "x": 35, "y": 460,
+         "l": 900, "h": 30, "v": True, "p": "table#pn_id_1-table"},
+        {"t": "tr", "i": "", "c": "", "a": {}, "x": 35, "y": 490,
+         "l": 900, "h": 30, "v": True, "p": "table#pn_id_1-table"},
+        {"t": "div", "i": "outra-coisa", "c": "", "a": {}, "x": 0, "y": 0,
+         "l": 10, "h": 10, "v": True, "p": "body"},
+    ]
+    mostrar_tela(_arquivo_com_nos(tmp_path, nos), "nos", contem="pn_id_1")
+    saida = capsys.readouterr().out
+    assert saida.count("<tr>") == 2, "as linhas da tabela tem de aparecer"
+    assert "outra-coisa" not in saida
+
+
+def test_rotulos_de_grupo_grande_so_saem_a_pedido(tmp_path, capsys):
+    from justica_mcp.telas import mostrar_tela
+
+    nos = [{"t": "button", "i": f"acao{i}", "c": "", "tx": "",
+            "a": {"aria-label": f"Acao da linha {i}"},
+            "x": 1, "y": 1, "l": 9, "h": 9, "v": True, "p": "td"}
+           for i in range(4)]
+    caminho = _arquivo_com_nos(tmp_path, nos)
+
+    mostrar_tela(caminho, "botoes")
+    fechado = capsys.readouterr().out
+    assert "x4" in fechado
+    assert "Acao da linha" not in fechado
+    assert "--rotulos" in fechado
+
+    mostrar_tela(caminho, "botoes", rotulos=True)
+    aberto = capsys.readouterr().out
+    assert "Acao da linha 0" in aberto
+    assert "podem conter dado do processo" in aberto
+
+
+def test_mesmo_a_pedido_o_grupo_enorme_sai_cortado(tmp_path, capsys):
+    """Cem botoes mudos numa arvore de documentos sao o processo inteiro."""
+    from justica_mcp.telas import mostrar_tela
+
+    nos = [{"t": "button", "i": f"n{i}", "c": "", "tx": "expand_more",
+            "a": {"aria-label": f"Alternar {i} - Juntada"},
+            "x": 1, "y": 1, "l": 9, "h": 9, "v": True, "p": "div"}
+           for i in range(40)]
+    mostrar_tela(_arquivo_com_nos(tmp_path, nos), "botoes", rotulos=True)
+    saida = capsys.readouterr().out
+    assert "(+35 nao mostrados)" in saida

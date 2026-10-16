@@ -285,13 +285,17 @@ def _casa(no: dict, procurado: str) -> bool:
     if not procurado:
         return True
     alvo = procurado.lower()
+    # O pai entra porque linha e celula nao tem identificador proprio: quem
+    # quer ver o conteudo de `#pn_id_1-table` procura pelo nome da tabela, e
+    # sem isto nao acharia nenhuma das linhas dela.
     pedacos = [no.get("i") or "", no.get("c") or "", no.get("tx") or "",
-               _rotulo_do_no(no), no.get("t") or ""]
+               _rotulo_do_no(no), no.get("t") or "", no.get("p") or ""]
     pedacos += [str(v) for v in (no.get("a") or {}).values()]
     return any(alvo in str(p).lower() for p in pedacos)
 
 
-def _linhas_de_clicaveis(nos: list, contem: str) -> list[str]:
+def _linhas_de_clicaveis(nos: list, contem: str,
+                         rotulos: bool = False) -> list[str]:
     from collections import OrderedDict
 
     from .portal import sem_dado_de_processo
@@ -309,12 +313,29 @@ def _linhas_de_clicaveis(nos: list, contem: str) -> list[str]:
     if not escolhidos:
         saida.append("    (nenhum)")
     for texto, membros in grupos.items():
-        if len(membros) > TETO_DE_IGUAIS:
+        if len(membros) > TETO_DE_IGUAIS and not rotulos:
             saida.append(
                 f"    {sem_dado_de_processo(texto)!r} x{len(membros)}  "
                 f"({sum(1 for n in membros if n.get('v'))} na tela)  "
                 "(rotulos omitidos: grupo grande e lista, e rotulo de item e "
-                "conteudo do processo)")
+                "conteudo do processo. Use --rotulos para ve-los)")
+            continue
+        if len(membros) > TETO_DE_IGUAIS:
+            # Pedido explicito. Quatro botoes mudos numa lista de resultado sao
+            # a acao de cada linha, e saber o nome deles e o que falta; cem
+            # botoes mudos numa arvore de documentos sao o processo inteiro. O
+            # teto de cinco atende o primeiro caso sem servir o segundo, e o
+            # aviso fica na propria saida, para quem for colar decidir vendo.
+            saida.append(
+                f"    {sem_dado_de_processo(texto)!r} x{len(membros)}  "
+                f"({sum(1 for n in membros if n.get('v'))} na tela)  "
+                "ATENCAO: rotulos abertos a pedido, podem conter dado do "
+                "processo. Confira antes de colar.")
+            for no in membros[:5]:
+                rotulo = sem_dado_de_processo(_rotulo_do_no(no))
+                saida.append(f"      {_alvo(no):34s} rotulo={rotulo!r}  {_onde(no)}")
+            if len(membros) > 5:
+                saida.append(f"      (+{len(membros) - 5} nao mostrados)")
             continue
         for no in membros:
             rotulo = _rotulo_do_no(no)
@@ -418,7 +439,7 @@ def _cabecalho(tela: dict, titulo: str) -> list[str]:
 
 
 def mostrar_tela(caminho: str, parte: str = "resumo", contem: str = "",
-                 teto: int = 60) -> int:
+                 teto: int = 60, rotulos: bool = False) -> int:
     """Imprime uma fatia de uma tela gravada. Nunca abre navegador."""
     import json
     import pathlib
@@ -470,7 +491,7 @@ def mostrar_tela(caminho: str, parte: str = "resumo", contem: str = "",
         if parte in ("resumo", "campos"):
             linhas += _linhas_de_controles(nos, contem)
         if parte in ("resumo", "botoes"):
-            linhas += _linhas_de_clicaveis(nos, contem)
+            linhas += _linhas_de_clicaveis(nos, contem, rotulos)
         if parte == "nos":
             linhas += _linhas_de_nos(nos, contem, teto)
         linhas.append("")

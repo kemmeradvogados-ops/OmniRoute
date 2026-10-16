@@ -6944,6 +6944,11 @@ def main(argv: list[str] | None = None) -> int:
                          "rotulo ou no texto do elemento")
     tv.add_argument("--teto", type=int, default=60,
                     help="quantos nos imprimir em --parte nos")
+    tv.add_argument("--rotulos", action="store_true",
+                    help="mostra os rotulos de grupo grande de botoes, que por "
+                         "padrao ficam omitidos porque em lista longa o rotulo "
+                         "de cada item e conteudo do processo. Mostra no "
+                         "maximo cinco, com aviso na propria saida")
 
     es = sub.add_parser(
         "estrutura",
@@ -7105,7 +7110,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.comando == "tela":
             from .telas import mostrar_tela
 
-            return mostrar_tela(args.arquivo, args.parte, args.contem, args.teto)
+            return mostrar_tela(args.arquivo, args.parte, args.contem,
+                                args.teto, args.rotulos)
         if args.comando == "reindexar":
             return reindexar(args.processo, confirmar=args.confirmar)
         if args.comando == "mapear":
