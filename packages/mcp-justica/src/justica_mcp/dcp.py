@@ -3456,6 +3456,73 @@ def _assinatura_da_pagina(movimentos: list) -> tuple:
                  for m in movimentos or [])
 
 
+# O PAGINADOR SABE QUANTAS PAGINAS TEM, e o programa nunca perguntou.
+#
+# 19/10/2026: a leitura devolveu 162 movimentacoes em 17 paginas; em 13/10
+# foram 207 em 21. As cinco linhas do resultado mostraram que sao instancias do
+# mesmo processo, e que a linha 1, a de primeiro grau, e a que o programa abre.
+# Isso explica por que as telas sao diferentes, e NAO explica a diferenca de
+# numeros, porque movimentacao nao diminui.
+#
+# Enquanto a contagem for so a soma do que o programa visitou, "visitei 17
+# paginas" e "havia 17 paginas" sao a mesma frase, e um truncamento nao tem
+# como se denunciar. Entao o paginador passa a ser perguntado: quantos botoes
+# de pagina ele mostra, qual e o ultimo, se o botao de proxima pagina ainda
+# esta habilitado, e o que ele declara em texto.
+#
+# Nada disso vira regra de parada por enquanto: vira RELATO. Primeiro se
+# descobre o que a tela diz, e so depois se decide o que fazer com isso.
+JS_DO_PAGINADOR = r"""() => {
+  const corta = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const saida = {botoesDePagina: 0, ultimoBotao: '', textoDoPaginador: '',
+                 temProximo: false, proximoHabilitado: false};
+  const paginas = document.querySelectorAll('.p-paginator-page');
+  saida.botoesDePagina = paginas.length;
+  if (paginas.length) {
+    saida.ultimoBotao = corta(paginas[paginas.length - 1].innerText, 12);
+  }
+  const atual = document.querySelector('.p-paginator-current');
+  if (atual) saida.textoDoPaginador = corta(atual.innerText, 120);
+  const proximo = document.querySelector(
+    '.p-paginator-next, [aria-label="Next Page"], [aria-label="Proxima Pagina"]');
+  if (proximo) {
+    saida.temProximo = true;
+    saida.proximoHabilitado = !(
+      proximo.disabled ||
+      (proximo.className || '').indexOf('p-disabled') >= 0 ||
+      proximo.getAttribute('aria-disabled') === 'true');
+  }
+  return saida;
+}"""
+
+
+def estado_do_paginador(quadro: Any) -> dict:
+    """O que o paginador mostra AGORA, sem interpretar nada."""
+    try:
+        lido = quadro.evaluate(JS_DO_PAGINADOR)
+    except Exception:
+        return {}
+    return lido if isinstance(lido, dict) else {}
+
+
+def relatar_o_paginador(estado: dict) -> str:
+    """Uma linha com o que o paginador disse, para entrar no relato."""
+    if not estado:
+        return "o paginador nao pode ser lido"
+    partes = [f"{int(estado.get('botoesDePagina') or 0)} botao(oes) de pagina"]
+    if estado.get("ultimoBotao"):
+        partes.append(f"o ultimo e {estado['ultimoBotao']!r}")
+    if estado.get("temProximo"):
+        partes.append("proxima pagina "
+                      + ("habilitada" if estado.get("proximoHabilitado")
+                         else "desabilitada"))
+    if estado.get("textoDoPaginador"):
+        from .portal import sem_dado_de_processo
+
+        partes.append(f"texto: {sem_dado_de_processo(estado['textoDoPaginador'])!r}")
+    return ", ".join(partes)
+
+
 def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
                                        segundos: int = 45,
                                        teto: int = TETO_DE_PAGINAS) -> dict:
@@ -3550,6 +3617,14 @@ def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
     if percorridas >= teto:
         parou_por = f"o teto de {teto} paginas foi atingido"
 
+    # O QUE O PAGINADOR DIZ, lido no fim e antes de voltar ao comeco. Ver o
+    # bloco em `JS_DO_PAGINADOR`: sem isto, "visitei 17 paginas" e "havia 17
+    # paginas" sao a mesma frase, e truncamento nao se denuncia.
+    paginador = relatar_o_paginador(estado_do_paginador(quadro))
+    from .telas import gravar_a_tela
+
+    gravar_a_tela(quadro, "historico-percorrido")
+
     # VOLTAR para a primeira pagina, e subir a tela.
     #
     # Em 13/10/2026 esta funcao deixou a tela na pagina 21 e a etapa seguinte,
@@ -3557,8 +3632,11 @@ def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
     # os botoes '19', '20' e '21'. Quem pagina tem de devolver a tela como a
     # encontrou, senao conserta a leitura e quebra o download.
     volta = _voltar_ao_comeco(quadro, guarda, endereco, paginas[0][0], segundos)
-    return {"situacao": f"{percorridas} pagina(s), {parou_por}; {volta}",
-            "paginas": percorridas, "movimentacoes": acumulado}
+    return {"situacao": f"{percorridas} pagina(s), {len(acumulado)} "
+                        f"movimentacao(oes), {parou_por}; {volta}. "
+                        f"No fim, o paginador mostrava: {paginador}",
+            "paginas": percorridas, "movimentacoes": acumulado,
+            "paginador": paginador}
 
 
 def _voltar_ao_comeco(quadro: Any, guarda: Any, endereco: str, primeira: int,

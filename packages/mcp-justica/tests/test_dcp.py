@@ -7321,3 +7321,89 @@ def test_a_escolha_da_linha_chega_do_comando_ate_a_busca():
     assert "linha_do_resultado: int = 1" in fonte
     assert "buscar_dcp(pagina, guarda, numero, url, segundos," in fonte
     assert "linha_do_resultado)" in fonte
+
+
+# ==========================================================================
+# O paginador sabe quantas paginas tem, e o programa nunca perguntou
+#
+# 19/10/2026: 162 movimentacoes em 17 paginas; em 13/10 foram 207 em 21. As
+# cinco linhas mostraram que sao instancias do mesmo processo e que a aberta e
+# a de primeiro grau, o que explica telas diferentes e NAO explica a diferenca
+# de numeros, porque movimentacao nao diminui.
+#
+# Enquanto a contagem for so a soma do que o programa visitou, "visitei 17
+# paginas" e "havia 17 paginas" sao a mesma frase.
+# ==========================================================================
+
+def test_o_estado_do_paginador_e_lido_como_a_tela_o_mostra():
+    from justica_mcp.dcp import estado_do_paginador
+
+    class _QuadroComPaginador:
+        def evaluate(self, js):
+            return {"botoesDePagina": 5, "ultimoBotao": "17",
+                    "textoDoPaginador": "Pagina 17 de 17",
+                    "temProximo": True, "proximoHabilitado": False}
+
+    estado = estado_do_paginador(_QuadroComPaginador())
+    assert estado["botoesDePagina"] == 5
+    assert estado["ultimoBotao"] == "17"
+
+
+def test_paginador_ilegivel_nao_derruba_a_leitura():
+    from justica_mcp.dcp import estado_do_paginador
+
+    class _QuadroMudo:
+        def evaluate(self, js):
+            raise RuntimeError("janela fechou")
+
+    assert estado_do_paginador(_QuadroMudo()) == {}
+
+
+def test_o_relato_do_paginador_diz_o_que_a_tela_mostrava():
+    from justica_mcp.dcp import relatar_o_paginador
+
+    linha = relatar_o_paginador({
+        "botoesDePagina": 5, "ultimoBotao": "17",
+        "textoDoPaginador": "Pagina 17 de 17",
+        "temProximo": True, "proximoHabilitado": False})
+    assert "5 botao(oes) de pagina" in linha
+    assert "o ultimo e '17'" in linha
+    assert "proxima pagina desabilitada" in linha
+    assert "Pagina 17 de 17" in linha
+
+    assert "nao pode ser lido" in relatar_o_paginador({})
+
+
+def test_proxima_pagina_habilitada_no_fim_e_dita():
+    """Se o botao de proxima pagina continua habilitado quando a leitura
+    terminou, havia mais pagina e a contagem esta curta."""
+    from justica_mcp.dcp import relatar_o_paginador
+
+    linha = relatar_o_paginador({
+        "botoesDePagina": 5, "ultimoBotao": "17",
+        "temProximo": True, "proximoHabilitado": True})
+    assert "proxima pagina habilitada" in linha
+
+
+def test_o_relato_do_paginador_passa_pelo_filtro():
+    """Texto de paginador costuma ser numero, mas o filtro e a rede de
+    seguranca e vale aqui como em todo lugar."""
+    from justica_mcp.dcp import relatar_o_paginador
+
+    linha = relatar_o_paginador(
+        {"textoDoPaginador": "Processo 0004724-51.2013.8.19.0078"})
+    assert "0004724" not in linha
+    assert "<numero de processo>" in linha
+
+
+def test_a_paginacao_relata_o_paginador_no_fim():
+    """Guarda de fonte: a leitura tem de dizer o que a tela mostrava quando
+    ela parou, e gravar a tela, senao a proxima duvida custa outra corrida."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.percorrer_as_paginas_de_movimentos)
+    assert "estado_do_paginador(quadro)" in fonte
+    assert "historico-percorrido" in fonte
+    assert "len(acumulado)" in fonte
