@@ -775,7 +775,8 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
     def guardar(baixado: Any) -> None:
         registro: dict[str, Any] = {"baixado": baixado, "arquivo": None,
                                     "erro": None, "sugerido": None,
-                                    "url": None}
+                                    "url": None, "bytes": None,
+                                    "tamanho": 0, "erro_do_blob": None}
         capturados.append(registro)
         # O nome ANTES de gravar: se a janela morrer no meio da gravacao, o
         # resgate pela pasta do navegador ainda precisa saber como chamar o
@@ -791,6 +792,20 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
             registro["url"] = baixado.url
         except Exception:
             registro["url"] = None
+
+        # O BLOB PRIMEIRO. Ver o bloco em `JS_DO_BLOB`: quando o arquivo mora
+        # na memoria da janela, este e o unico instante em que ele existe e a
+        # janela ainda responde. Tentar antes o canal, que ja falhou duas
+        # vezes com a janela caindo, gastaria justamente esses segundos.
+        if (registro["url"] or "").lower().startswith("blob:"):
+            dona = getattr(baixado, "page", None) or pagina
+            lido = ler_o_blob(dona, registro["url"])
+            if lido.get("bytes"):
+                registro["bytes"] = lido["bytes"]
+                registro["tamanho"] = lido.get("tamanho") or len(lido["bytes"])
+            else:
+                registro["erro_do_blob"] = lido.get("erro")
+
         try:
             registro["arquivo"] = gravar(baixado)
         except Exception as exc:
@@ -827,6 +842,44 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
                 pass
 
     return parar_de_ouvir
+
+
+def conteudo_capturado(capturados: list) -> Optional[dict]:
+    """O primeiro aviso que trouxe o conteudo do arquivo consigo."""
+    for registro in capturados:
+        if registro.get("bytes"):
+            return registro
+    return None
+
+
+def gravar_o_conteudo(capturados: list, destino: Any, nome: str,
+                      recuo: str = "      ") -> Optional[str]:
+    """Grava no disco o conteudo que veio do blob. Nao toca no navegador."""
+    from pathlib import Path
+
+    registro = conteudo_capturado(capturados)
+    if registro is None:
+        return None
+    pasta = Path(destino)
+    pasta.mkdir(parents=True, exist_ok=True)
+    final = pasta / f"{nome}-{registro.get('sugerido') or 'documento.pdf'}"
+    try:
+        final.write_bytes(registro["bytes"])
+    except Exception as erro:
+        print(f"{recuo}O conteudo foi lido da janela e a gravacao falhou: "
+              f"{type(erro).__name__}.")
+        return None
+    print(f"{recuo}Gravado a partir do conteudo lido da janela "
+          f"({len(registro['bytes'])} byte(s)).")
+    return str(final)
+
+
+def recado_do_blob(capturados: list) -> str:
+    """Por que a leitura do blob nao deu certo, quando nao deu."""
+    motivos = [r["erro_do_blob"] for r in capturados if r.get("erro_do_blob")]
+    if not motivos:
+        return ""
+    return " A leitura do conteudo da janela falhou: " + "; ".join(motivos) + "."
 
 
 def gravacao_terminou(capturados: list) -> bool:
@@ -883,7 +936,7 @@ def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
         voltas += 1
         # Primeiro o arquivo. Depois, a gravacao que terminou em erro. Nunca
         # o simples aviso: ver `gravacao_terminou`.
-        if arquivo_capturado(capturados):
+        if arquivo_capturado(capturados) or conteudo_capturado(capturados):
             return None
         if gravacao_terminou(capturados):
             return "O navegador anunciou o download e a gravacao falhou."
@@ -1064,6 +1117,91 @@ def resgatar_descarga(pasta: Any, antes: dict, destino: Any, nome: str,
 ESPERA_DO_PEDIDO_NOVO = 120
 
 
+# LER O BLOB, que e a unica coisa que existe.
+#
+# 19/10/2026, teste do documento grande, 131 paginas contra as 2 que tinham
+# funcionado:
+#
+#   O endereco do download e `blob:`.
+#   A janela parou de responder com a gravacao em curso, 13s depois do pedido.
+#
+# As tres redeas caem juntas, e agora da para ver por que. O Visualizador MONTA
+# o PDF na memoria da propria janela e o entrega como `blob:`. Nao ha arquivo
+# no servidor para pedir de novo, nao ha arquivo na pasta porque o Chromium
+# cancela a transferencia, e o canal de gravacao morre junto com a janela. O
+# documento de duas paginas so passou porque a gravacao terminou antes de a
+# janela cair.
+#
+# O que sobrevive, enquanto a janela existe, e o CONTEUDO. Ele e lido de dentro
+# da propria pagina, no instante do aviso, que e quando ela ainda esta viva e o
+# blob ainda existe. E a leitura acontece ANTES de qualquer tentativa de
+# gravacao pelo canal: tentar primeiro o que ja falhou duas vezes gastaria
+# justamente os segundos que a janela ainda tem.
+#
+# O conteudo volta em base64 porque e assim que byte atravessa a ponte com o
+# navegador sem se corromper. Custa um terco a mais de tamanho na travessia, e
+# e o preco de ter o arquivo.
+JS_DO_BLOB = r"""async (pedido) => {
+  const TETO = pedido.teto;
+  let resposta;
+  try {
+    resposta = await fetch(pedido.url);
+  } catch (e) {
+    return {erro: 'o endereco do blob nao respondeu: ' + (e && e.name)};
+  }
+  const pedaco = await resposta.blob();
+  const tamanho = pedaco.size;
+  if (tamanho <= 0) return {erro: 'o blob esta vazio'};
+  if (tamanho > TETO) return {erro: 'blob maior que o teto', tamanho: tamanho};
+  const buffer = await pedaco.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binario = '';
+  const passo = 0x8000;
+  for (let i = 0; i < bytes.length; i += passo) {
+    binario += String.fromCharCode.apply(null, bytes.subarray(i, i + passo));
+  }
+  return {tamanho: tamanho, tipo: pedaco.type || '', base64: btoa(binario)};
+}"""
+
+# Teto do que se traz pela ponte, em bytes. Acima disso a travessia em base64
+# custa memoria demais, e a recusa diz o tamanho para o operador saber que o
+# arquivo existe e que o caminho e outro.
+TETO_DO_BLOB = 200 * 1024 * 1024
+
+
+def ler_o_blob(pagina: Any, url: Optional[str],
+               teto: int = TETO_DO_BLOB) -> dict:
+    """Le o conteudo do blob de dentro da pagina que o criou.
+
+    Devolve {"bytes": ...} quando consegue, ou {"erro": ...} dizendo por que
+    nao. Nunca levanta: isto roda dentro do aviso de download, e erro aqui nao
+    pode derrubar o aviso.
+    """
+    import base64
+
+    if not url or not url.lower().startswith("blob:"):
+        return {"erro": "o endereco nao e um blob"}
+    try:
+        lido = pagina.evaluate(JS_DO_BLOB, {"url": url, "teto": teto})
+    except Exception as erro:
+        return {"erro": f"a pagina nao respondeu: {type(erro).__name__}"}
+    if not isinstance(lido, dict):
+        return {"erro": "a pagina devolveu algo que nao e conteudo"}
+    if lido.get("erro"):
+        recado = str(lido["erro"])
+        if lido.get("tamanho"):
+            recado += f" ({int(lido['tamanho'])} byte(s))"
+        return {"erro": recado}
+    try:
+        dados = base64.b64decode(lido.get("base64") or "")
+    except Exception:
+        return {"erro": "o conteudo veio ilegivel da ponte"}
+    if not dados:
+        return {"erro": "o conteudo veio vazio"}
+    return {"bytes": dados, "tipo": lido.get("tipo") or "",
+            "tamanho": len(dados)}
+
+
 def contexto_de(pagina: Any) -> Any:
     """O contexto do navegador, enquanto a pagina ainda responde."""
     try:
@@ -1200,6 +1338,12 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
               "pedido.")
         return arquivo
 
+    # Segunda redea: o conteudo lido da propria janela, no instante do aviso.
+    # E a unica que alcanca o arquivo montado na memoria da pagina.
+    do_conteudo = gravar_o_conteudo(capturados, destino, nome)
+    if do_conteudo:
+        return do_conteudo
+
     # A janela pode ter fechado com a gravacao em curso. O arquivo pode estar
     # na pasta do navegador assim mesmo. Ver o bloco em `resgatar_descarga`.
     resgatado = resgatar_descarga(
@@ -1220,7 +1364,7 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
     raise DownloadIndisponivel(
         f"{ESCOLHA_MARCADOS!r} foi clicado e nenhum arquivo foi gravado. "
         + parada + recado_de_gravacao(capturados)
-        + recado_do_endereco(capturados))
+        + recado_do_endereco(capturados) + recado_do_blob(capturados))
 
 
 def permitir_o_download_marcado(pagina: Any, guarda: Any) -> None:
@@ -1484,6 +1628,11 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
               "pedido.")
         return arquivo
 
+    do_conteudo = gravar_o_conteudo(
+        capturados, destino, f"integra-{chave}", recuo="    ")
+    if do_conteudo:
+        return do_conteudo
+
     resgatado = resgatar_descarga(
         pasta_do_navegador, antes_do_pedido, destino, f"integra-{chave}",
         nome_sugerido(capturados), recuo="    ")
@@ -1498,7 +1647,8 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
 
     if parada is None:
         parada = "O navegador anunciou o download e nada ficou no disco."
-    parada += recado_de_gravacao(capturados) + recado_do_endereco(capturados)
+    parada += (recado_de_gravacao(capturados) + recado_do_endereco(capturados)
+               + recado_do_blob(capturados))
 
     # Em vez de so falhar, LE o indice. O advogado pediu em 08/10/2026 duas
     # formas de baixar em partes, e as duas precisam marcar itens do indice,

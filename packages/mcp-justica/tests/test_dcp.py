@@ -6958,3 +6958,255 @@ def test_os_dois_caminhos_dizem_QUAL_redea_entregou():
     for funcao in (dcp.baixar_marcados, dcp.baixar_integra):
         fonte = inspect.getsource(funcao)
         assert "Gravado pelo canal do navegador" in fonte, funcao.__name__
+
+
+# ==========================================================================
+# LER O BLOB, que e a unica coisa que existe
+#
+# 19/10/2026, teste do documento grande, 131 paginas contra as 2 que tinham
+# funcionado:
+#
+#   O endereco do download e `blob:`.
+#   A janela parou de responder com a gravacao em curso, 13s depois do pedido.
+#
+# O Visualizador MONTA o PDF na memoria da propria janela. Nao ha arquivo no
+# servidor para pedir de novo, nao ha arquivo na pasta porque o Chromium
+# cancela a transferencia, e o canal morre com a janela. O documento de duas
+# paginas so passou porque a gravacao terminou antes de a janela cair.
+# ==========================================================================
+
+import base64 as _base64
+
+
+class _PaginaComBlob:
+    def __init__(self, conteudo=b"%PDF-1.7 documento", erro=None, tamanho=None):
+        self._conteudo, self._erro = conteudo, erro
+        self._tamanho = tamanho
+        self.pedidos = []
+
+    def evaluate(self, js, pedido=None):
+        self.pedidos.append(pedido)
+        if self._erro:
+            saida = {"erro": self._erro}
+            if self._tamanho:
+                saida["tamanho"] = self._tamanho
+            return saida
+        return {"tamanho": len(self._conteudo), "tipo": "application/pdf",
+                "base64": _base64.b64encode(self._conteudo).decode("ascii")}
+
+
+def test_o_conteudo_do_blob_e_lido_de_dentro_da_pagina():
+    from justica_mcp.dcp import ler_o_blob
+
+    pagina = _PaginaComBlob(b"%PDF-1.7 documento grande")
+    lido = ler_o_blob(pagina, "blob:https://www3.tjrj.jus.br/abc")
+    assert lido["bytes"] == b"%PDF-1.7 documento grande"
+    assert lido["tamanho"] == len(b"%PDF-1.7 documento grande")
+    assert pagina.pedidos[0]["url"] == "blob:https://www3.tjrj.jus.br/abc"
+
+
+def test_endereco_que_nao_e_blob_nao_e_lido_assim():
+    from justica_mcp.dcp import ler_o_blob
+
+    pagina = _PaginaComBlob()
+    assert "nao e um blob" in ler_o_blob(pagina, "https://x/y")["erro"]
+    assert pagina.pedidos == []
+    assert "nao e um blob" in ler_o_blob(pagina, None)["erro"]
+
+
+def test_blob_vazio_ou_grande_demais_vira_recado_e_nao_arquivo():
+    from justica_mcp.dcp import ler_o_blob
+
+    vazio = ler_o_blob(_PaginaComBlob(erro="o blob esta vazio"), "blob:x")
+    assert "vazio" in vazio["erro"]
+
+    grande = ler_o_blob(
+        _PaginaComBlob(erro="blob maior que o teto", tamanho=999999999),
+        "blob:x")
+    assert "999999999 byte(s)" in grande["erro"]
+
+
+def test_pagina_que_morreu_no_meio_da_leitura_vira_recado():
+    """Nunca levanta: isto roda dentro do aviso de download, e erro aqui nao
+    pode derrubar o aviso."""
+    from justica_mcp.dcp import ler_o_blob
+
+    class _PaginaMorta:
+        def evaluate(self, js, pedido=None):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    assert "nao respondeu" in ler_o_blob(_PaginaMorta(), "blob:x")["erro"]
+
+
+def test_o_aviso_le_o_blob_ANTES_de_tentar_o_canal():
+    """Tentar primeiro o canal, que ja falhou duas vezes com a janela caindo,
+    gastaria justamente os segundos que a janela ainda tem."""
+    from justica_mcp.dcp import escutar_descargas
+
+    ordem = []
+
+    class _Baixado:
+        suggested_filename = "Peca.pdf"
+        url = "blob:https://www3.tjrj.jus.br/abc"
+
+        def __init__(self, pagina):
+            self.page = pagina
+
+    class _PaginaQueAnota(_PaginaComBlob):
+        def evaluate(self, js, pedido=None):
+            ordem.append("blob")
+            return super().evaluate(js, pedido)
+
+        def on(self, evento, funcao):
+            self.ouvintes[evento] = funcao
+
+        def remove_listener(self, evento, funcao):
+            self.ouvintes.pop(evento, None)
+
+    pagina = _PaginaQueAnota(b"%PDF-1.7 conteudo")
+    pagina.ouvintes = {}
+    capturados = []
+
+    def gravar(_b):
+        ordem.append("canal")
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    escutar_descargas(pagina, capturados, gravar)
+    pagina.ouvintes["download"](_Baixado(pagina))
+
+    assert ordem == ["blob", "canal"]
+    assert capturados[0]["bytes"] == b"%PDF-1.7 conteudo"
+    assert capturados[0]["arquivo"] is None
+
+
+def test_o_conteudo_lido_e_gravado_com_o_nome_do_portal(tmp_path):
+    from justica_mcp.dcp import gravar_o_conteudo
+
+    capturados = [{"bytes": b"%PDF-1.7 conteudo", "sugerido": "Peca.pdf"}]
+    caminho = gravar_o_conteudo(capturados, tmp_path, "peca", recuo="")
+    from pathlib import Path
+    assert Path(caminho).name == "peca-Peca.pdf"
+    assert Path(caminho).read_bytes() == b"%PDF-1.7 conteudo"
+
+
+def test_sem_conteudo_nao_ha_o_que_gravar(tmp_path):
+    from justica_mcp.dcp import gravar_o_conteudo
+
+    assert gravar_o_conteudo([], tmp_path, "peca", recuo="") is None
+    assert gravar_o_conteudo([{"bytes": None}], tmp_path, "p", recuo="") is None
+
+
+def test_a_espera_termina_quando_o_CONTEUDO_chega():
+    """Com o conteudo em maos, esperar mais e esperar por nada."""
+    from justica_mcp.dcp import esperar_a_descarga
+
+    capturados = [{"arquivo": None, "erro": None, "bytes": b"%PDF"}]
+    assert esperar_a_descarga(
+        _JanelaDaDescarga([]), capturados, 10, recuo="") is None
+
+
+def test_a_recusa_diz_por_que_a_leitura_do_blob_falhou():
+    from justica_mcp.dcp import recado_do_blob
+
+    assert recado_do_blob([]) == ""
+    assert recado_do_blob([{"erro_do_blob": "o blob esta vazio"}]) == (
+        " A leitura do conteudo da janela falhou: o blob esta vazio.")
+
+
+def test_as_quatro_redeas_estao_nos_dois_caminhos_e_nesta_ordem():
+    """Guarda de fonte: canal, conteudo da janela, pasta do navegador,
+    endereco. O conteudo vem antes das duas ultimas porque e o unico que
+    alcanca o arquivo montado na memoria da pagina."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    for funcao in (dcp.baixar_marcados, dcp.baixar_integra):
+        fonte = inspect.getsource(funcao)
+        for passo in ("arquivo_capturado(", "gravar_o_conteudo(",
+                      "resgatar_descarga(", "baixar_pelo_endereco("):
+            assert passo in fonte, f"{funcao.__name__}: {passo}"
+        assert (fonte.index("gravar_o_conteudo(")
+                < fonte.index("resgatar_descarga(")), funcao.__name__
+
+
+TELA_QUE_MONTA_BLOB = """<!doctype html><html><head><meta charset="utf-8">
+<title>Monta blob</title></head><body>
+<script>
+  // O mesmo que o Visualizador faz: monta o arquivo na memoria da janela e
+  // entrega um endereco `blob:`, que so existe enquanto esta pagina viver.
+  const miolo = new Uint8Array(200000);
+  for (let i = 0; i < miolo.length; i++) miolo[i] = i % 251;
+  const cabeca = new TextEncoder().encode('%PDF-1.7\\n');
+  const todo = new Uint8Array(cabeca.length + miolo.length);
+  todo.set(cabeca, 0);
+  todo.set(miolo, cabeca.length);
+  const pedaco = new Blob([todo], {type: 'application/pdf'});
+  window.enderecoDoBlob = URL.createObjectURL(pedaco);
+</script>
+</body></html>"""
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_o_blob_volta_byte_a_byte():
+    """A prova de que a ponte em base64 nao corrompe o arquivo: 200009 bytes
+    com conteudo conhecido, conferidos um a um."""
+    import tempfile
+    from pathlib import Path as _P
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import ler_o_blob
+
+    executavel = _navegador_de_teste()
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = _P(pasta) / "blob.html"
+        arquivo.write_text(TELA_QUE_MONTA_BLOB, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(executable_path=executavel,
+                                          args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                url = pagina.evaluate("() => window.enderecoDoBlob")
+                assert url.startswith("blob:")
+                lido = ler_o_blob(pagina, url)
+            finally:
+                navegador.close()
+
+    assert "erro" not in lido, lido.get("erro")
+    dados = lido["bytes"]
+    assert len(dados) == 200009
+    assert dados.startswith(b"%PDF-1.7\n")
+    assert dados[9:] == bytes(i % 251 for i in range(200000))
+    assert lido["tipo"] == "application/pdf"
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_o_teto_do_blob_e_respeitado():
+    """Acima do teto a travessia em base64 custaria memoria demais, e a recusa
+    diz o tamanho para o operador saber que o arquivo existe."""
+    import tempfile
+    from pathlib import Path as _P
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import ler_o_blob
+
+    executavel = _navegador_de_teste()
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = _P(pasta) / "blob.html"
+        arquivo.write_text(TELA_QUE_MONTA_BLOB, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(executable_path=executavel,
+                                          args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                url = pagina.evaluate("() => window.enderecoDoBlob")
+                lido = ler_o_blob(pagina, url, teto=1000)
+            finally:
+                navegador.close()
+
+    assert "maior que o teto" in lido["erro"]
+    assert "200009" in lido["erro"]
