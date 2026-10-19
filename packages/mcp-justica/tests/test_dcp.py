@@ -6784,3 +6784,163 @@ def test_os_dois_caminhos_de_download_tentam_o_resgate():
         # novo ja estaria la quando se olha pela primeira vez.
         assert (fonte.index("instantaneo_da_pasta(")
                 < fonte.index("resgatar_descarga(")), funcao.__name__
+
+
+# ==========================================================================
+# A terceira redea: pedir o arquivo DE NOVO, pelo endereco
+#
+# 19/10/2026, depois do resgate pela pasta: a pasta do navegador ficou vazia. O
+# Chromium nao termina a transferencia quando a janela que a iniciou morre, ele
+# a CANCELA. Nao ha arquivo a resgatar, e as duas primeiras redeas nao tinham
+# como pegar este caso.
+#
+# O que sobrevive a janela e o endereco do download. Com ele o arquivo e pedido
+# outra vez pelo canal de requisicoes do CONTEXTO, que compartilha os biscoitos
+# da sessao e nao depende de pagina aberta.
+# ==========================================================================
+
+class _RespostaDoPedido:
+    def __init__(self, corpo=b"%PDF-1.4", ok=True, status=200, erro=None):
+        self._corpo, self.ok, self.status = corpo, ok, status
+        self._erro = erro
+
+    def body(self):
+        if self._erro:
+            raise RuntimeError(self._erro)
+        return self._corpo
+
+
+class _CanalDePedidos:
+    def __init__(self, resposta=None, erro=None):
+        self._resposta = resposta or _RespostaDoPedido()
+        self._erro = erro
+        self.pedidos = []
+
+    def get(self, url, timeout=None):
+        self.pedidos.append(url)
+        if self._erro:
+            raise RuntimeError(self._erro)
+        return self._resposta
+
+
+class _ContextoDoNavegador:
+    def __init__(self, canal=None):
+        self.request = canal or _CanalDePedidos()
+
+
+def test_o_arquivo_e_pedido_de_novo_pelo_endereco(tmp_path):
+    from justica_mcp.dcp import baixar_pelo_endereco
+
+    contexto = _ContextoDoNavegador(
+        _CanalDePedidos(_RespostaDoPedido(b"%PDF-1.4 conteudo")))
+    caminho = baixar_pelo_endereco(
+        contexto, "https://www3.tjrj.jus.br/visproc/pdf/abc", tmp_path,
+        "peca", "Documento.pdf", recuo="")
+
+    assert caminho is not None
+    from pathlib import Path
+    assert Path(caminho).name == "peca-Documento.pdf"
+    assert Path(caminho).read_bytes() == b"%PDF-1.4 conteudo"
+    assert contexto.request.pedidos == ["https://www3.tjrj.jus.br/visproc/pdf/abc"]
+
+
+def test_endereco_blob_nao_e_pedido_de_novo(tmp_path, capsys):
+    """`blob:` nomeia um pedaco de memoria da janela que morreu."""
+    from justica_mcp.dcp import baixar_pelo_endereco
+
+    contexto = _ContextoDoNavegador()
+    assert baixar_pelo_endereco(contexto, "blob:https://www3.tjrj.jus.br/abc",
+                                tmp_path, "peca", None, recuo="") is None
+    assert contexto.request.pedidos == [], "nem se tenta pedir um blob"
+    assert "blob:" in capsys.readouterr().out
+
+
+def test_resposta_de_erro_nao_vira_arquivo(tmp_path, capsys):
+    from justica_mcp.dcp import baixar_pelo_endereco
+
+    contexto = _ContextoDoNavegador(
+        _CanalDePedidos(_RespostaDoPedido(ok=False, status=403)))
+    assert baixar_pelo_endereco(contexto, "https://x/y", tmp_path, "peca",
+                                None, recuo="") is None
+    assert "403" in capsys.readouterr().out
+
+
+def test_resposta_vazia_nao_vira_arquivo(tmp_path, capsys):
+    """Arquivo de zero byte guardado como peca e pior que peca nenhuma."""
+    from justica_mcp.dcp import baixar_pelo_endereco
+
+    contexto = _ContextoDoNavegador(_CanalDePedidos(_RespostaDoPedido(b"")))
+    assert baixar_pelo_endereco(contexto, "https://x/y", tmp_path, "peca",
+                                None, recuo="") is None
+    assert "vazio" in capsys.readouterr().out
+
+
+def test_pedido_que_falha_nao_derruba_a_corrida(tmp_path, capsys):
+    from justica_mcp.dcp import baixar_pelo_endereco
+
+    contexto = _ContextoDoNavegador(_CanalDePedidos(erro="rede caiu"))
+    assert baixar_pelo_endereco(contexto, "https://x/y", tmp_path, "peca",
+                                None, recuo="") is None
+    assert "falhou" in capsys.readouterr().out
+
+
+def test_sem_contexto_ou_sem_endereco_nao_se_tenta(tmp_path):
+    from justica_mcp.dcp import baixar_pelo_endereco
+
+    assert baixar_pelo_endereco(None, "https://x/y", tmp_path, "p", None) is None
+    assert baixar_pelo_endereco(_ContextoDoNavegador(), None, tmp_path,
+                                "p", None) is None
+
+
+def test_o_aviso_guarda_o_endereco_do_download():
+    from justica_mcp.dcp import endereco_de_descarga, escutar_descargas
+
+    class _Baixado:
+        suggested_filename = "Doc.pdf"
+        url = "https://www3.tjrj.jus.br/visproc/pdf/abc"
+
+    class _Janela:
+        def __init__(self):
+            self.ouvintes = {}
+
+        def on(self, evento, funcao):
+            self.ouvintes[evento] = funcao
+
+        def remove_listener(self, evento, funcao):
+            self.ouvintes.pop(evento, None)
+
+    janela, capturados = _Janela(), []
+    escutar_descargas(janela, capturados,
+                      lambda _b: (_ for _ in ()).throw(RuntimeError("closed")))
+    janela.ouvintes["download"](_Baixado())
+    assert endereco_de_descarga(capturados) == "https://www3.tjrj.jus.br/visproc/pdf/abc"
+
+
+def test_a_recusa_diz_o_TIPO_do_endereco_e_nao_o_endereco():
+    """Depois da busca e no endereco que viaja o numero do processo. O que sai
+    e so o esquema, que e o que decide o conserto seguinte."""
+    from justica_mcp.dcp import recado_do_endereco
+
+    assert "nenhum" in recado_do_endereco([])
+    recado = recado_do_endereco(
+        [{"url": "https://www3.tjrj.jus.br/visproc/pdf/0004724512013"}])
+    assert "'https'" in recado
+    assert "0004724" not in recado
+    assert "'blob'" in recado_do_endereco([{"url": "blob:https://x/abc"}])
+
+
+def test_as_tres_redeas_estao_nos_dois_caminhos_de_download():
+    """Guarda de fonte, na ordem: canal, pasta do navegador, endereco."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    for funcao in (dcp.baixar_marcados, dcp.baixar_integra):
+        fonte = inspect.getsource(funcao)
+        assert "arquivo_capturado(" in fonte, funcao.__name__
+        assert "resgatar_descarga(" in fonte, funcao.__name__
+        assert "baixar_pelo_endereco(" in fonte, funcao.__name__
+        assert (fonte.index("resgatar_descarga(")
+                < fonte.index("baixar_pelo_endereco(")), funcao.__name__
+        # O contexto e guardado enquanto a pagina ainda responde.
+        assert "contexto_de(pagina)" in fonte, funcao.__name__

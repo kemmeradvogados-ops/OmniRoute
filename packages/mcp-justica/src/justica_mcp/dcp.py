@@ -774,7 +774,8 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
 
     def guardar(baixado: Any) -> None:
         registro: dict[str, Any] = {"baixado": baixado, "arquivo": None,
-                                    "erro": None, "sugerido": None}
+                                    "erro": None, "sugerido": None,
+                                    "url": None}
         capturados.append(registro)
         # O nome ANTES de gravar: se a janela morrer no meio da gravacao, o
         # resgate pela pasta do navegador ainda precisa saber como chamar o
@@ -783,6 +784,13 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
             registro["sugerido"] = baixado.suggested_filename
         except Exception:
             pass
+        # O ENDERECO, que e propriedade do aviso e nao exige ida ao navegador.
+        # E a unica coisa do download que sobrevive a morte da janela, e e por
+        # ele que o arquivo pode ser pedido de novo. Ver `baixar_pelo_endereco`.
+        try:
+            registro["url"] = baixado.url
+        except Exception:
+            registro["url"] = None
         try:
             registro["arquivo"] = gravar(baixado)
         except Exception as exc:
@@ -1038,6 +1046,99 @@ def resgatar_descarga(pasta: Any, antes: dict, destino: Any, nome: str,
     return str(final)
 
 
+# A TERCEIRA REDEA: pedir o arquivo DE NOVO, pelo endereco.
+#
+# 19/10/2026, depois do resgate pela pasta: a pasta do navegador ficou vazia. O
+# Chromium nao termina a transferencia quando a janela que a iniciou morre, ele
+# a CANCELA. Entao nao ha arquivo a resgatar, e as duas primeiras redeas nao
+# tinham como pegar este caso.
+#
+# O que sobrevive a janela e o ENDERECO do download, que o aviso traz como
+# propriedade e nao exige ida nenhuma ao navegador. Com ele, o arquivo e pedido
+# outra vez pelo canal de requisicoes do CONTEXTO, que compartilha os biscoitos
+# da sessao e nao depende de pagina nenhuma estar aberta.
+#
+# Endereco `blob:` nao serve: ele nomeia um pedaco de memoria da pagina que
+# morreu, e nao um lugar de onde se possa pedir de novo. Nesse caso a recusa
+# diz isso em vez de tentar e falhar sem explicacao.
+ESPERA_DO_PEDIDO_NOVO = 120
+
+
+def contexto_de(pagina: Any) -> Any:
+    """O contexto do navegador, enquanto a pagina ainda responde."""
+    try:
+        return pagina.context
+    except Exception:
+        return None
+
+
+def endereco_de_descarga(capturados: list) -> Optional[str]:
+    for registro in capturados:
+        if registro.get("url"):
+            return registro["url"]
+    return None
+
+
+def baixar_pelo_endereco(contexto: Any, url: Optional[str], destino: Any,
+                         nome: str, sugerido: Optional[str] = None,
+                         recuo: str = "      ") -> Optional[str]:
+    """Pede o arquivo de novo, pelo endereco, sem depender de janela aberta."""
+    from pathlib import Path
+
+    if not url or contexto is None:
+        return None
+    if url.lower().startswith("blob:"):
+        print(f"{recuo}O endereco do download e `blob:`, que nomeia um pedaco "
+              "de memoria da janela que morreu. Nao da para pedir de novo.")
+        return None
+    try:
+        resposta = contexto.request.get(
+            url, timeout=ESPERA_DO_PEDIDO_NOVO * 1000)
+    except Exception as erro:
+        print(f"{recuo}O pedido pelo endereco falhou: {type(erro).__name__}.")
+        return None
+    try:
+        if not resposta.ok:
+            print(f"{recuo}O portal respondeu {resposta.status} ao pedido "
+                  "pelo endereco.")
+            return None
+        corpo = resposta.body()
+    except Exception as erro:
+        print(f"{recuo}A resposta do pedido pelo endereco nao pode ser lida: "
+              f"{type(erro).__name__}.")
+        return None
+    if not corpo:
+        print(f"{recuo}O pedido pelo endereco voltou vazio.")
+        return None
+
+    pasta = Path(destino)
+    pasta.mkdir(parents=True, exist_ok=True)
+    final = pasta / f"{nome}-{sugerido or 'documento.pdf'}"
+    try:
+        final.write_bytes(corpo)
+    except Exception as erro:
+        print(f"{recuo}O arquivo veio pelo endereco e a gravacao falhou: "
+              f"{type(erro).__name__}.")
+        return None
+    print(f"{recuo}Arquivo obtido pedindo de novo pelo endereco "
+          f"({len(corpo)} byte(s)).")
+    return str(final)
+
+
+def recado_do_endereco(capturados: list) -> str:
+    """De que TIPO era o endereco do download, sem imprimir o endereco.
+
+    Depois da busca e no endereco que viaja o numero do processo, entao o que
+    sai aqui e so o esquema. E ele que decide o conserto seguinte: `https`
+    pode ser pedido de novo, `blob:` nao.
+    """
+    url = endereco_de_descarga(capturados)
+    if not url:
+        return " O aviso nao trouxe endereco nenhum."
+    esquema = url.split(":", 1)[0].lower() if ":" in url else "(sem esquema)"
+    return f" O endereco do download era do tipo {esquema!r}."
+
+
 def nome_sugerido(capturados: list) -> Optional[str]:
     """O nome que o portal deu ao arquivo, quando o aviso chegou a traze-lo."""
     for registro in capturados:
@@ -1077,6 +1178,9 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
 
     pasta_do_navegador = pasta_de_descargas()
     antes_do_pedido = instantaneo_da_pasta(pasta_do_navegador)
+    # O contexto e guardado ENQUANTO a pagina ainda responde: depois que a
+    # janela morre nao da mais para perguntar a ela de quem ela era.
+    contexto = contexto_de(pagina)
     capturados: list = []
     parar_de_ouvir = escutar_descargas(
         pagina, capturados, lambda baixado: _gravar(baixado, destino, nome))
@@ -1097,11 +1201,19 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
     if resgatado:
         return resgatado
 
+    # Terceira redea: pedir de novo pelo endereco. Ver `baixar_pelo_endereco`.
+    pelo_endereco = baixar_pelo_endereco(
+        contexto, endereco_de_descarga(capturados), destino, nome,
+        nome_sugerido(capturados))
+    if pelo_endereco:
+        return pelo_endereco
+
     if parada is None:
         parada = "O navegador anunciou o download e nada ficou no disco."
     raise DownloadIndisponivel(
         f"{ESCOLHA_MARCADOS!r} foi clicado e nenhum arquivo foi gravado. "
-        + parada + recado_de_gravacao(capturados))
+        + parada + recado_de_gravacao(capturados)
+        + recado_do_endereco(capturados))
 
 
 def permitir_o_download_marcado(pagina: Any, guarda: Any) -> None:
@@ -1342,6 +1454,7 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
 
     pasta_do_navegador = pasta_de_descargas()
     antes_do_pedido = instantaneo_da_pasta(pasta_do_navegador)
+    contexto = contexto_de(pagina)
 
     def gravar_a_integra(baixado: Any) -> str:
         pasta = Path(destino)
@@ -1368,9 +1481,15 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
     if resgatado:
         return resgatado
 
+    pelo_endereco = baixar_pelo_endereco(
+        contexto, endereco_de_descarga(capturados), destino,
+        f"integra-{chave}", nome_sugerido(capturados), recuo="    ")
+    if pelo_endereco:
+        return pelo_endereco
+
     if parada is None:
         parada = "O navegador anunciou o download e nada ficou no disco."
-    parada += recado_de_gravacao(capturados)
+    parada += recado_de_gravacao(capturados) + recado_do_endereco(capturados)
 
     # Em vez de so falhar, LE o indice. O advogado pediu em 08/10/2026 duas
     # formas de baixar em partes, e as duas precisam marcar itens do indice,
