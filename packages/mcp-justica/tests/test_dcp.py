@@ -6598,3 +6598,189 @@ def test_gravacao_terminou_exige_arquivo_ou_erro_em_TODOS():
     assert gravacao_terminou([{"arquivo": None, "erro": "falhou"}]) is True
     assert gravacao_terminou([{"arquivo": "x", "erro": None},
                               {"arquivo": None, "erro": None}]) is False
+
+
+# ==========================================================================
+# O resgate pela pasta do navegador
+#
+# 19/10/2026, com a espera ja consertada: a janela do Visualizador se FECHA
+# sozinha quatro segundos depois do pedido, e `save_as` morre com
+# TargetClosedError. E comportamento do Chromium: janela aberta por
+# `window.open` que navega para um endereco que vira download fica sem
+# conteudo, e o navegador a fecha.
+#
+# O conserto nao e manter a janela viva, porque quem a fecha nao e este
+# programa. E parar de depender dela.
+# ==========================================================================
+
+def test_o_instantaneo_registra_nome_e_tamanho():
+    from justica_mcp.dcp import instantaneo_da_pasta
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as pasta:
+        (Path(pasta) / "velho.pdf").write_bytes(b"abc")
+        assert instantaneo_da_pasta(pasta) == {"velho.pdf": 3}
+
+
+def test_o_instantaneo_de_pasta_que_nao_existe_e_vazio():
+    from justica_mcp.dcp import instantaneo_da_pasta
+
+    assert instantaneo_da_pasta("/nao/existe/em/lugar/nenhum") == {}
+
+
+def test_arquivo_pela_metade_nao_e_dado_por_novo():
+    """Copiar um `.crdownload` traz PDF cortado, e PDF cortado guardado como
+    peca e pior que peca nenhuma."""
+    import tempfile
+    from pathlib import Path
+
+    from justica_mcp.dcp import arquivos_novos
+
+    with tempfile.TemporaryDirectory() as pasta:
+        (Path(pasta) / "baixando.pdf.crdownload").write_bytes(b"meio")
+        assert arquivos_novos(pasta, {}) == []
+
+
+def test_o_que_ja_estava_la_nao_e_dado_por_novo():
+    import tempfile
+    from pathlib import Path
+
+    from justica_mcp.dcp import arquivos_novos, instantaneo_da_pasta
+
+    with tempfile.TemporaryDirectory() as pasta:
+        (Path(pasta) / "velho.pdf").write_bytes(b"abc")
+        antes = instantaneo_da_pasta(pasta)
+        assert arquivos_novos(pasta, antes) == []
+        (Path(pasta) / "novo.pdf").write_bytes(b"conteudo")
+        achados = arquivos_novos(pasta, antes)
+        assert [p.name for p in achados] == ["novo.pdf"]
+
+
+def test_o_arquivo_que_CRESCEU_conta_como_novo():
+    """O navegador pode reaproveitar o nome. Tamanho diferente e arquivo
+    diferente."""
+    import tempfile
+    from pathlib import Path
+
+    from justica_mcp.dcp import arquivos_novos, instantaneo_da_pasta
+
+    with tempfile.TemporaryDirectory() as pasta:
+        alvo = Path(pasta) / "mesmo-nome.pdf"
+        alvo.write_bytes(b"abc")
+        antes = instantaneo_da_pasta(pasta)
+        alvo.write_bytes(b"conteudo bem maior")
+        assert [p.name for p in arquivos_novos(pasta, antes)] == ["mesmo-nome.pdf"]
+
+
+def test_o_resgate_copia_o_arquivo_com_o_nome_do_portal():
+    import tempfile
+    from pathlib import Path
+
+    from justica_mcp.dcp import resgatar_descarga
+
+    with tempfile.TemporaryDirectory() as navegador, \
+            tempfile.TemporaryDirectory() as destino:
+        (Path(navegador) / "a1b2c3").write_bytes(b"%PDF-1.4 conteudo")
+        caminho = resgatar_descarga(navegador, {}, destino, "peca",
+                                    "Documento.pdf", espera=3, recuo="")
+        assert caminho is not None
+        final = Path(caminho)
+        assert final.name == "peca-Documento.pdf"
+        assert final.read_bytes() == b"%PDF-1.4 conteudo"
+
+
+def test_o_resgate_usa_o_nome_do_navegador_quando_nao_ha_sugerido():
+    import tempfile
+    from pathlib import Path
+
+    from justica_mcp.dcp import resgatar_descarga
+
+    with tempfile.TemporaryDirectory() as navegador, \
+            tempfile.TemporaryDirectory() as destino:
+        (Path(navegador) / "a1b2c3.pdf").write_bytes(b"conteudo")
+        caminho = resgatar_descarga(navegador, {}, destino, "peca", None,
+                                    espera=3, recuo="")
+        assert Path(caminho).name == "peca-a1b2c3.pdf"
+
+
+def test_o_resgate_devolve_nada_quando_nao_ha_arquivo_novo():
+    import tempfile
+
+    from justica_mcp.dcp import resgatar_descarga
+
+    with tempfile.TemporaryDirectory() as navegador, \
+            tempfile.TemporaryDirectory() as destino:
+        assert resgatar_descarga(navegador, {}, destino, "peca", None,
+                                 espera=1, recuo="") is None
+
+
+def test_o_resgate_nao_copia_arquivo_vazio():
+    """Arquivo de zero byte e download que comecou e nao andou."""
+    import tempfile
+    from pathlib import Path
+
+    from justica_mcp.dcp import resgatar_descarga
+
+    with tempfile.TemporaryDirectory() as navegador, \
+            tempfile.TemporaryDirectory() as destino:
+        (Path(navegador) / "vazio.pdf").write_bytes(b"")
+        assert resgatar_descarga(navegador, {}, destino, "peca", None,
+                                 espera=1, recuo="") is None
+
+
+def test_o_nome_sugerido_vem_do_aviso():
+    from justica_mcp.dcp import nome_sugerido
+
+    assert nome_sugerido([]) is None
+    assert nome_sugerido([{"sugerido": None}, {"sugerido": "Peca.pdf"}]) == "Peca.pdf"
+
+
+def test_o_ouvinte_guarda_o_nome_ANTES_de_tentar_gravar():
+    """Se a janela morrer no meio da gravacao, o resgate ainda precisa saber
+    como chamar o arquivo: na pasta do navegador os nomes sao sequencias."""
+    from justica_mcp.dcp import escutar_descargas
+
+    class _Baixado:
+        suggested_filename = "Documento.pdf"
+
+    class _JanelaQueAvisa:
+        def __init__(self):
+            self.ouvintes = {}
+
+        def on(self, evento, funcao):
+            self.ouvintes[evento] = funcao
+
+        def remove_listener(self, evento, funcao):
+            self.ouvintes.pop(evento, None)
+
+    janela = _JanelaQueAvisa()
+    capturados = []
+
+    def gravar_que_falha(_b):
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    escutar_descargas(janela, capturados, gravar_que_falha)
+    janela.ouvintes["download"](_Baixado())
+
+    assert capturados[0]["sugerido"] == "Documento.pdf"
+    assert capturados[0]["arquivo"] is None
+    assert "closed" in capturados[0]["erro"]
+
+
+def test_os_dois_caminhos_de_download_tentam_o_resgate():
+    """Guarda de fonte: falhar sem procurar na pasta do navegador foi o que
+    perdeu o arquivo que o portal ja tinha entregue."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    for funcao in (dcp.baixar_marcados, dcp.baixar_integra):
+        fonte = inspect.getsource(funcao)
+        assert "resgatar_descarga(" in fonte, funcao.__name__
+        assert "instantaneo_da_pasta(" in fonte, funcao.__name__
+        # O instantaneo tem de ser tirado ANTES do pedido, senao o arquivo
+        # novo ja estaria la quando se olha pela primeira vez.
+        assert (fonte.index("instantaneo_da_pasta(")
+                < fonte.index("resgatar_descarga(")), funcao.__name__

@@ -773,8 +773,16 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
     """
 
     def guardar(baixado: Any) -> None:
-        registro: dict[str, Any] = {"baixado": baixado, "arquivo": None, "erro": None}
+        registro: dict[str, Any] = {"baixado": baixado, "arquivo": None,
+                                    "erro": None, "sugerido": None}
         capturados.append(registro)
+        # O nome ANTES de gravar: se a janela morrer no meio da gravacao, o
+        # resgate pela pasta do navegador ainda precisa saber como chamar o
+        # arquivo, e ali os nomes sao sequencias sem significado.
+        try:
+            registro["sugerido"] = baixado.suggested_filename
+        except Exception:
+            pass
         try:
             registro["arquivo"] = gravar(baixado)
         except Exception as exc:
@@ -923,6 +931,121 @@ def recado_de_gravacao(capturados: list) -> str:
             + "; ".join(erros) + ".")
 
 
+# O RESGATE PELA PASTA DO NAVEGADOR.
+#
+# 19/10/2026, com a espera ja consertada para nao abandonar a gravacao:
+#
+#   A janela parou de responder com a gravacao em curso, 4s depois do pedido.
+#   TargetClosedError: Download.save_as: Target page, context ou browser has
+#   been closed.
+#
+# A janela do Visualizador se FECHA sozinha quatro segundos depois do pedido. E
+# comportamento do proprio Chromium: janela aberta por `window.open` que navega
+# para um endereco que vira download fica sem conteudo, e o navegador a fecha.
+# Com ela vai embora o canal pelo qual `save_as` grava, e o arquivo que o portal
+# ja estava entregando se perde.
+#
+# O conserto nao e manter a janela viva, porque quem a fecha nao e este
+# programa. E parar de depender dela. `pasta_de_descargas` existe desde o comeco
+# exatamente para isto, e a propria explicacao dela ja dizia: "o arquivo
+# continua no disco e pode ser copiado por caminho de sistema de arquivos, sem
+# depender de janela viva". Faltava alguem copiar.
+#
+# Entao, quando a gravacao pelo canal falha, o arquivo e procurado na pasta onde
+# o navegador escreve, por diferenca com o que havia la antes do pedido.
+
+# Sufixos que o navegador usa enquanto ainda esta escrevendo. Copiar um desses
+# traz PDF cortado, e PDF cortado guardado como peca e pior que peca nenhuma.
+SUFIXOS_INCOMPLETOS = (".crdownload", ".part", ".tmp", ".partial")
+
+
+def instantaneo_da_pasta(pasta: Any) -> dict:
+    """Nome e tamanho do que ja esta na pasta. Chave para achar o que e novo."""
+    from pathlib import Path
+
+    try:
+        return {p.name: p.stat().st_size for p in Path(pasta).iterdir()
+                if p.is_file()}
+    except Exception:
+        return {}
+
+
+def _completo(caminho: Any) -> bool:
+    return not str(caminho).lower().endswith(SUFIXOS_INCOMPLETOS)
+
+
+def arquivos_novos(pasta: Any, antes: dict) -> list:
+    """Os arquivos COMPLETOS que apareceram depois do instantaneo."""
+    from pathlib import Path
+
+    try:
+        atuais = [p for p in Path(pasta).iterdir() if p.is_file()]
+    except Exception:
+        return []
+    novos = []
+    for p in atuais:
+        if not _completo(p):
+            continue
+        if p.name in antes and p.stat().st_size == antes[p.name]:
+            continue
+        novos.append(p)
+    return sorted(novos, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def resgatar_descarga(pasta: Any, antes: dict, destino: Any, nome: str,
+                      sugerido: Optional[str] = None,
+                      espera: int = 20, recuo: str = "      ") -> Optional[str]:
+    """Procura na pasta do navegador o arquivo novo e o copia para o destino.
+
+    Espera o tamanho PARAR de crescer antes de copiar: o navegador escreve aos
+    poucos, e copiar no meio traz PDF cortado.
+    """
+    import shutil
+    import time as _tempo
+    from pathlib import Path
+
+    limite = _tempo.monotonic() + max(1, espera)
+    anterior, estaveis, escolhido = -1, 0, None
+    while _tempo.monotonic() < limite:
+        novos = arquivos_novos(pasta, antes)
+        if novos:
+            escolhido = novos[0]
+            tamanho = escolhido.stat().st_size
+            if tamanho > 0 and tamanho == anterior:
+                estaveis += 1
+                if estaveis >= LEITURAS_ESTAVEIS:
+                    break
+            else:
+                estaveis = 0
+            anterior = tamanho
+        _tempo.sleep(0.5)
+    if escolhido is None or not escolhido.exists():
+        return None
+    if escolhido.stat().st_size <= 0:
+        return None
+
+    pasta_destino = Path(destino)
+    pasta_destino.mkdir(parents=True, exist_ok=True)
+    final = pasta_destino / f"{nome}-{sugerido or escolhido.name}"
+    try:
+        shutil.copy2(str(escolhido), str(final))
+    except Exception as erro:
+        print(f"{recuo}[ATENCAO] O arquivo foi achado na pasta do navegador e "
+              f"a copia falhou: {type(erro).__name__}.")
+        return None
+    print(f"{recuo}Arquivo resgatado da pasta do navegador "
+          f"({escolhido.stat().st_size} byte(s)).")
+    return str(final)
+
+
+def nome_sugerido(capturados: list) -> Optional[str]:
+    """O nome que o portal deu ao arquivo, quando o aviso chegou a traze-lo."""
+    for registro in capturados:
+        if registro.get("sugerido"):
+            return registro["sugerido"]
+    return None
+
+
 def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
                     segundos: int = TETO_DO_DOWNLOAD) -> str:
     """Abre a caixa de download e salva SO o que esta marcado."""
@@ -950,6 +1073,10 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
     espera = espera_do_arquivo(segundos)
     print(f"      Esperando ate {espera}s pelo arquivo. O portal gera o PDF "
           "agora, e isso demora. Nao feche a janela.")
+    from .portal import pasta_de_descargas
+
+    pasta_do_navegador = pasta_de_descargas()
+    antes_do_pedido = instantaneo_da_pasta(pasta_do_navegador)
     capturados: list = []
     parar_de_ouvir = escutar_descargas(
         pagina, capturados, lambda baixado: _gravar(baixado, destino, nome))
@@ -961,6 +1088,15 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
     arquivo = arquivo_capturado(capturados)
     if arquivo:
         return arquivo
+
+    # A janela pode ter fechado com a gravacao em curso. O arquivo pode estar
+    # na pasta do navegador assim mesmo. Ver o bloco em `resgatar_descarga`.
+    resgatado = resgatar_descarga(
+        pasta_do_navegador, antes_do_pedido, destino, nome,
+        nome_sugerido(capturados))
+    if resgatado:
+        return resgatado
+
     if parada is None:
         parada = "O navegador anunciou o download e nada ficou no disco."
     raise DownloadIndisponivel(
@@ -1202,6 +1338,10 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
     espera = espera_do_arquivo(segundos)
     print(f"    Esperando ate {espera}s pelo arquivo da integra. O portal gera "
           "o PDF agora, e processo grande demora. Nao feche a janela.")
+    from .portal import pasta_de_descargas
+
+    pasta_do_navegador = pasta_de_descargas()
+    antes_do_pedido = instantaneo_da_pasta(pasta_do_navegador)
 
     def gravar_a_integra(baixado: Any) -> str:
         pasta = Path(destino)
@@ -1221,6 +1361,12 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
     arquivo = arquivo_capturado(capturados)
     if arquivo:
         return arquivo
+
+    resgatado = resgatar_descarga(
+        pasta_do_navegador, antes_do_pedido, destino, f"integra-{chave}",
+        nome_sugerido(capturados), recuo="    ")
+    if resgatado:
+        return resgatado
 
     if parada is None:
         parada = "O navegador anunciou o download e nada ficou no disco."
