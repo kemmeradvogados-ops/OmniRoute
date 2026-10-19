@@ -5854,7 +5854,14 @@ def consultar_processo(
     # Qual das linhas do resultado abrir. A busca por numero unico devolve mais
     # de uma quando o processo existe em serventias ou graus diferentes, e cada
     # uma tem historico proprio. Ver o bloco em `JS_DAS_LINHAS_DESCRITAS`.
-    linha: int = 1,
+    #
+    # O nome e longo de proposito. Chamado so de `linha`, ele colidia com o
+    # `for linha in ...` que existe dentro da funcao aninhada que o usa, e
+    # Python entao tratava o nome como variavel LOCAL dela: a leitura antes do
+    # laco virava `UnboundLocalError` e derrubava a corrida depois da
+    # autenticacao, com a credencial ja gasta. Nenhum teste pegou porque
+    # nenhum deles executava aquele trecho.
+    linha_do_resultado: int = 1,
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -6155,7 +6162,8 @@ def consultar_processo(
                 pagina = reencontrar_o_portal(pagina, min(segundos, 15))
 
             try:
-                buscar_dcp(pagina, guarda, numero, url, segundos, linha)
+                buscar_dcp(pagina, guarda, numero, url, segundos,
+                           linha_do_resultado)
             except ConsultaIndisponivel as exc:
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(pagina, "TELA ONDE PAROU")
@@ -7166,7 +7174,8 @@ def main(argv: list[str] | None = None) -> int:
                 documentos=args.documentos, confirmado=args.confirmado,
                 aceitar_termo=args.aceitar_termo, motivo=args.motivo,
                 segundos_download=args.segundos_download,
-                sem_movimentacoes=args.sem_movimentacoes, linha=args.linha,
+                sem_movimentacoes=args.sem_movimentacoes,
+                linha_do_resultado=args.linha,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
             )

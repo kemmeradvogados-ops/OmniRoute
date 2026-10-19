@@ -7315,5 +7315,9 @@ def test_a_escolha_da_linha_chega_do_comando_ate_a_busca():
     assert "linha: int = 1" in inspect.getsource(dcp.buscar)
     assert "segundos, linha)" in inspect.getsource(dcp.buscar)
     fonte = inspect.getsource(portal.consultar_processo)
-    assert "linha: int = 1" in fonte
-    assert "buscar_dcp(pagina, guarda, numero, url, segundos, linha)" in fonte
+    # O nome e longo de proposito: `linha` colidia com o `for linha in ...` da
+    # funcao aninhada que o le. Ver o teste da funcao aninhada em
+    # `tests/test_portal.py`.
+    assert "linha_do_resultado: int = 1" in fonte
+    assert "buscar_dcp(pagina, guarda, numero, url, segundos," in fonte
+    assert "linha_do_resultado)" in fonte

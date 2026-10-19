@@ -7485,3 +7485,45 @@ def test_a_trava_barrando_a_busca_nao_sobe_como_traceback():
     assert "except ConsultaIndisponivel" in tratamentos
     assert "except NavegacaoBloqueada" in tratamentos
     assert "[PAROU]" in tratamentos
+
+
+# ==========================================================================
+# Nome de parametro que vira variavel local da funcao aninhada
+#
+# 19/10/2026: `--linha` foi ligado a um parametro chamado `linha`, lido dentro
+# de `depois`, que e a funcao aninhada que roda depois da autenticacao. Dentro
+# dela ja havia `for linha in guarda.relato()`. Python entao trata o nome como
+# LOCAL de `depois`, a leitura antes do laco vira `UnboundLocalError`, e a
+# corrida cai DEPOIS da autenticacao, com a credencial ja gasta.
+#
+# Nenhum teste pegou porque nenhum deles executa aquele trecho, e a guarda de
+# fonte que eu tinha escrito conferia o texto da chamada, que estava certo.
+# Texto certo e nome ligado ao lugar errado sao coisas diferentes.
+# ==========================================================================
+
+def _codigo_aninhado(funcao, nome):
+    for constante in funcao.__code__.co_consts:
+        if getattr(constante, "co_name", None) == nome:
+            return constante
+    raise AssertionError(f"funcao aninhada {nome!r} nao encontrada")
+
+
+def test_nenhum_parametro_da_consulta_vira_local_da_funcao_aninhada():
+    from justica_mcp import portal
+
+    externa = portal.consultar_processo.__code__
+    parametros = set(externa.co_varnames[:externa.co_argcount
+                                         + externa.co_kwonlyargcount])
+    depois = _codigo_aninhado(portal.consultar_processo, "depois")
+    colididos = parametros & set(depois.co_varnames)
+    assert not colididos, (
+        "estes parametros viraram variaveis locais de `depois` e serao lidos "
+        f"como UnboundLocalError: {sorted(colididos)}")
+
+
+def test_a_escolha_da_linha_chega_por_fechamento_e_nao_por_acaso():
+    from justica_mcp import portal
+
+    depois = _codigo_aninhado(portal.consultar_processo, "depois")
+    assert "linha_do_resultado" in depois.co_freevars
+    assert "linha_do_resultado" not in depois.co_varnames
