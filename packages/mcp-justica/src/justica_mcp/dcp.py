@@ -2019,7 +2019,7 @@ def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
 
 
 def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
-           segundos: int = 45) -> Any:
+           segundos: int = 45, linha: int = 1) -> Any:
     """Abre a consulta, digita o numero e pesquisa. Devolve o quadro usado.
 
     Somente leitura: preenche e pesquisa. Nao abre o visualizador e nao baixa
@@ -2104,7 +2104,7 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     # A busca devolve uma LISTA, e a tela do processo mora atras de um clique
     # nela. Ver o bloco em `abrir_o_processo_da_lista`.
     aberto = abrir_o_processo_da_lista(atual, guarda, numero, pagina.url,
-                                       segundos)
+                                       segundos, linha)
     print(f"  Lista de resultado: {aberto['situacao']}.")
     if aberto["clicado"]:
         _assentar(pagina, segundos)
@@ -2228,6 +2228,52 @@ def processos_na_lista(quadro: Any, numero: Any) -> list:
     return achados
 
 
+# AS CINCO LINHAS, e por que escolher a primeira em silencio nao serve.
+#
+# 19/10/2026: a leitura do historico voltou com 162 movimentacoes em 17
+# paginas. Em 13/10, antes de este passo existir, foram 207 em 21. Movimentacao
+# de processo nao diminui, entao ou a paginacao esta truncando, ou a linha
+# aberta hoje NAO e a mesma tela que foi lida naquele dia.
+#
+# A busca devolve cinco linhas com o mesmo numero, e o programa abre a primeira.
+# Cinco linhas com o mesmo numero costumam ser o processo em graus ou
+# serventias diferentes, e cada uma tem o seu proprio historico. Abrir a
+# primeira calado faz o programa entregar um historico completo DAQUELA linha
+# como se fosse o do processo, e quem le o arquivo nao tem como saber.
+#
+# Entao as linhas passam a ser descritas, e a escolha passa a ter como ser
+# dita. O que distingue uma da outra e conteudo do processo, e sai no terminal
+# do advogado, que e de quem e o processo, com aviso. No arquivo da consulta
+# tambem, que ja e protegido.
+JS_DAS_LINHAS_DESCRITAS = r"""() => {
+  const corta = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const saida = [];
+  for (const e of document.querySelectorAll('[data-justica-linha]')) {
+    const linha = e.closest('tr') || e.parentElement;
+    const celulas = [];
+    if (linha) {
+      for (const c of linha.querySelectorAll('td, th')) {
+        const texto = corta(c.innerText, 40);
+        if (texto) celulas.push(texto);
+      }
+    }
+    saida.push(celulas);
+  }
+  return saida;
+}"""
+
+
+def descrever_as_linhas(quadro: Any) -> list:
+    """As celulas de cada linha marcada, para o advogado poder escolher."""
+    try:
+        lido = quadro.evaluate(JS_DAS_LINHAS_DESCRITAS)
+    except Exception:
+        return []
+    if not isinstance(lido, list):
+        return []
+    return [[str(c) for c in (linha or [])] for linha in lido]
+
+
 def esperar_a_lista_de_resultado(quadro: Any, numero: Any,
                                  segundos: int = ESPERA_DA_LISTA) -> list:
     """Espera a lista montar e devolve as linhas que conferem."""
@@ -2270,7 +2316,8 @@ def resumo_da_lista(quadro: Any) -> str:
 
 def abrir_o_processo_da_lista(quadro: Any, guarda: Any, numero: Any,
                               endereco_da_tela: str,
-                              segundos: int = ESPERA_DA_LISTA) -> dict:
+                              segundos: int = ESPERA_DA_LISTA,
+                              escolhida: int = 1) -> dict:
     """Clica, na lista de resultado, no processo cujo numero confere.
 
     `endereco_da_tela` e o endereco da PAGINA, e nunca o do quadro. A permissao
@@ -2296,26 +2343,45 @@ def abrir_o_processo_da_lista(quadro: Any, guarda: Any, numero: Any,
                             + resumo_da_lista(quadro),
                 "linhas": 0, "clicado": False}
 
-    if len(achados) > 1:
+    descricoes = descrever_as_linhas(quadro) if len(achados) > 1 else []
+    if len(achados) > 1 and 1 <= escolhida <= len(achados):
         # Mesmo numero em mais de uma linha acontece quando o processo aparece
-        # em graus ou serventias diferentes. Abre a primeira e DIZ que havia
-        # mais de uma, para o advogado conferir se era a que ele queria.
-        print(f"      [ATENCAO] {len(achados)} linhas trazem este mesmo numero. "
-              "Abrindo a primeira.")
+        # em graus ou serventias diferentes, e cada uma tem o seu proprio
+        # historico. Ver o bloco em `JS_DAS_LINHAS_DESCRITAS`.
+        print(f"      [ATENCAO] {len(achados)} linhas trazem este mesmo numero, "
+              f"e a de numero {escolhida} foi aberta. Cada linha costuma ser o "
+              "processo numa serventia ou num grau diferente, com historico "
+              "proprio. Use --linha para abrir outra.")
+        if descricoes:
+            print("      As linhas, como a tela as mostra (dado do processo, "
+                  "do seu processo):")
+            for ordem, celulas in enumerate(descricoes, start=1):
+                marca = " <- aberta" if ordem == escolhida else ""
+                print(f"        {ordem}: {' | '.join(celulas)[:150]}{marca}")
 
+    if escolhida < 1 or escolhida > len(achados):
+        return {"situacao": f"--linha {escolhida} nao existe: a busca devolveu "
+                            f"{len(achados)} linha(s) com este numero",
+                "linhas": len(achados), "clicado": False,
+                "descricoes": descricoes}
+
+    alvo = achados[escolhida - 1]
     guarda.pode_executar(Acao.CLICAR, ALVO_DO_RESULTADO, url=endereco_da_tela)
     try:
-        achados[0].scroll_into_view_if_needed(timeout=2000)
+        alvo.scroll_into_view_if_needed(timeout=2000)
     except Exception:
         pass
     try:
-        achados[0].click()
+        alvo.click()
     except Exception as erro:
         return {"situacao": f"a linha nao aceitou o clique ({type(erro).__name__})",
-                "linhas": len(achados), "clicado": False}
+                "linhas": len(achados), "clicado": False,
+                "descricoes": descricoes}
     gravar_a_tela(quadro, "depois-de-abrir-o-processo-da-lista")
-    return {"situacao": f"aberta a linha que confere, de {len(achados)}",
-            "linhas": len(achados), "clicado": True}
+    return {"situacao": f"aberta a linha {escolhida}, de {len(achados)} que "
+                        "conferem",
+            "linhas": len(achados), "clicado": True, "escolhida": escolhida,
+            "descricoes": descricoes}
 
 
 def _so_digitos(elemento: Any) -> str:

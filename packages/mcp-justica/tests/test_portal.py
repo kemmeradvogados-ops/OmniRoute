@@ -7478,7 +7478,7 @@ def test_a_trava_barrando_a_busca_nao_sobe_como_traceback():
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal.consultar_processo)
-    depois = fonte.split("buscar_dcp(pagina, guarda, numero, url, segundos)")[1]
+    depois = fonte.split("buscar_dcp(pagina, guarda, numero, url, segundos")[1]
     # O trecho entre a busca e a linha seguinte do caminho normal e onde moram
     # os tratamentos de parada dela.
     tratamentos = depois.split('print(f"  Endereco:')[0]

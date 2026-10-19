@@ -7210,3 +7210,110 @@ def test_na_tela_de_verdade_o_teto_do_blob_e_respeitado():
 
     assert "maior que o teto" in lido["erro"]
     assert "200009" in lido["erro"]
+
+
+# ==========================================================================
+# As cinco linhas, e por que escolher a primeira em silencio nao serve
+#
+# 19/10/2026: a leitura do historico voltou com 162 movimentacoes em 17
+# paginas. Em 13/10, antes de este passo existir, foram 207 em 21.
+# Movimentacao de processo nao diminui, entao ou a paginacao trunca, ou a
+# linha aberta hoje nao e a mesma tela daquele dia.
+#
+# Cinco linhas com o mesmo numero costumam ser o processo em graus ou
+# serventias diferentes, e cada uma tem historico proprio. Abrir a primeira
+# calado entrega o historico DAQUELA linha como se fosse o do processo.
+# ==========================================================================
+
+class _QuadroQueDescreve(_QuadroComLista):
+    def __init__(self, linhas, descricoes=None):
+        super().__init__(linhas)
+        self._descricoes = descricoes or []
+
+    def evaluate(self, js, *args):
+        if "data-justica-linha" in js and "closest" in js:
+            return [list(d) for d in self._descricoes]
+        if "data-justica-linha" in js:
+            return 0
+        return {"tabelas": 1, "linhas": 5, "paginadores": 1}
+
+
+def test_a_linha_escolhida_e_a_que_o_operador_pediu():
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078") for _ in range(5)]
+    resposta = abrir_o_processo_da_lista(
+        _QuadroQueDescreve(linhas), _GuardaQueLibera(), _NumeroFalso(),
+        ENDERECO_DA_PAGINA, segundos=1, escolhida=3)
+
+    assert resposta["clicado"] is True
+    assert resposta["escolhida"] == 3
+    assert linhas[2].cliques == 1
+    assert sum(l.cliques for l in linhas) == 1, "so uma linha e aberta"
+
+
+def test_linha_fora_da_faixa_nao_abre_nada_e_diz_quantas_ha():
+    """Abrir outra por engano seria abrir o processo errado."""
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078") for _ in range(5)]
+    resposta = abrir_o_processo_da_lista(
+        _QuadroQueDescreve(linhas), _GuardaQueLibera(), _NumeroFalso(),
+        ENDERECO_DA_PAGINA, segundos=1, escolhida=9)
+
+    assert resposta["clicado"] is False
+    assert "--linha 9 nao existe" in resposta["situacao"]
+    assert "5 linha(s)" in resposta["situacao"]
+    assert all(l.cliques == 0 for l in linhas)
+
+
+def test_as_linhas_sao_DESCRITAS_quando_ha_mais_de_uma(capsys):
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078") for _ in range(3)]
+    descricoes = [["Comarca A", "1a Vara"], ["Comarca B", "2a Vara"],
+                  ["Comarca C", "3a Vara"]]
+    abrir_o_processo_da_lista(
+        _QuadroQueDescreve(linhas, descricoes), _GuardaQueLibera(),
+        _NumeroFalso(), ENDERECO_DA_PAGINA, segundos=1, escolhida=2)
+
+    saida = capsys.readouterr().out
+    assert "3 linhas trazem este mesmo numero" in saida
+    assert "a de numero 2 foi aberta" in saida
+    assert "--linha" in saida
+    assert "Comarca A | 1a Vara" in saida
+    assert "2: Comarca B | 2a Vara <- aberta" in saida
+
+
+def test_uma_linha_so_nao_vira_aviso(capsys):
+    """Aviso que aparece sempre deixa de ser aviso."""
+    from justica_mcp.dcp import abrir_o_processo_da_lista
+
+    uma = [_LinhaDeResultado("0004724-51.2013.8.19.0078")]
+    abrir_o_processo_da_lista(
+        _QuadroQueDescreve(uma), _GuardaQueLibera(), _NumeroFalso(),
+        ENDERECO_DA_PAGINA, segundos=1)
+    assert "trazem este mesmo numero" not in capsys.readouterr().out
+
+
+def test_a_descricao_das_linhas_nao_derruba_nada_quando_falha():
+    from justica_mcp.dcp import descrever_as_linhas
+
+    class _QuadroMudo:
+        def evaluate(self, js):
+            raise RuntimeError("janela fechou")
+
+    assert descrever_as_linhas(_QuadroMudo()) == []
+
+
+def test_a_escolha_da_linha_chega_do_comando_ate_a_busca():
+    """Guarda de fonte: a opcao do operador tem de atravessar as camadas."""
+    import inspect
+
+    from justica_mcp import dcp, portal
+
+    assert "linha: int = 1" in inspect.getsource(dcp.buscar)
+    assert "segundos, linha)" in inspect.getsource(dcp.buscar)
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "linha: int = 1" in fonte
+    assert "buscar_dcp(pagina, guarda, numero, url, segundos, linha)" in fonte

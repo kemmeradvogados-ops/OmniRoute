@@ -5851,6 +5851,10 @@ def consultar_processo(
     motivo: Optional[str] = None,
     segundos_download: Optional[int] = None,
     sem_movimentacoes: bool = False,
+    # Qual das linhas do resultado abrir. A busca por numero unico devolve mais
+    # de uma quando o processo existe em serventias ou graus diferentes, e cada
+    # uma tem historico proprio. Ver o bloco em `JS_DAS_LINHAS_DESCRITAS`.
+    linha: int = 1,
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -6151,7 +6155,7 @@ def consultar_processo(
                 pagina = reencontrar_o_portal(pagina, min(segundos, 15))
 
             try:
-                buscar_dcp(pagina, guarda, numero, url, segundos)
+                buscar_dcp(pagina, guarda, numero, url, segundos, linha)
             except ConsultaIndisponivel as exc:
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(pagina, "TELA ONDE PAROU")
@@ -7058,6 +7062,11 @@ def main(argv: list[str] | None = None) -> int:
                          "N paginas, 300 por padrao, e 'lote:K' baixa SO o "
                          "K-esimo desses lotes, para conferir o caminho ou "
                          "repetir um que falhou")
+    cp.add_argument("--linha", type=int, default=1,
+                    help="qual linha do resultado abrir, quando a busca "
+                         "devolve mais de uma com o mesmo numero. Cada linha "
+                         "costuma ser o processo numa serventia ou num grau "
+                         "diferente, com historico proprio. Padrao: 1")
     cp.add_argument("--gravar-telas", action="store_true", dest="gravar_telas",
                     help="grava em disco a FORMA de cada tela que a corrida "
                          "tocar (etiquetas, identificadores, rotulos, geometria "
@@ -7157,7 +7166,7 @@ def main(argv: list[str] | None = None) -> int:
                 documentos=args.documentos, confirmado=args.confirmado,
                 aceitar_termo=args.aceitar_termo, motivo=args.motivo,
                 segundos_download=args.segundos_download,
-                sem_movimentacoes=args.sem_movimentacoes,
+                sem_movimentacoes=args.sem_movimentacoes, linha=args.linha,
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
             )
