@@ -813,6 +813,29 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
     return parar_de_ouvir
 
 
+def gravacao_terminou(capturados: list) -> bool:
+    """Todo aviso recebido ja terminou de gravar, com arquivo ou com erro.
+
+    ANUNCIAR NAO E TER GRAVADO, e confundir os dois custou a corrida de
+    19/10/2026, a primeira em que o portal chegou a entregar o arquivo.
+
+    O que acontece por baixo: o ouvinte do download grava DENTRO do proprio
+    aviso, e `save_as` e uma chamada que bloqueia. O Playwright sincrono roda
+    sobre greenlets, entao uma chamada que bloqueia dentro de um ouvinte
+    devolve o controle para o laco principal enquanto a gravacao ainda esta em
+    curso. O laco via a lista de avisos cheia, dava a espera por encerrada,
+    nao achava arquivo nenhum porque a gravacao nao tinha terminado, e
+    derrubava a corrida inteira levando junto a gravacao em andamento.
+
+    O relato disso foi "o navegador anunciou o download e nada ficou no
+    disco", sem erro de gravacao nenhum, que e precisamente a assinatura de
+    uma gravacao interrompida no meio.
+    """
+    if not capturados:
+        return False
+    return all(r.get("arquivo") or r.get("erro") for r in capturados)
+
+
 def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
                        recuo: str = "      ") -> Optional[str]:
     """Acompanha a geracao do PDF. None quando o arquivo chegou.
@@ -842,9 +865,16 @@ def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
     voltas_maximas = int(espera * 1000 / PASSO_DA_ESPERA) + 2
     while time.time() < limite and voltas < voltas_maximas:
         voltas += 1
-        if capturados:
+        # Primeiro o arquivo. Depois, a gravacao que terminou em erro. Nunca
+        # o simples aviso: ver `gravacao_terminou`.
+        if arquivo_capturado(capturados):
             return None
-        if janela_fechada(pagina):
+        if gravacao_terminou(capturados):
+            return "O navegador anunciou o download e a gravacao falhou."
+        # A janela fechada so encerra a espera se NAO houver gravacao em
+        # curso: o aviso ja chegou, o arquivo pode estar a caminho do disco, e
+        # desistir aqui joga fora justamente o que se esperou cinco minutos.
+        if not capturados and janela_fechada(pagina):
             return (f"A janela se fechou {int(time.time() - comeco)}s depois do "
                     f"pedido, antes de o arquivo chegar. O prazo era de {espera}s.")
         agora = time.time()
@@ -861,12 +891,18 @@ def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
         try:
             pagina.wait_for_timeout(PASSO_DA_ESPERA)
         except Exception:
-            if capturados:
+            if arquivo_capturado(capturados):
                 return None
+            if capturados:
+                return ("A janela parou de responder com a gravacao em curso, "
+                        f"{int(time.time() - comeco)}s depois do pedido.")
             return (f"A janela parou de responder {int(time.time() - comeco)}s "
                     "depois do pedido, antes de o arquivo chegar.")
-    if capturados:
+    if arquivo_capturado(capturados):
         return None
+    if capturados:
+        return (f"O navegador anunciou o download, e a gravacao nao terminou "
+                f"em {espera}s.")
     return f"Nenhum arquivo chegou em {espera}s depois do pedido."
 
 

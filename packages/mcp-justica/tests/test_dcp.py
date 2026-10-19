@@ -6478,3 +6478,123 @@ def test_quem_ja_tem_a_barra_pronta_nao_paga_espera():
     except Exception:
         pass
     assert tela.mediu == 0, "nao se mede uma barra que ja respondeu"
+
+
+# ==========================================================================
+# ANUNCIAR NAO E TER GRAVADO
+#
+# 19/10/2026, a primeira corrida em que o portal chegou a entregar o arquivo:
+#
+#   Marcado 1 documento, o que comeca na pagina 1342.
+#   Esperando ate 300s pelo arquivo.
+#   [PAROU] 'Salvar Documentos Selecionados' foi clicado e nenhum arquivo foi
+#           gravado. O navegador anunciou o download e nada ficou no disco.
+#
+# Sem erro de gravacao nenhum, que e a assinatura de uma gravacao interrompida
+# no meio. O ouvinte grava dentro do proprio aviso, `save_as` bloqueia, e o
+# Playwright sincrono roda sobre greenlets: a chamada que bloqueia devolve o
+# controle ao laco principal com a gravacao em curso. O laco via a lista cheia,
+# dava a espera por encerrada e derrubava a corrida levando junto a gravacao.
+# ==========================================================================
+
+class _JanelaDaDescarga:
+    """A janela durante a espera. A cada volta pode mexer na lista de avisos,
+    como o ouvinte do navegador faria."""
+
+    def __init__(self, roteiro, fechada=False):
+        self._roteiro = list(roteiro)
+        self._fechada = fechada
+        self.voltas = 0
+
+    def evaluate(self, _js):
+        return []
+
+    def is_closed(self):
+        return self._fechada
+
+    def wait_for_timeout(self, _ms):
+        self.voltas += 1
+        if self._roteiro:
+            self._roteiro.pop(0)()
+
+
+def test_o_aviso_sozinho_nao_encerra_a_espera():
+    """Aviso recebido com gravacao em curso: o arquivo ainda esta a caminho do
+    disco, e desistir aqui joga fora cinco minutos de espera."""
+    from justica_mcp.dcp import esperar_a_descarga
+
+    capturados = []
+    registro = {"baixado": object(), "arquivo": None, "erro": None}
+
+    def chega_o_aviso():
+        capturados.append(registro)
+
+    def termina_a_gravacao():
+        registro["arquivo"] = "C:/destino/peca.pdf"
+
+    janela = _JanelaDaDescarga([chega_o_aviso, lambda: None, termina_a_gravacao])
+    assert esperar_a_descarga(janela, capturados, 10, recuo="") is None
+    assert janela.voltas >= 3, "a espera continuou ate a gravacao terminar"
+
+
+def test_a_gravacao_que_falha_encerra_a_espera_dizendo():
+    from justica_mcp.dcp import esperar_a_descarga
+
+    capturados = []
+
+    def chega_o_aviso_e_falha():
+        capturados.append({"baixado": object(), "arquivo": None,
+                           "erro": "OSError: disco cheio"})
+
+    parada = esperar_a_descarga(
+        _JanelaDaDescarga([chega_o_aviso_e_falha]), capturados, 10, recuo="")
+    assert parada is not None
+    assert "gravacao falhou" in parada
+
+
+def test_prazo_vencido_com_gravacao_em_curso_e_dito_com_todas_as_letras():
+    """E diferente de "nenhum arquivo chegou": aqui o portal entregou e a
+    gravacao nao terminou a tempo."""
+    from justica_mcp.dcp import esperar_a_descarga
+
+    capturados = [{"baixado": object(), "arquivo": None, "erro": None}]
+    parada = esperar_a_descarga(
+        _JanelaDaDescarga([]), capturados, 1, recuo="")
+    assert parada is not None
+    assert "anunciou o download" in parada
+    assert "nao terminou" in parada
+
+
+def test_janela_fechada_com_gravacao_em_curso_nao_interrompe_a_espera():
+    """O aviso ja chegou e o arquivo pode estar a caminho do disco."""
+    from justica_mcp.dcp import esperar_a_descarga
+
+    # O aviso JA chegou e a gravacao esta em curso quando a janela se fecha.
+    registro = {"baixado": object(), "arquivo": None, "erro": None}
+    capturados = [registro]
+
+    def termina_a_gravacao():
+        registro["arquivo"] = "C:/destino/peca.pdf"
+
+    janela = _JanelaDaDescarga([termina_a_gravacao], fechada=True)
+    assert esperar_a_descarga(janela, capturados, 10, recuo="") is None
+
+
+def test_janela_fechada_sem_aviso_nenhum_continua_sendo_parada():
+    from justica_mcp.dcp import esperar_a_descarga
+
+    parada = esperar_a_descarga(
+        _JanelaDaDescarga([], fechada=True), [], 10, recuo="")
+    assert parada is not None
+    assert "se fechou" in parada
+
+
+def test_gravacao_terminou_exige_arquivo_ou_erro_em_TODOS():
+    from justica_mcp.dcp import gravacao_terminou
+
+    assert gravacao_terminou([]) is False
+    assert gravacao_terminou([{"arquivo": None, "erro": None}]) is False
+    assert gravacao_terminou([{"arquivo": "x", "erro": None}]) is True
+    assert gravacao_terminou([{"arquivo": None, "erro": "falhou"}]) is True
+    assert gravacao_terminou([{"arquivo": "x", "erro": None},
+                              {"arquivo": None, "erro": None}]) is False
