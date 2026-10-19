@@ -6944,3 +6944,17 @@ def test_as_tres_redeas_estao_nos_dois_caminhos_de_download():
                 < fonte.index("baixar_pelo_endereco(")), funcao.__name__
         # O contexto e guardado enquanto a pagina ainda responde.
         assert "contexto_de(pagina)" in fonte, funcao.__name__
+
+
+def test_os_dois_caminhos_dizem_QUAL_redea_entregou():
+    """Em 19/10/2026 o arquivo chegou pela primeira redea, depois de duas
+    corridas em que ela falhou com a janela fechando no meio. Sem dizer qual
+    entregou, nao da para saber de uma corrida para outra se o conserto pegou
+    ou se foi questao de tempo."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    for funcao in (dcp.baixar_marcados, dcp.baixar_integra):
+        fonte = inspect.getsource(funcao)
+        assert "Gravado pelo canal do navegador" in fonte, funcao.__name__

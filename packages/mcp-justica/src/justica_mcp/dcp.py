@@ -1191,6 +1191,13 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
         parar_de_ouvir()
     arquivo = arquivo_capturado(capturados)
     if arquivo:
+        # QUAL REDEA entregou. Em 19/10/2026 o arquivo chegou pela primeira,
+        # depois de duas corridas em que ela falhou com a janela fechando no
+        # meio. Sem esta linha nao da para saber, de uma corrida para outra, se
+        # o caminho que funcionou foi o direto ou um dos dois de reserva, e e
+        # isso que diz se o conserto pegou ou se foi questao de tempo.
+        print("      Gravado pelo canal do navegador: a janela sobreviveu ao "
+              "pedido.")
         return arquivo
 
     # A janela pode ter fechado com a gravacao em curso. O arquivo pode estar
@@ -1473,6 +1480,8 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
         parar_de_ouvir()
     arquivo = arquivo_capturado(capturados)
     if arquivo:
+        print("    Gravado pelo canal do navegador: a janela sobreviveu ao "
+              "pedido.")
         return arquivo
 
     resgatado = resgatar_descarga(
