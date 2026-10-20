@@ -7527,3 +7527,22 @@ def test_a_escolha_da_linha_chega_por_fechamento_e_nao_por_acaso():
     depois = _codigo_aninhado(portal.consultar_processo, "depois")
     assert "linha_do_resultado" in depois.co_freevars
     assert "linha_do_resultado" not in depois.co_varnames
+
+
+def test_o_comando_oferece_o_download_um_a_um():
+    """Guarda de fonte: a opcao tem de existir no comando e estar ligada ao
+    percurso, com o jeito de REABRIR o Visualizador, que e o que o percurso
+    nao tem como descobrir sozinho."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert '"um-a-um"' in fonte
+    assert "baixar_um_a_um(" in fonte
+    assert "reabrir_o_visualizador" in fonte
+    # A janela devolvida pelo percurso substitui a antiga: a que entrou morreu.
+    assert 'janela = resposta["janela"]' in fonte
+
+    ajuda = inspect.getsource(portal.main)
+    assert "um-a-um" in ajuda

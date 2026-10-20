@@ -7543,3 +7543,171 @@ def test_a_espera_olha_o_indicador_a_cada_volta():
     assert "gerando_o_arquivo(pagina)" in fonte
     assert (fonte.index("gerando_o_arquivo(pagina)")
             < fonte.index("proximo_aviso = agora + INTERVALO_DO_AVISO"))
+
+
+# ==========================================================================
+# Um documento por vez, que e o unico tamanho que este portal entrega
+#
+# Medido em 20/10/2026, mesmo processo, mesma corrida:
+#
+#   integra (35 documentos)          nenhum aviso de download em 900s
+#   lote de 25 documentos, 300 pag.  nenhum aviso de download em 900s
+#   lote de 10 documentos            aviso em 8s, janela morreu na leitura
+#   1 documento de 131 paginas       11545434 bytes, gravado
+#   1 documento de 2 paginas         60744 bytes, gravado
+#
+# Depois de cada download a janela do Visualizador morre, como a corrida dos
+# lotes mostrou. Por isso o percurso recebe um jeito de reabri-la, e o indice e
+# lido de novo a cada reabertura.
+# ==========================================================================
+
+def test_documento_ja_em_disco_e_reconhecido(tmp_path):
+    from justica_mcp.dcp import ja_baixado
+
+    assert ja_baixado(tmp_path, "proc", 1342) is None
+    (tmp_path / "proc-pagina1342-Documento.pdf").write_bytes(b"%PDF")
+    achado = ja_baixado(tmp_path, "proc", 1342)
+    assert achado is not None and achado.endswith("Documento.pdf")
+
+
+def test_arquivo_vazio_nao_conta_como_ja_baixado(tmp_path):
+    """Arquivo de zero byte e download que comecou e nao andou. Pular por causa
+    dele deixaria o buraco para sempre."""
+    from justica_mcp.dcp import ja_baixado
+
+    (tmp_path / "proc-pagina1342-Documento.pdf").write_bytes(b"")
+    assert ja_baixado(tmp_path, "proc", 1342) is None
+
+
+def test_pagina_parecida_nao_conta_como_ja_baixada(tmp_path):
+    from justica_mcp.dcp import ja_baixado
+
+    (tmp_path / "proc-pagina13420-Outro.pdf").write_bytes(b"%PDF")
+    assert ja_baixado(tmp_path, "proc", 1342) is None
+
+
+class _JanelaDoPercurso:
+    """O Visualizador durante o percurso um a um: morre a cada download."""
+
+    def __init__(self, paginas, morre_depois_de_baixar=True):
+        self.paginas = list(paginas)
+        self._morre = morre_depois_de_baixar
+        self.fechada = False
+        self.url = "https://www3.tjrj.jus.br/visproc/#/abc"
+
+    def is_closed(self):
+        return self.fechada
+
+
+def _montar_percurso(monkeypatch, janela, baixados, paginas, falhar_em=()):
+    """Troca as pecas que falam com o navegador por dubles."""
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "permitir_o_download_marcado", lambda *a: None)
+    monkeypatch.setattr(dcp, "abrir_caixa_de_selecao", lambda *a: True)
+    monkeypatch.setattr(dcp, "_paginas_do_indice", lambda *a: list(paginas))
+
+    def _baixar(janela_atual, guarda, destino, chave, inicio, *resto):
+        if inicio in falhar_em:
+            raise dcp.DownloadIndisponivel("o portal nao entregou")
+        from pathlib import Path
+        caminho = Path(destino) / f"{chave}-pagina{inicio}-Doc.pdf"
+        caminho.write_bytes(b"%PDF-1.7 conteudo")
+        baixados.append(inicio)
+        janela_atual.fechada = True  # a janela morre depois de cada download
+        return str(caminho)
+
+    monkeypatch.setattr(dcp, "baixar_uma_peca", _baixar)
+
+
+def test_o_percurso_baixa_todos_reabrindo_a_janela(tmp_path, monkeypatch):
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([1342, 1344, 1346])
+    baixados, reaberturas = [], []
+    _montar_percurso(monkeypatch, janela, baixados, [1342, 1344, 1346])
+
+    def reabrir():
+        reaberturas.append(1)
+        nova = _JanelaDoPercurso([])
+        return nova
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              reabrir, segundos=1)
+
+    assert baixados == [1342, 1344, 1346]
+    assert len(resposta["arquivos"]) == 3
+    assert len(reaberturas) == 2, "reabre entre um documento e o seguinte"
+    assert resposta["falhas"] == []
+
+
+def test_o_que_ja_esta_em_disco_e_pulado(tmp_path, monkeypatch):
+    """Repetir o comando para terminar o que faltou e a instrucao que as
+    recusas dao. Sem pular, ela custaria tudo de novo."""
+    from justica_mcp.dcp import baixar_um_a_um
+
+    (tmp_path / "proc-pagina1344-Doc.pdf").write_bytes(b"%PDF-1.7 antigo")
+    janela = _JanelaDoPercurso([1342, 1344, 1346])
+    baixados = []
+    _montar_percurso(monkeypatch, janela, baixados, [1342, 1344, 1346])
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: _JanelaDoPercurso([]), segundos=1)
+
+    assert 1344 not in baixados
+    assert resposta["pulados"] == [1344]
+    assert len(resposta["arquivos"]) == 2
+
+
+def test_documento_que_falha_nao_derruba_os_outros(tmp_path, monkeypatch):
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([1342, 1344, 1346])
+    baixados = []
+    _montar_percurso(monkeypatch, janela, baixados, [1342, 1344, 1346],
+                     falhar_em=(1344,))
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: _JanelaDoPercurso([]), segundos=1)
+
+    assert baixados == [1342, 1346]
+    assert len(resposta["arquivos"]) == 2
+    assert len(resposta["falhas"]) == 1
+    assert "pagina 1344" in resposta["falhas"][0]
+
+
+def test_visualizador_que_nao_reabre_interrompe_e_diz(tmp_path, monkeypatch):
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([1342, 1344])
+    baixados = []
+    _montar_percurso(monkeypatch, janela, baixados, [1342, 1344])
+
+    def reabrir():
+        raise RuntimeError("o botao do Visualizador sumiu")
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              reabrir, segundos=1)
+
+    assert baixados == [1342]
+    assert len(resposta["arquivos"]) == 1
+    assert "nao reabriu" in resposta["falhas"][0]
+    assert "nem chegaram a ser tentados" in resposta["falhas"][0]
+
+
+def test_indice_grande_demais_nao_comeca_sem_alguem_decidir(tmp_path, monkeypatch):
+    """Baixar um a um leva um download por documento. Acima do teto isso vira
+    horas, e nao comeca sozinho."""
+    from justica_mcp.dcp import DownloadIndisponivel, baixar_um_a_um
+
+    janela = _JanelaDoPercurso([])
+    _montar_percurso(monkeypatch, janela, [], list(range(1, 400)))
+
+    try:
+        baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                       lambda: janela, segundos=1, teto=200)
+    except DownloadIndisponivel as erro:
+        assert "399 documentos" in str(erro)
+        assert "teto de 200" in str(erro)
+    else:
+        raise AssertionError("deveria ter recusado")

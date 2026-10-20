@@ -1613,6 +1613,137 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
     return arquivos
 
 
+# UM DOCUMENTO POR VEZ, que e o unico tamanho que este portal entrega.
+#
+# Medido em 20/10/2026, no mesmo processo e na mesma corrida:
+#
+#   integra (35 documentos)          nenhum aviso de download em 900s
+#   lote de 25 documentos, 300 pag.  nenhum aviso de download em 900s
+#   lote de 10 documentos            aviso em 8s, janela morreu na leitura
+#   1 documento de 131 paginas       11545434 bytes, gravado
+#   1 documento de 2 paginas         60744 bytes, gravado
+#
+# O portal comeca a montar selecao grande e desiste. Selecao de um documento
+# ele entrega, inclusive de 131 paginas. Entao o processo inteiro se baixa um
+# documento por vez, e nao ha outra forma por este caminho.
+#
+# O complicador: depois de cada download a janela do Visualizador MORRE, como
+# a propria corrida dos lotes mostrou ("a janela se fechou, e os lotes
+# seguintes nem chegaram a ser tentados"). Por isso esta funcao recebe de quem
+# a chama um jeito de REABRIR o Visualizador, e o indice e lido de novo a cada
+# reabertura: referencia de elemento nao sobrevive a janela que a criou.
+#
+# E por isso tambem que documento ja gravado e PULADO. Repetir o comando para
+# terminar o que faltou e a instrucao que as recusas deste programa dao desde
+# 08/10/2026, e sem pular o que ja esta em disco ela custaria tudo de novo.
+
+
+def ja_baixado(destino: Any, chave: str, inicio: int) -> Optional[str]:
+    """O arquivo deste documento, se ja estiver em disco. O nome dele comeca
+    por `<chave>-pagina<N>-`, e o fim vem do portal."""
+    from pathlib import Path
+
+    try:
+        achados = sorted(Path(destino).glob(f"{chave}-pagina{inicio}-*"))
+    except Exception:
+        return None
+    for caminho in achados:
+        try:
+            if caminho.is_file() and caminho.stat().st_size > 0:
+                return str(caminho)
+        except Exception:
+            continue
+    return None
+
+
+def _paginas_do_indice(pagina: Any, segundos_do_indice: int) -> list:
+    """As paginas iniciais dos documentos que tem caixa de marcacao."""
+    indice = esperar_o_indice(pagina, segundos_do_indice)
+    if not indice:
+        return []
+    return [t[0] for t in indice if t[2] is not None]
+
+
+def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
+                   reabrir: Any,
+                   segundos: int = TETO_DO_DOWNLOAD,
+                   segundos_do_indice: int = SEGUNDOS_DO_INDICE,
+                   teto: int = 200) -> dict:
+    """Baixa o processo inteiro, UM documento por vez, reabrindo a janela.
+
+    Devolve {"arquivos": [...], "pulados": [...], "falhas": [...],
+    "janela": <a janela viva ao fim>}. Documento que falha nao derruba os
+    outros: eles ja estao em disco e valem.
+    """
+    permitir_o_download_marcado(janela, guarda)
+    if not abrir_caixa_de_selecao(janela, guarda):
+        raise DownloadIndisponivel(
+            f"O botao {BOTAO_CAIXA_DE_SELECAO!r} nao esta na barra. "
+            "Sem a caixa de selecao nao da para escolher documento nenhum.")
+
+    paginas = _paginas_do_indice(janela, segundos_do_indice)
+    if not paginas:
+        raise DownloadIndisponivel(
+            f"O indice de documentos nao apareceu em {segundos_do_indice}s. "
+            "Nada foi baixado."
+            + "\n    A FORMA DA TELA, para achar onde o indice esta:\n    "
+            + "\n    ".join(relatar_a_forma_do_visualizador(janela)))
+
+    if len(paginas) > teto:
+        raise DownloadIndisponivel(
+            f"O indice tem {len(paginas)} documentos, acima do teto de {teto}. "
+            "Baixar um a um levaria horas, e o teto existe para isso nao "
+            "comecar sem ninguem decidir.")
+
+    print(f"    {len(paginas)} documento(s) no indice, um download por "
+          "documento. Depois de cada um a janela do Visualizador morre e e "
+          "reaberta.")
+
+    arquivos: list = []
+    pulados: list = []
+    falhas: list = []
+
+    for ordem, inicio in enumerate(paginas, start=1):
+        pronto = ja_baixado(destino, chave, inicio)
+        if pronto:
+            pulados.append(inicio)
+            print(f"    {ordem}/{len(paginas)} pagina {inicio}: ja estava em "
+                  "disco, pulado.")
+            continue
+
+        if janela_fechada(janela):
+            print(f"    {ordem}/{len(paginas)} pagina {inicio}: reabrindo o "
+                  "Visualizador.")
+            try:
+                janela = reabrir()
+            except Exception as erro:
+                falhas.append(f"pagina {inicio}: o Visualizador nao reabriu "
+                              f"({type(erro).__name__}); os documentos "
+                              "seguintes nem chegaram a ser tentados")
+                break
+            if not abrir_caixa_de_selecao(janela, guarda):
+                falhas.append(f"pagina {inicio}: a caixa de selecao nao abriu "
+                              "na janela reaberta")
+                break
+            if not _paginas_do_indice(janela, segundos_do_indice):
+                falhas.append(f"pagina {inicio}: o indice nao voltou na janela "
+                              "reaberta")
+                break
+
+        try:
+            arquivo = baixar_uma_peca(janela, guarda, destino, chave, inicio,
+                                      segundos, segundos_do_indice)
+        except DownloadIndisponivel as exc:
+            falhas.append(f"pagina {inicio}: {exc}")
+            print(f"    {ordem}/{len(paginas)} pagina {inicio}: NAO veio.")
+            continue
+        arquivos.append(arquivo)
+        print(f"    {ordem}/{len(paginas)} pagina {inicio}: gravado em {arquivo}")
+
+    return {"arquivos": arquivos, "pulados": pulados, "falhas": falhas,
+            "janela": janela}
+
+
 def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
                    segundos: int = TETO_DO_DOWNLOAD) -> str:
     """Clica em baixar, escolhe o processo INTEGRAL e grava o arquivo.

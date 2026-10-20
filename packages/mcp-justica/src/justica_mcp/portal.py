@@ -6247,6 +6247,38 @@ def consultar_processo(
                     arquivos = [baixar_uma_peca(
                         janela, guarda, pasta, numero.apenas_digitos,
                         int(alvo), prazo_do_arquivo)]
+                elif escolha in ("um-a-um", "um a um", "umaum", "cada"):
+                    # O unico tamanho que este portal entrega. Ver o bloco em
+                    # `baixar_um_a_um`: integra e lote de 25 documentos nao
+                    # vieram em 900s; um documento de 131 paginas veio.
+                    from .dcp import baixar_um_a_um
+
+                    def reabrir_o_visualizador():
+                        return abrir_visualizador(pagina, guarda, segundos,
+                                                  motivo)
+
+                    resposta = baixar_um_a_um(
+                        janela, guarda, pasta, numero.apenas_digitos,
+                        reabrir_o_visualizador, prazo_do_arquivo)
+                    janela = resposta["janela"]
+                    arquivos = resposta["arquivos"]
+                    if resposta["pulados"]:
+                        print(f"  {len(resposta['pulados'])} documento(s) ja "
+                              "estavam em disco e foram pulados.")
+                    if resposta["falhas"]:
+                        print(f"  [INCOMPLETO] {len(resposta['falhas'])} "
+                              "documento(s) nao vieram:")
+                        for falha in resposta["falhas"][:10]:
+                            print(f"    {falha}")
+                        if len(resposta["falhas"]) > 10:
+                            print(f"    e mais {len(resposta['falhas']) - 10}.")
+                        print("  Os que deram certo estao em disco e valem. "
+                              "Repita o comando: o que ja esta gravado e "
+                              "pulado.")
+                    if not arquivos and not resposta["pulados"]:
+                        raise DownloadIndisponivel(
+                            "Nenhum documento foi gravado. "
+                            + "; ".join(resposta["falhas"][:3]))
                 elif escolha.startswith("lote:"):
                     # UM lote so, contado a partir de 1. A divisao nao muda: o
                     # lote 2 de quatro tem as mesmas paginas, sozinho ou no
@@ -7069,7 +7101,11 @@ def main(argv: list[str] | None = None) -> int:
                          "'lotes' ou 'lotes:N' baixa o processo inteiro de N em "
                          "N paginas, 300 por padrao, e 'lote:K' baixa SO o "
                          "K-esimo desses lotes, para conferir o caminho ou "
-                         "repetir um que falhou")
+                         "repetir um que falhou. 'um-a-um' baixa o processo "
+                         "inteiro com UM download por documento, reabrindo o "
+                         "Visualizador a cada um, e pula o que ja estiver em "
+                         "disco: e o unico tamanho de selecao que este portal "
+                         "entrega em processo grande")
     cp.add_argument("--linha", type=int, default=1,
                     help="qual linha do resultado abrir, quando a busca "
                          "devolve mais de uma com o mesmo numero. Cada linha "
