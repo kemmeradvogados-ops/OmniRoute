@@ -7831,3 +7831,44 @@ def test_o_reabrir_procura_a_aba_do_portal_em_vez_de_reusar_a_capturada():
     trecho = fonte.split("def reabrir_o_visualizador()")[1].split("resposta =")[0]
     assert "aba_do_portal_viva(pagina)" in trecho
     assert "abrir_visualizador(pagina," not in trecho
+
+
+def test_a_recusa_nao_cai_quando_o_endereco_nao_pode_ser_lido():
+    """`getattr(x, "url", "")` protege contra atributo que falta, nao contra
+    leitura que levanta. Quando levanta, a excecao crua toma o lugar da
+    explicacao, que e justamente o que a recusa existia para dar."""
+    from justica_mcp.dcp import endereco_do_objeto
+
+    class _QuadroMorto:
+        @property
+        def url(self):
+            raise RuntimeError("TargetClosedError")
+
+    texto = endereco_do_objeto(_QuadroMorto())
+    assert "nao respondeu" in texto
+
+
+def test_o_endereco_do_objeto_sai_sem_parametros():
+    from justica_mcp.dcp import endereco_do_objeto
+
+    class _Quadro:
+        url = ("https://www3.tjrj.jus.br/portalservicos/#/consultar"
+               "?numeroProcesso=00047245120138190078")
+
+    texto = endereco_do_objeto(_Quadro())
+    assert "00047245120138190078" not in texto
+    assert "portalservicos" in texto
+
+
+def test_a_recusa_do_botao_do_visualizador_usa_a_leitura_que_nao_levanta():
+    """Guarda de fonte: a linha que explica a falha nao pode ser a linha que
+    causa outra."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.abrir_visualizador)
+    trecho = fonte.split("gravar_a_tela(quadro, \"recusa-botao-visualizador\")")[1]
+    trecho = trecho.split("alvo = ")[0]
+    assert "endereco_do_objeto(quadro)" in trecho
+    assert "getattr(quadro" not in trecho

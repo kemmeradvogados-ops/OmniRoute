@@ -752,6 +752,26 @@ def novidades_na_tela(antes: list, agora: list) -> list[str]:
     return linhas
 
 
+def endereco_do_objeto(alvo: Any) -> str:
+    """O endereco da pagina ou do quadro, sem dado de cliente, sem levantar.
+
+    `getattr(x, "url", "")` protege contra atributo que nao existe, e so. Se a
+    leitura do endereco levantar, o erro sobe no meio da MENSAGEM DE RECUSA, e
+    ai a excecao crua toma o lugar da explicacao que a recusa existia para
+    dar. Aqui nao ha como isso acontecer.
+    """
+    from .portal import endereco_sem_dado
+
+    try:
+        bruto = getattr(alvo, "url", "") or ""
+    except Exception:
+        return "(a pagina nao respondeu ao ser perguntada pelo endereco)"
+    try:
+        return endereco_sem_dado(bruto, 80) or "(sem)"
+    except Exception:
+        return "(sem)"
+
+
 def janela_fechada(pagina: Any) -> bool:
     """A janela ainda esta aberta? Erro ao perguntar ja e resposta: nao."""
     try:
@@ -3967,7 +3987,7 @@ def abrir_visualizador(pagina: Any, guarda: Any, segundos: int = 45,
         raise ConsultaIndisponivel(
             f"O botao {BOTAO_VISUALIZADOR!r} nao apareceu na tela do processo "
             f"em {min(segundos, 30)}s. Endereco do quadro: "
-            f"{endereco_sem_dado(getattr(quadro, 'url', '') or '(sem)', 80)}. "
+            f"{endereco_do_objeto(quadro)}. "
             "Se ele ainda for a tela de busca, a pesquisa nao chegou a "
             "devolver o processo. Nada foi aberto.")
 
@@ -4280,10 +4300,20 @@ def aba_do_portal_viva(pagina: Any, segundos: int = 15) -> Any:
 
     alvo = pagina_de(pagina)
     if not janela_fechada(alvo):
+        print("      A aba do processo responde: o Visualizador reabre a "
+              "partir dela.")
         return alvo
 
+    print("      [ATENCAO] A aba do processo NAO responde mais. O advogado "
+          "informou em 20/10/2026 que ela nao precisa morrer depois do "
+          "download, entao isto e defeito, e nao o portal se comportando "
+          "como se espera.")
     achada = achar_aba_do_portal(alvo, segundos)
     if achada is not None:
+        from .portal import endereco_sem_dado
+
+        print("      Outra aba do portal esta viva e sera usada: "
+              f"{endereco_sem_dado(getattr(achada, 'url', '') or '(sem)', 80)}")
         return trazer_para_a_frente(achada)
 
     vivas = abas_do_navegador(alvo)
