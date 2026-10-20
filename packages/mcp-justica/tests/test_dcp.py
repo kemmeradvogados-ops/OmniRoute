@@ -7988,50 +7988,76 @@ def test_a_reabertura_nao_repete_o_relato_do_indice(monkeypatch, capsys):
 # ==========================================================================
 
 
-def test_o_censo_so_devolve_contagem():
+_CENSO_DE_CAMPO = {"rotulados": 58, "alternar": 41, "comNumero": 35,
+                   "entrada": 231, "papel": 0, "matCaixa": 231,
+                   "matPseudo": 231, "moldes": {"AAAAAAAAA": 4, "AAA": 2}}
+
+
+def test_o_censo_so_devolve_contagem_e_molde():
     """Nome de documento e conteudo do processo e nao sai em relato nenhum."""
     from justica_mcp.dcp import CHAVES_DO_CENSO, censo_do_indice
 
     class _Tela:
         def evaluate(self, _):
-            return {"rotulados": 120, "alternar": 35, "comNumero": 35,
-                    "marcas": 47, "nomes": ["Peticao Inicial"]}
+            return dict(_CENSO_DE_CAMPO, nomes=["Peticao Inicial"])
 
     censo = censo_do_indice(_Tela())
-    assert set(censo) == set(CHAVES_DO_CENSO)
-    assert all(isinstance(v, int) for v in censo.values())
+    assert set(censo) == set(CHAVES_DO_CENSO) | {"moldes"}
+    assert all(isinstance(censo[c], int) for c in CHAVES_DO_CENSO)
+    assert censo["moldes"] == {"AAAAAAAAA": 4, "AAA": 2}
+
+
+def test_o_molde_nao_carrega_letra_do_rotulo():
+    """O molde troca TODO caractere que nao e algarismo por 'A'. Se uma letra
+    sobrevivesse, o nome do documento comecaria a vazar pelo relato."""
+    import re
+
+    from justica_mcp.dcp import JS_DO_CENSO_DO_INDICE
+
+    assert "replace(/[^0-9\\s]/g, 'A')" in JS_DO_CENSO_DO_INDICE
+    assert re.search(r"moldes\[m\]", JS_DO_CENSO_DO_INDICE)
 
 
 def test_o_censo_nao_levanta_quando_a_tela_nao_responde():
-    from justica_mcp.dcp import censo_do_indice
+    from justica_mcp.dcp import CHAVES_DO_CENSO, censo_do_indice
 
     class _Morta:
         def evaluate(self, _):
             raise RuntimeError("TargetClosedError")
 
-    assert censo_do_indice(_Morta()) == {"rotulados": 0, "alternar": 0,
-                                         "comNumero": 0, "marcas": 0}
+    censo = censo_do_indice(_Morta())
+    assert all(censo[c] == 0 for c in CHAVES_DO_CENSO)
+    assert censo["moldes"] == {}
 
 
-def test_caixa_sobrando_e_denunciada():
-    """Caixa de marcacao e o que torna um documento baixavel. Mais caixas que
-    itens reconhecidos significa documento ficando para tras."""
+def test_item_descartado_por_nao_comecar_com_numero_e_denunciado():
+    """O numero do campo: 41 itens com rotulo 'Alternar', 35 com pagina
+    legivel. Seis sumiram sem uma palavra."""
+    from justica_mcp.dcp import relatar_o_censo
+
+    junto = " ".join(relatar_o_censo(_CENSO_DE_CAMPO, 35))
+    assert "6 item(ns) do indice" in junto
+    assert "DESCARTADOS" in junto
+    assert "'AAAAAAAAA' x4" in junto
+
+
+def test_o_censo_nao_soma_seletores_que_se_aninham():
+    """231 caixas viraram 693 porque `mat-checkbox` contem um `input`. Somar
+    seletor aninhado nao mede nada, e o numero errado saiu em campo."""
+    from justica_mcp.dcp import relatar_o_censo
+
+    junto = " ".join(relatar_o_censo(_CENSO_DE_CAMPO, 35))
+    assert "693" not in junto
+    assert "NAO se somam" in junto
+    assert "input=231" in junto
+
+
+def test_indice_todo_legivel_nao_gera_acusacao():
     from justica_mcp.dcp import relatar_o_censo
 
     linhas = relatar_o_censo(
-        {"rotulados": 120, "alternar": 35, "comNumero": 35, "marcas": 47}, 35)
-    junto = " ".join(linhas)
-    assert "12 caixa(s) de marcacao a mais" in junto
-    assert "NAO os esta pedindo" in junto
-
-
-def test_sem_caixa_sobrando_nao_ha_acusacao():
-    from justica_mcp.dcp import relatar_o_censo
-
-    linhas = relatar_o_censo(
-        {"rotulados": 120, "alternar": 35, "comNumero": 35, "marcas": 35}, 35)
-    assert len(linhas) == 1
-    assert "ATENCAO" not in linhas[0]
+        dict(_CENSO_DE_CAMPO, alternar=35, comNumero=35, moldes={}), 35)
+    assert not any("ATENCAO" in linha for linha in linhas)
 
 
 def test_o_percurso_imprime_o_censo(monkeypatch, capsys):
@@ -8039,10 +8065,8 @@ def test_o_percurso_imprime_o_censo(monkeypatch, capsys):
     from justica_mcp.dcp import _paginas_do_indice
 
     _indice_falso(monkeypatch, [_ItemDoIndice(1342), _ItemDoIndice(1344)])
-    monkeypatch.setattr(dcp, "censo_do_indice",
-                        lambda _: {"rotulados": 120, "alternar": 2,
-                                   "comNumero": 2, "marcas": 9})
+    monkeypatch.setattr(dcp, "censo_do_indice", lambda _: _CENSO_DE_CAMPO)
     _paginas_do_indice(object(), 1)
     saida = capsys.readouterr().out
-    assert "Caixas de marcacao na tela: 9" in saida
-    assert "7 caixa(s) de marcacao a mais" in saida
+    assert "input=231" in saida
+    assert "6 item(ns) do indice" in saida

@@ -218,52 +218,86 @@ JS_DO_CENSO_DO_INDICE = r"""
 () => {
   const semAcento = (s) => (s || '').toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  // MOLDE, e nao o texto: algarismo vira 9, qualquer outro caractere vira A.
+  // Assim da para ver que o rotulo comeca por palavra em vez de numero sem
+  // nunca ler que palavra e, e nome de documento e conteudo do processo.
+  const molde = (s) => (s || '').replace(/[0-9]/g, '9')
+    .replace(/[^0-9\s]/g, 'A').slice(0, 20);
   const rotulados = document.querySelectorAll('[aria-label]');
   let alternar = 0, comNumero = 0;
+  const moldes = {};
   for (const e of rotulados) {
     const r = semAcento(e.getAttribute('aria-label'));
     if (!r.startsWith('alternar ')) continue;
     alternar++;
-    const resto = r.slice('alternar '.length).trim();
+    const resto = r.slice(9).trim();
     const n = resto.split(' ')[0].split('-')[0];
-    if (/^\d+$/.test(n)) comNumero++;
+    if (/^\d+$/.test(n)) { comNumero++; continue; }
+    const m = molde(resto.split(' ')[0]);
+    moldes[m] = (moldes[m] || 0) + 1;
   }
-  const marcas = document.querySelectorAll(
-    'input[type=checkbox], [role=checkbox], mat-checkbox, mat-pseudo-checkbox');
-  return { rotulados: rotulados.length, alternar: alternar,
-           comNumero: comNumero, marcas: marcas.length };
+  const conta = (s) => document.querySelectorAll(s).length;
+  return {
+    rotulados: rotulados.length, alternar: alternar, comNumero: comNumero,
+    moldes: moldes,
+    entrada: conta('input[type=checkbox]'),
+    papel: conta('[role=checkbox]'),
+    matCaixa: conta('mat-checkbox'),
+    matPseudo: conta('mat-pseudo-checkbox'),
+  };
 }"""
 
-CHAVES_DO_CENSO = ("rotulados", "alternar", "comNumero", "marcas")
+CHAVES_DO_CENSO = ("rotulados", "alternar", "comNumero",
+                   "entrada", "papel", "matCaixa", "matPseudo")
 
 
 def censo_do_indice(pagina: Any) -> dict:
-    """Contagens da tela do indice. Nunca levanta, nunca devolve texto."""
+    """Contagens e MOLDES da tela do indice. Nunca levanta, nunca sai texto."""
     try:
         lido = pagina.evaluate(JS_DO_CENSO_DO_INDICE)
     except Exception:
         lido = None
     if not isinstance(lido, dict):
         lido = {}
-    return {chave: int(lido.get(chave) or 0) for chave in CHAVES_DO_CENSO}
+    censo: dict = {chave: int(lido.get(chave) or 0)
+                   for chave in CHAVES_DO_CENSO}
+    moldes = lido.get("moldes")
+    censo["moldes"] = ({str(k): int(v) for k, v in moldes.items()}
+                       if isinstance(moldes, dict) else {})
+    return censo
 
 
 def relatar_o_censo(censo: dict, reconhecidos: int) -> list:
-    """O censo em linhas, e o aviso quando sobra caixa sem item reconhecido."""
+    """O censo em linhas, com o alarme no que de fato se pode afirmar.
+
+    A primeira versao desta funcao somava quatro seletores de caixa de marcacao
+    e anunciava a diferenca como documento perdido. Estava errado e o numero
+    saiu em campo: `mat-checkbox` CONTEM um `input[type=checkbox]`, entao a
+    mesma caixa era contada duas e tres vezes, e 231 caixas viraram 693. Somar
+    seletores que se aninham nao mede nada. Aqui cada um sai separado, com o
+    aviso de que nao se somam.
+    """
     linhas = [
         f"Elementos com rotulo na tela: {censo['rotulados']}. "
         f"Rotulo comecando por 'Alternar': {censo['alternar']}, "
-        f"desses com pagina legivel: {censo['comNumero']}. "
-        f"Caixas de marcacao na tela: {censo['marcas']}."
+        f"desses com pagina legivel: {censo['comNumero']}.",
+        "Caixas de marcacao, por seletor (NAO se somam, uma mat-checkbox "
+        f"contem um input): input={censo['entrada']} "
+        f"papel={censo['papel']} mat-checkbox={censo['matCaixa']} "
+        f"mat-pseudo={censo['matPseudo']}.",
     ]
-    sobrando = censo["marcas"] - reconhecidos
-    if sobrando > 0:
+    perdidos = censo["alternar"] - censo["comNumero"]
+    if perdidos > 0:
+        moldes = censo.get("moldes") or {}
+        desenho = ", ".join(f"{m!r} x{q}" for m, q in
+                            sorted(moldes.items(), key=lambda p: -p[1])[:5])
         linhas.append(
-            f"[ATENCAO] Ha {sobrando} caixa(s) de marcacao a mais do que "
-            f"item(ns) reconhecido(s) ({reconhecidos}). Caixa de marcacao e o "
-            "que torna um documento baixavel, entao esses documentos existem "
-            "no indice e o programa NAO os esta pedindo. E a explicacao mais "
-            "provavel para as folhas que faltam na pasta.")
+            f"[ATENCAO] {perdidos} item(ns) do indice tem rotulo 'Alternar' e "
+            "foram DESCARTADOS por nao comecar com numero de pagina. O molde "
+            f"do primeiro termo deles: {desenho or '(nao lido)'} "
+            "(9 = algarismo, A = qualquer outro caractere). Documento "
+            "descartado aqui nunca e pedido, e e candidato direto as folhas "
+            "que faltam na pasta.")
     return linhas
 
 
