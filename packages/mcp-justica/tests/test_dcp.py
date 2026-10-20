@@ -7407,3 +7407,139 @@ def test_a_paginacao_relata_o_paginador_no_fim():
     assert "estado_do_paginador(quadro)" in fonte
     assert "historico-percorrido" in fonte
     assert "len(acumulado)" in fonte
+
+
+# ==========================================================================
+# Dois consertos do que a corrida da integra expos, em 20/10/2026
+#
+# 1. No lote 2 a leitura do blob nao gravou NEM reportou erro. A leitura e uma
+#    chamada que bloqueia, o Playwright sincrono roda sobre greenlets, e ela
+#    devolve o controle ao laco principal: com a janela morrendo nesse
+#    intervalo, o trecho nunca retoma e a recusa sai muda sobre a unica redea
+#    que importava.
+#
+# 2. A integra e o lote de 25 documentos ficaram 900s sem nenhum aviso. O botao
+#    virou `downloading` nos primeiros 60s e voltou ao normal. O portal comecou
+#    e desistiu, e a espera seguiu 14 minutos olhando uma tela que ja tinha
+#    respondido. Duas vezes, 12 minutos cada, do tempo do advogado.
+# ==========================================================================
+
+def test_a_leitura_do_blob_pela_metade_e_dita():
+    from justica_mcp.dcp import recado_do_blob
+
+    recado = recado_do_blob([{"blob_comecou": True, "blob_terminou": False}])
+    assert "comecou e nao terminou" in recado
+    assert "a janela morreu no meio dela" in recado
+
+
+def test_a_leitura_que_terminou_bem_nao_vira_queixa():
+    from justica_mcp.dcp import recado_do_blob
+
+    assert recado_do_blob(
+        [{"blob_comecou": True, "blob_terminou": True}]) == ""
+
+
+def test_a_marca_da_leitura_e_posta_antes_e_tirada_depois():
+    """E a unica coisa que sobrevive a janela morrer no meio da leitura."""
+    from justica_mcp.dcp import escutar_descargas
+
+    class _Baixado:
+        suggested_filename = "Peca.pdf"
+        url = "blob:https://www3.tjrj.jus.br/abc"
+
+    class _PaginaQueMorreNoMeio:
+        def __init__(self):
+            self.ouvintes = {}
+
+        def evaluate(self, js, pedido=None):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+        def on(self, evento, funcao):
+            self.ouvintes[evento] = funcao
+
+        def remove_listener(self, evento, funcao):
+            self.ouvintes.pop(evento, None)
+
+    pagina = _PaginaQueMorreNoMeio()
+    capturados = []
+    escutar_descargas(pagina, capturados, lambda _b: "/destino/x.pdf")
+    pagina.ouvintes["download"](_Baixado())
+
+    # Aqui a leitura ERRA e termina, entao a marca de metade nao fica.
+    assert capturados[0]["blob_comecou"] is True
+    assert capturados[0]["blob_terminou"] is True
+    assert "nao respondeu" in capturados[0]["erro_do_blob"]
+
+
+def test_o_indicador_de_geracao_e_lido_da_tela():
+    from justica_mcp.dcp import gerando_o_arquivo
+
+    class _TelaGerando:
+        def evaluate(self, js):
+            return True
+
+    class _TelaParada:
+        def evaluate(self, js):
+            return False
+
+    class _TelaMorta:
+        def evaluate(self, js):
+            raise RuntimeError("fechou")
+
+    assert gerando_o_arquivo(_TelaGerando()) is True
+    assert gerando_o_arquivo(_TelaParada()) is False
+    assert gerando_o_arquivo(_TelaMorta()) is False
+
+
+class _JanelaComIndicador(_JanelaDaDescarga):
+    """A janela mostra o indicador por algumas voltas e depois o esconde."""
+
+    def __init__(self, voltas_com_indicador, fechada=False):
+        super().__init__([], fechada=fechada)
+        self._restam = voltas_com_indicador
+        self.leituras_do_indicador = 0
+
+    def evaluate(self, js):
+        if "downloading" in js:
+            self.leituras_do_indicador += 1
+            if self._restam > 0:
+                self._restam -= 1
+                return True
+            return False
+        return []
+
+
+def test_indicador_que_aparece_e_some_encerra_a_espera():
+    """Esperar depois dele e esperar por nada."""
+    from justica_mcp.dcp import esperar_a_descarga
+
+    janela = _JanelaComIndicador(voltas_com_indicador=2)
+    parada = esperar_a_descarga(janela, [], 600, recuo="")
+
+    assert parada is not None
+    assert "comecou a montar o arquivo e desistiu" in parada
+    assert "nao traria o arquivo" in parada
+    assert janela.voltas < 20, "nao esperou o prazo inteiro"
+
+
+def test_indicador_que_nunca_apareceu_nao_encerra_nada_cedo():
+    """Sem indicador nenhum, a espera e a de sempre: pode ser que o portal
+    ainda nem tenha comecado."""
+    from justica_mcp.dcp import esperar_a_descarga
+
+    janela = _JanelaComIndicador(voltas_com_indicador=0)
+    parada = esperar_a_descarga(janela, [], 1, recuo="")
+    assert "Nenhum arquivo chegou" in parada
+
+
+def test_a_espera_olha_o_indicador_a_cada_volta():
+    """Guarda de fonte: olhar so no aviso de 20 em 20 segundos deixaria o
+    indicador sumir sem ninguem ver."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.esperar_a_descarga)
+    assert "gerando_o_arquivo(pagina)" in fonte
+    assert (fonte.index("gerando_o_arquivo(pagina)")
+            < fonte.index("proximo_aviso = agora + INTERVALO_DO_AVISO"))

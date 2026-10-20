@@ -776,7 +776,9 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
         registro: dict[str, Any] = {"baixado": baixado, "arquivo": None,
                                     "erro": None, "sugerido": None,
                                     "url": None, "bytes": None,
-                                    "tamanho": 0, "erro_do_blob": None}
+                                    "tamanho": 0, "erro_do_blob": None,
+                                    "blob_comecou": False,
+                                    "blob_terminou": False}
         capturados.append(registro)
         # O nome ANTES de gravar: se a janela morrer no meio da gravacao, o
         # resgate pela pasta do navegador ainda precisa saber como chamar o
@@ -798,8 +800,17 @@ def escutar_descargas(pagina: Any, capturados: list, gravar: Any) -> Any:
         # janela ainda responde. Tentar antes o canal, que ja falhou duas
         # vezes com a janela caindo, gastaria justamente esses segundos.
         if (registro["url"] or "").lower().startswith("blob:"):
+            # MARCADO ANTES e desmarcado depois. A leitura e uma chamada que
+            # bloqueia, e o Playwright sincrono roda sobre greenlets: ela
+            # devolve o controle ao laco principal, e se a janela morrer nesse
+            # intervalo este trecho nunca retoma. Em 20/10/2026 foi o que
+            # aconteceu no lote 2, e a recusa saiu MUDA sobre a unica redea que
+            # importava: nem arquivo, nem erro, nem explicacao. A marca e a
+            # unica coisa que sobrevive a isso.
+            registro["blob_comecou"] = True
             dona = getattr(baixado, "page", None) or pagina
             lido = ler_o_blob(dona, registro["url"])
+            registro["blob_terminou"] = True
             if lido.get("bytes"):
                 registro["bytes"] = lido["bytes"]
                 registro["tamanho"] = lido.get("tamanho") or len(lido["bytes"])
@@ -876,10 +887,59 @@ def gravar_o_conteudo(capturados: list, destino: Any, nome: str,
 
 def recado_do_blob(capturados: list) -> str:
     """Por que a leitura do blob nao deu certo, quando nao deu."""
+    partes = []
+    # Comecou e nao terminou: a janela morreu no meio da leitura. Ver a marca
+    # em `escutar_descargas`.
+    pela_metade = sum(1 for r in capturados
+                      if r.get("blob_comecou") and not r.get("blob_terminou"))
+    if pela_metade:
+        partes.append(
+            f" A leitura do conteudo da janela comecou e nao terminou "
+            f"({pela_metade} vez(es)): a janela morreu no meio dela.")
     motivos = [r["erro_do_blob"] for r in capturados if r.get("erro_do_blob")]
-    if not motivos:
-        return ""
-    return " A leitura do conteudo da janela falhou: " + "; ".join(motivos) + "."
+    if motivos:
+        partes.append(" A leitura do conteudo da janela falhou: "
+                      + "; ".join(motivos) + ".")
+    return "".join(partes)
+
+
+# O PORTAL DESISTE, e isso da para ver.
+#
+# 20/10/2026: a integra e o lote de 25 documentos ficaram 900 segundos sem
+# nenhum aviso de download. O botao virou `downloading` nos primeiros 60s e
+# depois voltou ao normal. Ou seja: o portal comecou a montar e desistiu, e a
+# espera seguiu por mais 14 minutos olhando uma tela que ja tinha dado a
+# resposta. Duas vezes, 12 minutos cada, do tempo do advogado.
+#
+# O indicador que aparece e some sem entregar nada e a resposta. Esperar depois
+# dele e esperar por nada.
+JS_DO_INDICADOR = r"""() => {
+  const MARCAS = ['downloading', 'hourglass_top', 'hourglass_empty',
+                  'hourglass_bottom'];
+  for (const e of document.querySelectorAll('button, [aria-label], mat-icon, i')) {
+    const texto = (e.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (MARCAS.indexOf(texto) >= 0) return true;
+  }
+  const girando = document.querySelector(
+    'mat-spinner, mat-progress-bar, .mat-mdc-progress-spinner, .p-progressbar');
+  if (girando) {
+    const r = girando.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return true;
+  }
+  return false;
+}"""
+
+# Quantas leituras seguidas sem o indicador bastam para dizer que ele sumiu.
+# Uma so poderia pegar o intervalo entre dois quadros da animacao.
+LEITURAS_SEM_INDICADOR = 3
+
+
+def gerando_o_arquivo(pagina: Any) -> bool:
+    """Se a tela mostra que o portal esta montando o arquivo AGORA."""
+    try:
+        return bool(pagina.evaluate(JS_DO_INDICADOR))
+    except Exception:
+        return False
 
 
 def gravacao_terminou(capturados: list) -> bool:
@@ -926,6 +986,10 @@ def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
     comeco = time.time()
     limite = comeco + espera
     proximo_aviso = comeco + INTERVALO_DO_AVISO
+    # O indicador de geracao: viu-se aparecer, e depois sumir sem entregar, e a
+    # resposta do portal. Ver o bloco em `JS_DO_INDICADOR`.
+    indicador_apareceu = False
+    sem_indicador = 0
     # Duas redeas, nao uma. O relogio e quem manda no navegador de verdade; a
     # conta de voltas existe porque cada volta dorme `PASSO_DA_ESPERA`, entao
     # passar desse numero significa que a espera nao esta dormindo coisa
@@ -946,6 +1010,18 @@ def esperar_a_descarga(pagina: Any, capturados: list, espera: int,
         if not capturados and janela_fechada(pagina):
             return (f"A janela se fechou {int(time.time() - comeco)}s depois do "
                     f"pedido, antes de o arquivo chegar. O prazo era de {espera}s.")
+        if gerando_o_arquivo(pagina):
+            indicador_apareceu = True
+            sem_indicador = 0
+        elif indicador_apareceu:
+            sem_indicador += 1
+            if sem_indicador >= LEITURAS_SEM_INDICADOR:
+                return (
+                    "o portal comecou a montar o arquivo e desistiu: o "
+                    "indicador de geracao apareceu e sumiu sem entregar nada, "
+                    f"{int(time.time() - comeco)}s depois do pedido. Esperar o "
+                    f"prazo inteiro de {espera}s nao traria o arquivo.")
+
         agora = time.time()
         if agora >= proximo_aviso:
             proximo_aviso = agora + INTERVALO_DO_AVISO
