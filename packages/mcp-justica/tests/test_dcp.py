@@ -7989,8 +7989,10 @@ def test_a_reabertura_nao_repete_o_relato_do_indice(monkeypatch, capsys):
 
 
 _CENSO_DE_CAMPO = {"rotulados": 58, "alternar": 41, "comNumero": 35,
-                   "entrada": 231, "papel": 0, "matCaixa": 231,
-                   "matPseudo": 231, "moldes": {"AAAAAAAAA": 4, "AAA": 2}}
+                   "entrada": 347, "papel": 0, "matCaixa": 346,
+                   "matPseudo": 0,
+                   "moldes": {"AAAAAA 9999 A AAAAAAAA": 5,
+                              "AAAAAAAAA AAA AAAAAA": 1}}
 
 
 def test_o_censo_so_devolve_contagem_e_molde():
@@ -8004,7 +8006,7 @@ def test_o_censo_so_devolve_contagem_e_molde():
     censo = censo_do_indice(_Tela())
     assert set(censo) == set(CHAVES_DO_CENSO) | {"moldes"}
     assert all(isinstance(censo[c], int) for c in CHAVES_DO_CENSO)
-    assert censo["moldes"] == {"AAAAAAAAA": 4, "AAA": 2}
+    assert censo["moldes"] == _CENSO_DE_CAMPO["moldes"]
 
 
 def test_o_molde_nao_carrega_letra_do_rotulo():
@@ -8038,7 +8040,11 @@ def test_item_descartado_por_nao_comecar_com_numero_e_denunciado():
     junto = " ".join(relatar_o_censo(_CENSO_DE_CAMPO, 35))
     assert "6 item(ns) do indice" in junto
     assert "DESCARTADOS" in junto
-    assert "'AAAAAAAAA' x4" in junto
+    assert "'AAAAAA 9999 A AAAAAAAA' x5" in junto
+    # O molde do rotulo INTEIRO, porque o do primeiro termo so dizia que ele
+    # nao era numero. Com o rotulo inteiro da para ver se a pagina esta nele.
+    assert "rotulo inteiro" in junto
+    assert "a pagina esta no rotulo" in junto
 
 
 def test_o_censo_nao_soma_seletores_que_se_aninham():
@@ -8049,7 +8055,7 @@ def test_o_censo_nao_soma_seletores_que_se_aninham():
     junto = " ".join(relatar_o_censo(_CENSO_DE_CAMPO, 35))
     assert "693" not in junto
     assert "NAO se somam" in junto
-    assert "input=231" in junto
+    assert "input=347" in junto
 
 
 def test_indice_todo_legivel_nao_gera_acusacao():
@@ -8068,5 +8074,5 @@ def test_o_percurso_imprime_o_censo(monkeypatch, capsys):
     monkeypatch.setattr(dcp, "censo_do_indice", lambda _: _CENSO_DE_CAMPO)
     _paginas_do_indice(object(), 1)
     saida = capsys.readouterr().out
-    assert "input=231" in saida
+    assert "input=347" in saida
     assert "6 item(ns) do indice" in saida

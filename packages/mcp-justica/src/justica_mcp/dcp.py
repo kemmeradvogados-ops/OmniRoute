@@ -221,8 +221,8 @@ JS_DO_CENSO_DO_INDICE = r"""
   // MOLDE, e nao o texto: algarismo vira 9, qualquer outro caractere vira A.
   // Assim da para ver que o rotulo comeca por palavra em vez de numero sem
   // nunca ler que palavra e, e nome de documento e conteudo do processo.
-  const molde = (s) => (s || '').replace(/[0-9]/g, '9')
-    .replace(/[^0-9\s]/g, 'A').slice(0, 20);
+  const molde = (s, n) => (s || '').replace(/[0-9]/g, '9')
+    .replace(/[^0-9\s]/g, 'A').slice(0, n || 20);
   const rotulados = document.querySelectorAll('[aria-label]');
   let alternar = 0, comNumero = 0;
   const moldes = {};
@@ -233,7 +233,7 @@ JS_DO_CENSO_DO_INDICE = r"""
     const resto = r.slice(9).trim();
     const n = resto.split(' ')[0].split('-')[0];
     if (/^\d+$/.test(n)) { comNumero++; continue; }
-    const m = molde(resto.split(' ')[0]);
+    const m = molde(resto, 48);
     moldes[m] = (moldes[m] || 0) + 1;
   }
   const conta = (s) => document.querySelectorAll(s).length;
@@ -294,10 +294,11 @@ def relatar_o_censo(censo: dict, reconhecidos: int) -> list:
         linhas.append(
             f"[ATENCAO] {perdidos} item(ns) do indice tem rotulo 'Alternar' e "
             "foram DESCARTADOS por nao comecar com numero de pagina. O molde "
-            f"do primeiro termo deles: {desenho or '(nao lido)'} "
-            "(9 = algarismo, A = qualquer outro caractere). Documento "
-            "descartado aqui nunca e pedido, e e candidato direto as folhas "
-            "que faltam na pasta.")
+            f"do rotulo inteiro deles: {desenho or '(nao lido)'} "
+            "(9 = algarismo, A = qualquer outro caractere). Se houver 9 em "
+            "algum ponto, a pagina esta no rotulo e so nao esta no comeco. "
+            "Documento descartado aqui nunca e pedido, e e candidato direto "
+            "as folhas que faltam na pasta.")
     return linhas
 
 
