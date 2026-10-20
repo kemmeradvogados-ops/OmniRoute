@@ -7872,3 +7872,48 @@ def test_a_recusa_do_botao_do_visualizador_usa_a_leitura_que_nao_levanta():
     trecho = trecho.split("alvo = ")[0]
     assert "endereco_do_objeto(quadro)" in trecho
     assert "getattr(quadro" not in trecho
+
+
+def test_o_percurso_nao_reabre_janela_que_continua_viva(tmp_path, monkeypatch):
+    """Em 20/10/2026 os 33 documentos vieram na MESMA janela, sem reabertura
+    nenhuma. Eu tinha escrito, e o programa chegou a imprimir, que ela morria
+    depois de cada download: era generalizacao da corrida dos lotes, onde a
+    janela morria em selecao grande, feita sem ter visto o caso de um
+    documento."""
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([1342, 1344, 1346])
+    baixados, reaberturas = [], []
+    _montar_percurso(monkeypatch, janela, baixados, [1342, 1344, 1346])
+
+    from justica_mcp import dcp
+
+    # A janela sobrevive, que e o que o portal fez em campo.
+    def _baixar_sem_matar(janela_atual, guarda, destino, chave, inicio, *resto):
+        caminho = tmp_path / f"{chave}-pagina{inicio}-Doc.pdf"
+        caminho.write_bytes(b"%PDF-1.7 conteudo")
+        baixados.append(inicio)
+        return str(caminho)
+
+    monkeypatch.setattr(dcp, "baixar_uma_peca", _baixar_sem_matar)
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: reaberturas.append(1) or janela,
+                              segundos=1)
+
+    assert baixados == [1342, 1344, 1346]
+    assert reaberturas == [], "janela viva nao se reabre"
+    assert resposta["falhas"] == []
+
+
+def test_o_programa_nao_anuncia_morte_de_janela_como_se_fosse_certa():
+    """Guarda de fonte. A frase impressa dizia que a janela morria depois de
+    cada download, e isso e falso. Anunciar como certo o que e contingencia
+    manda o operador esperar o que nao vai acontecer."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.baixar_um_a_um)
+    assert "morre e e reaberta" not in fonte
+    assert "Se a janela do Visualizador morrer no meio" in fonte

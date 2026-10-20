@@ -1647,11 +1647,16 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
 # ele entrega, inclusive de 131 paginas. Entao o processo inteiro se baixa um
 # documento por vez, e nao ha outra forma por este caminho.
 #
-# O complicador: depois de cada download a janela do Visualizador MORRE, como
-# a propria corrida dos lotes mostrou ("a janela se fechou, e os lotes
-# seguintes nem chegaram a ser tentados"). Por isso esta funcao recebe de quem
-# a chama um jeito de REABRIR o Visualizador, e o indice e lido de novo a cada
-# reabertura: referencia de elemento nao sobrevive a janela que a criou.
+# A janela PODE morrer no meio, e nem sempre morre. Eu escrevi aqui, e o
+# programa chegou a IMPRIMIR, que ela morria depois de cada download. A corrida
+# de 20/10/2026 desmentiu: 33 documentos seguidos na MESMA janela, sem uma
+# reabertura. O que a corrida dos lotes tinha mostrado era a janela morrendo em
+# selecao grande, e eu generalizei isso para o documento unico sem ter visto.
+#
+# Entao a reabertura e CONTINGENCIA, nao etapa: esta funcao recebe de quem a
+# chama um jeito de reabrir o Visualizador e so o usa quando a janela de fato
+# nao responde mais. Quando ela e usada, o indice e lido de novo, porque
+# referencia de elemento nao sobrevive a janela que a criou.
 #
 # E por isso tambem que documento ja gravado e PULADO. Repetir o comando para
 # terminar o que faltou e a instrucao que as recusas deste programa dao desde
@@ -1689,11 +1694,15 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
                    segundos: int = TETO_DO_DOWNLOAD,
                    segundos_do_indice: int = SEGUNDOS_DO_INDICE,
                    teto: int = 200) -> dict:
-    """Baixa o processo inteiro, UM documento por vez, reabrindo a janela.
+    """Baixa o processo inteiro, UM documento por vez.
 
     Devolve {"arquivos": [...], "pulados": [...], "falhas": [...],
     "janela": <a janela viva ao fim>}. Documento que falha nao derruba os
     outros: eles ja estao em disco e valem.
+
+    Reabrir a janela e contingencia e nao etapa: ver o bloco acima. Em
+    20/10/2026 os 33 documentos vieram na mesma janela, sem reabertura
+    nenhuma.
     """
     permitir_o_download_marcado(janela, guarda)
     if not abrir_caixa_de_selecao(janela, guarda):
@@ -1716,8 +1725,8 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
             "comecar sem ninguem decidir.")
 
     print(f"    {len(paginas)} documento(s) no indice, um download por "
-          "documento. Depois de cada um a janela do Visualizador morre e e "
-          "reaberta.")
+          "documento. Se a janela do Visualizador morrer no meio, ela e "
+          "reaberta e o percurso continua.")
 
     arquivos: list = []
     pulados: list = []

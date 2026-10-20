@@ -6250,7 +6250,8 @@ def consultar_processo(
                 elif escolha in ("um-a-um", "um a um", "umaum", "cada"):
                     # O unico tamanho que este portal entrega. Ver o bloco em
                     # `baixar_um_a_um`: integra e lote de 25 documentos nao
-                    # vieram em 900s; um documento de 131 paginas veio.
+                    # vieram em 900s; um documento de 131 paginas veio, e em
+                    # 20/10/2026 os 35 documentos do processo vieram assim.
                     from .dcp import baixar_um_a_um
 
                     def reabrir_o_visualizador():
