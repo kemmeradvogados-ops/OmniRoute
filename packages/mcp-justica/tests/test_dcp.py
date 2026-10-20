@@ -8159,3 +8159,133 @@ def test_o_percurso_imprime_os_dois_censos(monkeypatch, capsys):
     saida = capsys.readouterr().out
     assert "input=347" in saida
     assert "FORA de qualquer no 'Alternar': 306" in saida
+
+
+# ==========================================================================
+# O leitor do indice parte da CAIXA DE MARCACAO
+#
+# Medido em 20/10/2026: 347 linhas com caixa, 42 sob um no 'Alternar' e 305
+# fora dele, as 305 comecando por algarismo. Pelo rotulo o leitor via 35.
+# Baixava 35. O advogado apontou que as folhas que faltavam eram certidoes de
+# publicacao e atos ordinatorios, e certidao e folha de arvore: nao tem no que
+# abre e fecha, logo nao tem rotulo 'Alternar'.
+# ==========================================================================
+
+
+class _CaixaMarcada:
+    def __init__(self, pagina):
+        self._pagina = pagina
+
+    def get_attribute(self, nome):
+        from justica_mcp.dcp import MARCA_DA_PAGINA
+
+        return str(self._pagina) if nome == MARCA_DA_PAGINA else None
+
+
+class _TelaComCaixas:
+    def __init__(self, paginas, quebra=False):
+        self._paginas = list(paginas)
+        self._quebra = quebra
+        self.avaliou = 0
+
+    def evaluate(self, _):
+        self.avaliou += 1
+        if self._quebra:
+            raise RuntimeError("TargetClosedError")
+        return {"marcadas": len(self._paginas), "caixas": len(self._paginas),
+                "semLinha": 0, "semNumero": 0}
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.dcp import ALVO_DAS_LINHAS_MARCAVEIS
+
+        if seletor != ALVO_DAS_LINHAS_MARCAVEIS:
+            return []
+        return [_CaixaMarcada(p) for p in self._paginas]
+
+
+def test_as_linhas_vem_pela_caixa_de_marcacao():
+    from justica_mcp.dcp import linhas_marcaveis
+
+    tela = _TelaComCaixas([1342, 1351, 1354])
+    lidas = linhas_marcaveis(tela)
+    assert [p for p, _ in lidas] == [1342, 1351, 1354]
+    assert tela.avaliou == 1, "a arvore e marcada no navegador, uma vez"
+
+
+def test_tela_que_nao_responde_devolve_lista_vazia():
+    from justica_mcp.dcp import linhas_marcaveis
+
+    assert linhas_marcaveis(_TelaComCaixas([1342], quebra=True)) == []
+
+
+def test_o_indice_usa_a_caixa_e_nao_o_rotulo(monkeypatch):
+    """Era aqui que 305 documentos sumiam."""
+    from justica_mcp import dcp
+
+    chamou_o_antigo = []
+    monkeypatch.setattr(dcp, "itens_do_indice",
+                        lambda _: chamou_o_antigo.append(1) or [])
+    indice = dcp.indice_com_paginas(_TelaComCaixas([1342, 1351]))
+    assert [t[0] for t in indice] == [1342, 1351]
+    assert all(t[2] is not None for t in indice), "a caixa E a marca"
+    assert not chamou_o_antigo, "pela caixa nao se cai no caminho do rotulo"
+
+
+def test_sem_caixa_marcavel_o_caminho_do_rotulo_continua():
+    """Trocar um indice pequeno por indice nenhum seria piorar."""
+    from justica_mcp import dcp
+
+    class _SemCaixa(_TelaComCaixas):
+        def __init__(self):
+            super().__init__([])
+
+    class _Item:
+        def get_attribute(self, _):
+            return "Alternar 1342 - Documento"
+
+        def query_selector_all(self, _):
+            return []
+
+    tela = _SemCaixa()
+    original = dcp.itens_do_indice
+    try:
+        dcp.itens_do_indice = lambda _: [_Item()]
+        indice = dcp.indice_com_paginas(tela)
+    finally:
+        dcp.itens_do_indice = original
+    assert [t[0] for t in indice] == [1342]
+
+
+def test_o_teto_do_percurso_diz_como_subir():
+    from justica_mcp.dcp import DownloadIndisponivel, baixar_um_a_um
+
+    janela = _JanelaDoPercurso([])
+    import pytest as _p
+
+    from justica_mcp import dcp
+
+    monkey = _p.MonkeyPatch()
+    try:
+        monkey.setattr(dcp, "permitir_o_download_marcado", lambda *a: None)
+        monkey.setattr(dcp, "abrir_caixa_de_selecao", lambda *a: True)
+        monkey.setattr(dcp, "_paginas_do_indice",
+                       lambda *a, **k: list(range(1, 348)))
+        with _p.raises(DownloadIndisponivel) as erro:
+            baixar_um_a_um(janela, _GuardaQueLibera(), ".", "proc",
+                           lambda: janela, segundos=1, teto=200)
+    finally:
+        monkey.undo()
+    assert "347 documentos" in str(erro.value)
+    assert "um-a-um:347" in str(erro.value)
+
+
+def test_o_comando_aceita_o_teto_no_proprio_documentos():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split('escolha.startswith("um-a-um:")')[1].split(
+        'elif escolha.startswith("lote:")')[0]
+    assert "teto=teto_do_percurso" in trecho
+    assert "nao e um numero de" in trecho

@@ -6247,12 +6247,14 @@ def consultar_processo(
                     arquivos = [baixar_uma_peca(
                         janela, guarda, pasta, numero.apenas_digitos,
                         int(alvo), prazo_do_arquivo)]
-                elif escolha in ("um-a-um", "um a um", "umaum", "cada"):
+                elif (escolha in ("um-a-um", "um a um", "umaum", "cada")
+                      or escolha.startswith("um-a-um:")):
                     # O unico tamanho que este portal entrega. Ver o bloco em
                     # `baixar_um_a_um`: integra e lote de 25 documentos nao
                     # vieram em 900s; um documento de 131 paginas veio, e em
                     # 20/10/2026 os 35 documentos do processo vieram assim.
-                    from .dcp import baixar_um_a_um
+                    from .dcp import (TETO_DE_DOCUMENTOS_UM_A_UM,
+                                      baixar_um_a_um)
 
                     def reabrir_o_visualizador():
                         # A aba do portal AGORA, e nao a que foi capturada no
@@ -6265,9 +6267,18 @@ def consultar_processo(
                         return abrir_visualizador(aba_do_portal_viva(pagina),
                                                   guarda, segundos, motivo)
 
+                    teto_do_percurso = TETO_DE_DOCUMENTOS_UM_A_UM
+                    if ":" in escolha:
+                        pedido = escolha.split(":", 1)[1].strip()
+                        if not pedido.isdigit() or int(pedido) < 1:
+                            print(f"  [PAROU] {pedido!r} nao e um numero de "
+                                  "documentos. Use 'um-a-um:400'.")
+                            return 1
+                        teto_do_percurso = int(pedido)
                     resposta = baixar_um_a_um(
                         janela, guarda, pasta, numero.apenas_digitos,
-                        reabrir_o_visualizador, prazo_do_arquivo)
+                        reabrir_o_visualizador, prazo_do_arquivo,
+                        teto=teto_do_percurso)
                     janela = resposta["janela"]
                     arquivos = resposta["arquivos"]
                     if resposta["pulados"]:
@@ -7113,7 +7124,8 @@ def main(argv: list[str] | None = None) -> int:
                          "inteiro com UM download por documento, reabrindo o "
                          "Visualizador a cada um, e pula o que ja estiver em "
                          "disco: e o unico tamanho de selecao que este portal "
-                         "entrega em processo grande")
+                         "entrega em processo grande. 'um-a-um:N' sobe o teto "
+                         "de documentos do percurso, que e 200 por padrao")
     cp.add_argument("--linha", type=int, default=1,
                     help="qual linha do resultado abrir, quando a busca "
                          "devolve mais de uma com o mesmo numero. Cada linha "

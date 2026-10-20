@@ -726,14 +726,101 @@ def desmarcar_tudo(marcas: Any, pagina: Any) -> int:
     return desfeitas
 
 
+# O LEITOR DO INDICE, pela caixa de marcacao.
+#
+# A corrida de 20/10/2026 mediu: 347 linhas com caixa de marcacao, 42 sob um no
+# com rotulo "Alternar" e 305 FORA dele, as 305 comecando por algarismo. O
+# leitor antigo exigia o rotulo "Alternar" e via 35. Baixava 35.
+#
+# A regra do rotulo foi minha, de 06/10/2026, tirada dos itens que eu tinha
+# visto naquele dia: "e feito de botoes cujo rotulo acessivel comeca por
+# 'Alternar '". "Alternar" e rotulo de no que abre e fecha; documento sem
+# filho nao precisa de um, e certidao de publicacao e folha de arvore. Foi o
+# advogado quem apontou, em 20/10/2026, que as folhas que faltavam na pasta
+# eram justamente certidoes de publicacao e atos ordinatorios.
+#
+# O que torna um documento baixavel nao e o rotulo: e a CAIXA DE MARCACAO. Este
+# leitor parte dela. Para cada caixa sobe ate cinco niveis ate achar a linha a
+# que ela pertence, le o numero que abre o texto da linha, e MARCA a propria
+# caixa com `data-justica-pagina`. A marcacao acontece no navegador, como ja e
+# feito na lista de resultado da busca, porque e la que a arvore esta montada;
+# do lado de ca so se pergunta por quem tem a marca.
+#
+# O numero sai do TEXTO da linha e nao do rotulo, e e so o que entra: o resto
+# da linha e o andamento do processo.
+JS_DAS_LINHAS_MARCAVEIS = r"""
+() => {
+  const MARCA = 'data-justica-pagina';
+  const antigas = document.querySelectorAll('[' + MARCA + ']');
+  for (const e of antigas) e.removeAttribute(MARCA);
+  const caixas = document.querySelectorAll('input[type=checkbox]');
+  let marcadas = 0, semLinha = 0, semNumero = 0;
+  for (const caixa of caixas) {
+    let no = caixa, linha = null;
+    for (let i = 0; i < 5 && no; i++) {
+      no = no.parentElement;
+      if (!no) break;
+      const t = (no.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t.length >= 3 && t.length <= 200) { linha = t; break; }
+    }
+    if (!linha) { semLinha++; continue; }
+    const achado = linha.match(/^(\d{1,6})\b/);
+    if (!achado) { semNumero++; continue; }
+    caixa.setAttribute(MARCA, achado[1]);
+    marcadas++;
+  }
+  return { marcadas: marcadas, caixas: caixas.length,
+           semLinha: semLinha, semNumero: semNumero };
+}"""
+
+MARCA_DA_PAGINA = "data-justica-pagina"
+ALVO_DAS_LINHAS_MARCAVEIS = f"input[{MARCA_DA_PAGINA}]"
+
+
+def linhas_marcaveis(pagina: Any) -> list:
+    """Cada caixa de marcacao do indice com a pagina em que a linha dela comeca.
+
+    Devolve [(pagina_inicial, caixa)], na ordem da tela. Lista vazia quando a
+    tela nao responde ou quando nenhuma linha tem numero: quem chama decide o
+    que fazer com isso, porque so ele sabe o que procurava.
+    """
+    try:
+        pagina.evaluate(JS_DAS_LINHAS_MARCAVEIS)
+    except Exception:
+        return []
+    try:
+        caixas = pagina.query_selector_all(ALVO_DAS_LINHAS_MARCAVEIS) or []
+    except Exception:
+        return []
+    saida = []
+    for caixa in caixas:
+        try:
+            bruto = caixa.get_attribute(MARCA_DA_PAGINA)
+        except Exception:
+            continue
+        if bruto and str(bruto).isdigit():
+            saida.append((int(bruto), caixa))
+    return saida
+
+
 def indice_com_paginas(pagina: Any) -> list:
     """Cada item do indice com a pagina em que ele comeca e a marca dele.
 
     Devolve uma lista de (pagina_inicial, elemento, marca), na ordem da tela.
     Item sem pagina legivel ou sem marca fica de fora da conta, e quem chama
     diz quantos ficaram: documento que some em silencio e o defeito que esta
-    funcao existe para nao ter.
+    funcao existe para nao ter, e teve ate 20/10/2026.
     """
+    # PELA CAIXA primeiro, que e o que torna um documento baixavel. Ver o
+    # bloco em `JS_DAS_LINHAS_MARCAVEIS`: pelo rotulo este indice dava 35
+    # documentos, pela caixa da 347.
+    pela_caixa = linhas_marcaveis(pagina)
+    if pela_caixa:
+        return [(inicio, caixa, caixa) for inicio, caixa in pela_caixa]
+
+    # Sem caixa marcavel, o caminho antigo: ele ainda e o unico que funciona
+    # numa tela onde a arvore nao tenha caixa nenhuma, e sumir com ele seria
+    # trocar um indice pequeno por indice nenhum.
     saida = []
     for elemento in itens_do_indice(pagina):
         try:
@@ -1932,11 +2019,17 @@ def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
     return com_marca
 
 
+# Quantos documentos o percurso um a um aceita sem alguem decidir. Um download
+# por documento, entao 347 documentos sao horas de corrida: o teto existe para
+# isso nao comecar sozinho. `--documentos um-a-um:N` sobe o teto no comando.
+TETO_DE_DOCUMENTOS_UM_A_UM = 200
+
+
 def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
                    reabrir: Any,
                    segundos: int = TETO_DO_DOWNLOAD,
                    segundos_do_indice: int = SEGUNDOS_DO_INDICE,
-                   teto: int = 200) -> dict:
+                   teto: int = TETO_DE_DOCUMENTOS_UM_A_UM) -> dict:
     """Baixa o processo inteiro, UM documento por vez.
 
     Devolve {"arquivos": [...], "pulados": [...], "falhas": [...],
@@ -1965,7 +2058,10 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
         raise DownloadIndisponivel(
             f"O indice tem {len(paginas)} documentos, acima do teto de {teto}. "
             "Baixar um a um levaria horas, e o teto existe para isso nao "
-            "comecar sem ninguem decidir.")
+            "comecar sem ninguem decidir.\n    Para percorrer todos, repita "
+            f"com --documentos um-a-um:{len(paginas)}. O que ja estiver em "
+            "disco e pulado, entao a corrida pode ser interrompida e "
+            "retomada.")
 
     print(f"    {len(paginas)} documento(s) no indice, um download por "
           "documento. Se a janela do Visualizador morrer no meio, ela e "
