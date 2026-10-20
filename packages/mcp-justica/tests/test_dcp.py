@@ -7605,7 +7605,8 @@ def _montar_percurso(monkeypatch, janela, baixados, paginas, falhar_em=()):
 
     monkeypatch.setattr(dcp, "permitir_o_download_marcado", lambda *a: None)
     monkeypatch.setattr(dcp, "abrir_caixa_de_selecao", lambda *a: True)
-    monkeypatch.setattr(dcp, "_paginas_do_indice", lambda *a: list(paginas))
+    monkeypatch.setattr(dcp, "_paginas_do_indice",
+                        lambda *a, **k: list(paginas))
 
     def _baixar(janela_atual, guarda, destino, chave, inicio, *resto):
         if inicio in falhar_em:
@@ -7917,3 +7918,61 @@ def test_o_programa_nao_anuncia_morte_de_janela_como_se_fosse_certa():
     fonte = inspect.getsource(dcp.baixar_um_a_um)
     assert "morre e e reaberta" not in fonte
     assert "Se a janela do Visualizador morrer no meio" in fonte
+
+
+# ==========================================================================
+# O indice nao pode esconder o que ele descartou
+#
+# A auditoria da pasta em 20/10/2026 mostrou 624 folhas gravadas das quais
+# 264 estavam contadas duas vezes, e 26 paginas numeradas pelo indice que nao
+# estao em arquivo nenhum. O percurso tinha anunciado "35 documento(s) no
+# indice" como se 35 fosse o indice inteiro: 35 era o que sobrava depois de um
+# filtro mudo.
+# ==========================================================================
+
+
+class _ItemDoIndice:
+    def __init__(self, inicio, com_marca=True):
+        self.inicio = inicio
+        self.com_marca = com_marca
+
+
+def _indice_falso(monkeypatch, itens):
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(
+        dcp, "esperar_o_indice",
+        lambda *a, **k: [(i.inicio, object(), object() if i.com_marca else None)
+                         for i in itens])
+
+
+def test_item_sem_caixa_de_marcacao_e_anunciado(monkeypatch, capsys):
+    from justica_mcp.dcp import _paginas_do_indice
+
+    _indice_falso(monkeypatch, [
+        _ItemDoIndice(1342), _ItemDoIndice(1349, com_marca=False),
+        _ItemDoIndice(1354),
+    ])
+    paginas = _paginas_do_indice(object(), 1)
+    assert paginas == [1342, 1354]
+    saida = capsys.readouterr().out
+    assert "3 item(ns)" in saida
+    assert "1 deles NAO tem caixa de marcacao" in saida
+    assert "1349" in saida
+
+
+def test_indice_inteiro_marcavel_tambem_e_dito(monkeypatch, capsys):
+    """O numero tem de ser o do INDICE, e nao o do que sobrou do filtro."""
+    from justica_mcp.dcp import _paginas_do_indice
+
+    _indice_falso(monkeypatch, [_ItemDoIndice(1342), _ItemDoIndice(1344)])
+    assert _paginas_do_indice(object(), 1) == [1342, 1344]
+    assert "2 item(ns), todos com caixa de marcacao" in capsys.readouterr().out
+
+
+def test_a_reabertura_nao_repete_o_relato_do_indice(monkeypatch, capsys):
+    from justica_mcp.dcp import _paginas_do_indice
+
+    _indice_falso(monkeypatch, [_ItemDoIndice(1342)])
+    _paginas_do_indice(object(), 1, relatar=False)
+    assert capsys.readouterr().out == ""

@@ -1681,12 +1681,37 @@ def ja_baixado(destino: Any, chave: str, inicio: int) -> Optional[str]:
     return None
 
 
-def _paginas_do_indice(pagina: Any, segundos_do_indice: int) -> list:
-    """As paginas iniciais dos documentos que tem caixa de marcacao."""
+def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
+                       relatar: bool = True) -> list:
+    """As paginas iniciais dos documentos que tem caixa de marcacao.
+
+    E DIZ quantos itens ficaram de fora. O filtro `marca is not None` existe
+    desde o inicio e era mudo: o percurso anunciava "35 documento(s) no
+    indice" como se fosse o indice inteiro, quando 35 era o que sobrava depois
+    dele. Em 20/10/2026 a auditoria da pasta mostrou 26 paginas numeradas pelo
+    indice que nao estao em arquivo nenhum, e um item do indice sem caixa de
+    marcacao e a primeira coisa que explicaria isso.
+
+    `indice_com_paginas` promete, na propria docstring dela, que "quem chama
+    diz quantos ficaram". Ninguem dizia. Agora diz.
+    """
     indice = esperar_o_indice(pagina, segundos_do_indice)
     if not indice:
         return []
-    return [t[0] for t in indice if t[2] is not None]
+    com_marca = [t[0] for t in indice if t[2] is not None]
+    sem_marca = [t[0] for t in indice if t[2] is None]
+    if relatar and sem_marca:
+        print(f"    [ATENCAO] O indice tem {len(indice)} item(ns) com pagina "
+              f"legivel, e {len(sem_marca)} deles NAO tem caixa de marcacao: "
+              "esses nao podem ser pedidos um a um e nao serao baixados.")
+        print("    Paginas iniciais dos que ficam de fora: "
+              + ", ".join(str(p) for p in sem_marca[:20])
+              + (f" e mais {len(sem_marca) - 20}." if len(sem_marca) > 20
+                 else "."))
+    elif relatar:
+        print(f"    Indice: {len(indice)} item(ns), todos com caixa de "
+              "marcacao.")
+    return com_marca
 
 
 def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
@@ -1764,7 +1789,8 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
                 falhas.append(f"pagina {inicio}: a caixa de selecao nao abriu "
                               "na janela reaberta")
                 break
-            if not _paginas_do_indice(janela, segundos_do_indice):
+            if not _paginas_do_indice(janela, segundos_do_indice,
+                                      relatar=False):
                 falhas.append(f"pagina {inicio}: o indice nao voltou na janela "
                               "reaberta")
                 break
