@@ -297,8 +297,115 @@ def relatar_o_censo(censo: dict, reconhecidos: int) -> list:
             f"do rotulo inteiro deles: {desenho or '(nao lido)'} "
             "(9 = algarismo, A = qualquer outro caractere). Se houver 9 em "
             "algum ponto, a pagina esta no rotulo e so nao esta no comeco. "
-            "Documento descartado aqui nunca e pedido, e e candidato direto "
-            "as folhas que faltam na pasta.")
+            "Molde igual a numeracao unica (7-2-4-1-2-4) e a raiz da arvore, "
+            "e molde curto terminado em um algarismo so e no de agrupamento: "
+            "nenhum dos dois e documento.")
+    return linhas
+
+
+# As LINHAS do indice, que e onde os documentos de fato estao.
+#
+# O molde do rotulo inteiro, lido em 20/10/2026, derrubou a minha hipotese
+# anterior. Os seis itens descartados tem molde 'AAAAAA 9' (cinco deles) e
+# 'AAAAAAAAA 9999999A99A9999A9A99A9999' (um). O segundo e, digito por digito,
+# a numeracao unica: 7-2-4-1-2-4. Esses seis sao a RAIZ da arvore e cinco nos
+# de agrupamento, e nao documentos. Eu tinha dito que eram candidatos diretos
+# as folhas que faltam; nao sao.
+#
+# O que sobra e o numero que importa: 58 elementos com rotulo contra centenas
+# de caixas de marcacao. A maioria das linhas do indice NAO tem rotulo
+# acessivel, e o leitor so olha para as que tem. Este segundo censo olha para
+# a LINHA de cada caixa: quantas estao sob um no 'Alternar', quantas nao
+# estao, e qual o molde do texto das que nao estao. Se o molde delas comecar
+# por algarismo, sao documentos com pagina e da para le-los.
+#
+# Molde e nao texto, como sempre: o texto da linha e o andamento do processo.
+JS_DAS_LINHAS_DO_INDICE = r"""
+() => {
+  const semAcento = (s) => (s || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const molde = (s, n) => (s || '').replace(/\s+/g, ' ').trim()
+    .replace(/[0-9]/g, '9').replace(/[^0-9\s]/g, 'A').slice(0, n || 20);
+  const ehAlternar = (e) => {
+    const r = semAcento(e && e.getAttribute && e.getAttribute('aria-label'));
+    return r.startsWith('alternar ');
+  };
+  const caixas = document.querySelectorAll('input[type=checkbox]');
+  let sobAlternar = 0, comNumeroNoInicio = 0, semLinha = 0;
+  const moldes = {};
+  for (const caixa of caixas) {
+    let no = caixa, achou = null, linha = null;
+    for (let i = 0; i < 5 && no; i++) {
+      no = no.parentElement;
+      if (!no) break;
+      if (!achou) {
+        const rotulados = no.querySelectorAll('[aria-label]');
+        for (const r of rotulados) { if (ehAlternar(r)) { achou = r; break; } }
+      }
+      if (!linha) {
+        const t = (no.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t.length >= 3 && t.length <= 200) linha = t;
+      }
+    }
+    if (achou) { sobAlternar++; continue; }
+    if (!linha) { semLinha++; continue; }
+    if (/^\d/.test(linha)) comNumeroNoInicio++;
+    const m = molde(linha, 40);
+    moldes[m] = (moldes[m] || 0) + 1;
+  }
+  const ordenados = Object.keys(moldes)
+    .sort((a, b) => moldes[b] - moldes[a]).slice(0, 6);
+  const topo = {};
+  for (const k of ordenados) topo[k] = moldes[k];
+  return {
+    caixas: caixas.length, sobAlternar: sobAlternar,
+    foraDeAlternar: caixas.length - sobAlternar,
+    comNumeroNoInicio: comNumeroNoInicio, semLinha: semLinha,
+    formatos: Object.keys(moldes).length, moldesDeLinha: topo,
+  };
+}"""
+
+CHAVES_DAS_LINHAS = ("caixas", "sobAlternar", "foraDeAlternar",
+                     "comNumeroNoInicio", "semLinha", "formatos")
+
+
+def censo_das_linhas(pagina: Any) -> dict:
+    """Contagens e moldes das linhas com caixa. Nunca levanta, nunca sai texto."""
+    try:
+        lido = pagina.evaluate(JS_DAS_LINHAS_DO_INDICE)
+    except Exception:
+        lido = None
+    if not isinstance(lido, dict):
+        lido = {}
+    censo: dict = {chave: int(lido.get(chave) or 0)
+                   for chave in CHAVES_DAS_LINHAS}
+    moldes = lido.get("moldesDeLinha")
+    censo["moldesDeLinha"] = ({str(k): int(v) for k, v in moldes.items()}
+                              if isinstance(moldes, dict) else {})
+    return censo
+
+
+def relatar_as_linhas(censo: dict) -> list:
+    """As linhas com caixa, e o que elas parecem ser."""
+    linhas = [
+        f"Linhas com caixa de marcacao: {censo['caixas']}. "
+        f"Sob um no 'Alternar': {censo['sobAlternar']}. "
+        f"FORA de qualquer no 'Alternar': {censo['foraDeAlternar']}, "
+        f"dessas comecando por algarismo: {censo['comNumeroNoInicio']}."
+    ]
+    if censo["foraDeAlternar"] > 0:
+        moldes = censo.get("moldesDeLinha") or {}
+        desenho = "; ".join(f"{m!r} x{q}" for m, q in
+                            sorted(moldes.items(), key=lambda p: -p[1])[:6])
+        linhas.append(
+            f"Moldes das linhas fora de 'Alternar' ({censo['formatos']} "
+            f"formato(s) distintos): {desenho or '(nao lido)'}")
+        if censo["comNumeroNoInicio"] > 0:
+            linhas.append(
+                "[ATENCAO] Essas linhas tem caixa de marcacao e comecam por "
+                "algarismo, ou seja, sao documentos com pagina inicial, e o "
+                "leitor do indice nunca olha para elas porque exige o rotulo "
+                "'Alternar'. E aqui que estao as folhas que faltam na pasta.")
     return linhas
 
 
@@ -1808,6 +1915,8 @@ def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
     sem_marca = [t[0] for t in indice if t[2] is None]
     if relatar:
         for linha in relatar_o_censo(censo_do_indice(pagina), len(indice)):
+            print(f"    {linha}")
+        for linha in relatar_as_linhas(censo_das_linhas(pagina)):
             print(f"    {linha}")
     if relatar and sem_marca:
         print(f"    [ATENCAO] O indice tem {len(indice)} item(ns) com pagina "

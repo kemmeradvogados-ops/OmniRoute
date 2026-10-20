@@ -7991,8 +7991,8 @@ def test_a_reabertura_nao_repete_o_relato_do_indice(monkeypatch, capsys):
 _CENSO_DE_CAMPO = {"rotulados": 58, "alternar": 41, "comNumero": 35,
                    "entrada": 347, "papel": 0, "matCaixa": 346,
                    "matPseudo": 0,
-                   "moldes": {"AAAAAA 9999 A AAAAAAAA": 5,
-                              "AAAAAAAAA AAA AAAAAA": 1}}
+                   "moldes": {"AAAAAA 9": 5,
+                              "AAAAAAAAA 9999999A99A9999A9A99A9999": 1}}
 
 
 def test_o_censo_so_devolve_contagem_e_molde():
@@ -8040,7 +8040,7 @@ def test_item_descartado_por_nao_comecar_com_numero_e_denunciado():
     junto = " ".join(relatar_o_censo(_CENSO_DE_CAMPO, 35))
     assert "6 item(ns) do indice" in junto
     assert "DESCARTADOS" in junto
-    assert "'AAAAAA 9999 A AAAAAAAA' x5" in junto
+    assert "'AAAAAA 9' x5" in junto
     # O molde do rotulo INTEIRO, porque o do primeiro termo so dizia que ele
     # nao era numero. Com o rotulo inteiro da para ver se a pagina esta nele.
     assert "rotulo inteiro" in junto
@@ -8076,3 +8076,86 @@ def test_o_percurso_imprime_o_censo(monkeypatch, capsys):
     saida = capsys.readouterr().out
     assert "input=347" in saida
     assert "6 item(ns) do indice" in saida
+
+
+# ==========================================================================
+# As LINHAS do indice
+#
+# O molde do rotulo inteiro, em 20/10/2026, derrubou a hipotese dos seis
+# descartados: 'AAAAAA 9' x5 e 'AAAAAAAAA 9999999A99A9999A9A99A9999' x1. O
+# segundo e, digito por digito, a numeracao unica (7-2-4-1-2-4). Sao a raiz da
+# arvore e cinco nos de agrupamento, nao documentos.
+#
+# O numero que sobra: 58 elementos com rotulo contra centenas de caixas de
+# marcacao. A maioria das linhas do indice nao tem rotulo acessivel.
+# ==========================================================================
+
+_LINHAS_DE_CAMPO = {"caixas": 347, "sobAlternar": 41, "foraDeAlternar": 306,
+                    "comNumeroNoInicio": 306, "semLinha": 0, "formatos": 12,
+                    "moldesDeLinha": {"9999 A AAAAAAAA AA AAAAAAAAAA": 120,
+                                      "9999 A AAA": 40}}
+
+
+def test_o_molde_do_rotulo_inteiro_mostra_a_numeracao_unica():
+    """7-2-4-1-2-4 e a numeracao unica. Ver nela um documento perdido era o
+    erro; o molde serve justamente para nao repeti-lo."""
+    import re
+
+    molde = "9999999A99A9999A9A99A9999"
+    assert [len(g) for g in re.findall(r"9+", molde)] == [7, 2, 4, 1, 2, 4]
+
+
+def test_o_censo_das_linhas_so_devolve_contagem_e_molde():
+    from justica_mcp.dcp import CHAVES_DAS_LINHAS, censo_das_linhas
+
+    class _Tela:
+        def evaluate(self, _):
+            return dict(_LINHAS_DE_CAMPO, textos=["Certidao de publicacao"])
+
+    censo = censo_das_linhas(_Tela())
+    assert set(censo) == set(CHAVES_DAS_LINHAS) | {"moldesDeLinha"}
+    assert all(isinstance(censo[c], int) for c in CHAVES_DAS_LINHAS)
+
+
+def test_o_censo_das_linhas_nao_levanta():
+    from justica_mcp.dcp import CHAVES_DAS_LINHAS, censo_das_linhas
+
+    class _Morta:
+        def evaluate(self, _):
+            raise RuntimeError("TargetClosedError")
+
+    censo = censo_das_linhas(_Morta())
+    assert all(censo[c] == 0 for c in CHAVES_DAS_LINHAS)
+    assert censo["moldesDeLinha"] == {}
+
+
+def test_linha_com_caixa_fora_de_alternar_e_denunciada():
+    from justica_mcp.dcp import relatar_as_linhas
+
+    junto = " ".join(relatar_as_linhas(_LINHAS_DE_CAMPO))
+    assert "FORA de qualquer no 'Alternar': 306" in junto
+    assert "comecando por algarismo: 306" in junto
+    assert "o leitor do indice nunca olha para elas" in junto
+
+
+def test_sem_linha_fora_de_alternar_nao_ha_acusacao():
+    from justica_mcp.dcp import relatar_as_linhas
+
+    linhas = relatar_as_linhas(
+        dict(_LINHAS_DE_CAMPO, caixas=41, sobAlternar=41, foraDeAlternar=0,
+             comNumeroNoInicio=0, formatos=0, moldesDeLinha={}))
+    assert len(linhas) == 1
+    assert "ATENCAO" not in linhas[0]
+
+
+def test_o_percurso_imprime_os_dois_censos(monkeypatch, capsys):
+    from justica_mcp import dcp
+    from justica_mcp.dcp import _paginas_do_indice
+
+    _indice_falso(monkeypatch, [_ItemDoIndice(1342), _ItemDoIndice(1344)])
+    monkeypatch.setattr(dcp, "censo_do_indice", lambda _: _CENSO_DE_CAMPO)
+    monkeypatch.setattr(dcp, "censo_das_linhas", lambda _: _LINHAS_DE_CAMPO)
+    _paginas_do_indice(object(), 1)
+    saida = capsys.readouterr().out
+    assert "input=347" in saida
+    assert "FORA de qualquer no 'Alternar': 306" in saida
