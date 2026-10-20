@@ -7976,3 +7976,73 @@ def test_a_reabertura_nao_repete_o_relato_do_indice(monkeypatch, capsys):
     _indice_falso(monkeypatch, [_ItemDoIndice(1342)])
     _paginas_do_indice(object(), 1, relatar=False)
     assert capsys.readouterr().out == ""
+
+
+# ==========================================================================
+# CENSO do indice
+#
+# O advogado confirmou em 20/10/2026 que o arquivo da pagina 1666 vai de 1666
+# a 1676 e ENCERRA o documento. Entao o download esta certo, e o que falta na
+# pasta sao certidoes de publicacao e atos ordinatorios que o programa nunca
+# pediu: o buraco esta na leitura do indice.
+# ==========================================================================
+
+
+def test_o_censo_so_devolve_contagem():
+    """Nome de documento e conteudo do processo e nao sai em relato nenhum."""
+    from justica_mcp.dcp import CHAVES_DO_CENSO, censo_do_indice
+
+    class _Tela:
+        def evaluate(self, _):
+            return {"rotulados": 120, "alternar": 35, "comNumero": 35,
+                    "marcas": 47, "nomes": ["Peticao Inicial"]}
+
+    censo = censo_do_indice(_Tela())
+    assert set(censo) == set(CHAVES_DO_CENSO)
+    assert all(isinstance(v, int) for v in censo.values())
+
+
+def test_o_censo_nao_levanta_quando_a_tela_nao_responde():
+    from justica_mcp.dcp import censo_do_indice
+
+    class _Morta:
+        def evaluate(self, _):
+            raise RuntimeError("TargetClosedError")
+
+    assert censo_do_indice(_Morta()) == {"rotulados": 0, "alternar": 0,
+                                         "comNumero": 0, "marcas": 0}
+
+
+def test_caixa_sobrando_e_denunciada():
+    """Caixa de marcacao e o que torna um documento baixavel. Mais caixas que
+    itens reconhecidos significa documento ficando para tras."""
+    from justica_mcp.dcp import relatar_o_censo
+
+    linhas = relatar_o_censo(
+        {"rotulados": 120, "alternar": 35, "comNumero": 35, "marcas": 47}, 35)
+    junto = " ".join(linhas)
+    assert "12 caixa(s) de marcacao a mais" in junto
+    assert "NAO os esta pedindo" in junto
+
+
+def test_sem_caixa_sobrando_nao_ha_acusacao():
+    from justica_mcp.dcp import relatar_o_censo
+
+    linhas = relatar_o_censo(
+        {"rotulados": 120, "alternar": 35, "comNumero": 35, "marcas": 35}, 35)
+    assert len(linhas) == 1
+    assert "ATENCAO" not in linhas[0]
+
+
+def test_o_percurso_imprime_o_censo(monkeypatch, capsys):
+    from justica_mcp import dcp
+    from justica_mcp.dcp import _paginas_do_indice
+
+    _indice_falso(monkeypatch, [_ItemDoIndice(1342), _ItemDoIndice(1344)])
+    monkeypatch.setattr(dcp, "censo_do_indice",
+                        lambda _: {"rotulados": 120, "alternar": 2,
+                                   "comNumero": 2, "marcas": 9})
+    _paginas_do_indice(object(), 1)
+    saida = capsys.readouterr().out
+    assert "Caixas de marcacao na tela: 9" in saida
+    assert "7 caixa(s) de marcacao a mais" in saida

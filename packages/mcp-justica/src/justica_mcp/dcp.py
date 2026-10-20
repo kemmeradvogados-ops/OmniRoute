@@ -196,6 +196,77 @@ def lotes_por_pagina(inicios: Any, tamanho: int = PAGINAS_POR_LOTE) -> list:
     return lotes
 
 
+# CENSO do indice: so CONTAGENS, nenhum texto.
+#
+# O advogado confirmou em 20/10/2026 que o arquivo da pagina 1666 vai de 1666
+# a 1676 e encerra o documento: o download esta certo, e o que falta sao
+# certidoes de publicacao e atos ordinatorios que o programa nunca pediu. Ou
+# seja, o buraco esta na LEITURA DO INDICE, nao no download.
+#
+# O suspeito tem nome: `pagina_inicial_do_item` so aceita rotulo que comece por
+# "Alternar ", e isso veio de uma observacao de 06/10/2026 sobre os itens que
+# eu tinha visto, generalizada em regra. "Alternar" e rotulo de no que ABRE E
+# FECHA. Documento que nao tem filho nao precisa de um, e certidao de
+# publicacao e folha de arvore.
+#
+# Este censo nao conserta nada: ele diz se a suspeita procede, comparando
+# quantos itens o programa reconhece com quantas CAIXAS DE MARCACAO a tela
+# tem. Caixa de marcacao e o que faz um item ser baixavel, e se houver mais
+# caixas do que itens reconhecidos, o programa esta deixando documento para
+# tras. Sai contagem e mais nada: nome de documento e conteudo do processo.
+JS_DO_CENSO_DO_INDICE = r"""
+() => {
+  const semAcento = (s) => (s || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const rotulados = document.querySelectorAll('[aria-label]');
+  let alternar = 0, comNumero = 0;
+  for (const e of rotulados) {
+    const r = semAcento(e.getAttribute('aria-label'));
+    if (!r.startsWith('alternar ')) continue;
+    alternar++;
+    const resto = r.slice('alternar '.length).trim();
+    const n = resto.split(' ')[0].split('-')[0];
+    if (/^\d+$/.test(n)) comNumero++;
+  }
+  const marcas = document.querySelectorAll(
+    'input[type=checkbox], [role=checkbox], mat-checkbox, mat-pseudo-checkbox');
+  return { rotulados: rotulados.length, alternar: alternar,
+           comNumero: comNumero, marcas: marcas.length };
+}"""
+
+CHAVES_DO_CENSO = ("rotulados", "alternar", "comNumero", "marcas")
+
+
+def censo_do_indice(pagina: Any) -> dict:
+    """Contagens da tela do indice. Nunca levanta, nunca devolve texto."""
+    try:
+        lido = pagina.evaluate(JS_DO_CENSO_DO_INDICE)
+    except Exception:
+        lido = None
+    if not isinstance(lido, dict):
+        lido = {}
+    return {chave: int(lido.get(chave) or 0) for chave in CHAVES_DO_CENSO}
+
+
+def relatar_o_censo(censo: dict, reconhecidos: int) -> list:
+    """O censo em linhas, e o aviso quando sobra caixa sem item reconhecido."""
+    linhas = [
+        f"Elementos com rotulo na tela: {censo['rotulados']}. "
+        f"Rotulo comecando por 'Alternar': {censo['alternar']}, "
+        f"desses com pagina legivel: {censo['comNumero']}. "
+        f"Caixas de marcacao na tela: {censo['marcas']}."
+    ]
+    sobrando = censo["marcas"] - reconhecidos
+    if sobrando > 0:
+        linhas.append(
+            f"[ATENCAO] Ha {sobrando} caixa(s) de marcacao a mais do que "
+            f"item(ns) reconhecido(s) ({reconhecidos}). Caixa de marcacao e o "
+            "que torna um documento baixavel, entao esses documentos existem "
+            "no indice e o programa NAO os esta pedindo. E a explicacao mais "
+            "provavel para as folhas que faltam na pasta.")
+    return linhas
+
+
 def itens_do_indice(pagina: Any) -> list:
     """Os botoes do indice de documentos, na ordem da tela."""
     saida = []
@@ -1700,6 +1771,9 @@ def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
         return []
     com_marca = [t[0] for t in indice if t[2] is not None]
     sem_marca = [t[0] for t in indice if t[2] is None]
+    if relatar:
+        for linha in relatar_o_censo(censo_do_indice(pagina), len(indice)):
+            print(f"    {linha}")
     if relatar and sem_marca:
         print(f"    [ATENCAO] O indice tem {len(indice)} item(ns) com pagina "
               f"legivel, e {len(sem_marca)} deles NAO tem caixa de marcacao: "
