@@ -7693,6 +7693,11 @@ def test_visualizador_que_nao_reabre_interrompe_e_diz(tmp_path, monkeypatch):
     assert len(resposta["arquivos"]) == 1
     assert "nao reabriu" in resposta["falhas"][0]
     assert "nem chegaram a ser tentados" in resposta["falhas"][0]
+    # O NOME da excecao nao basta. Em 20/10/2026 a corrida relatou
+    # `TargetClosedError` e pronto, e nao deu para saber se tinha morrido a
+    # aba, o contexto ou o navegador. A mensagem e as abas vivas dizem.
+    assert "o botao do Visualizador sumiu" in resposta["falhas"][0]
+    assert "ABAS VIVAS NO NAVEGADOR" in resposta["falhas"][0]
 
 
 def test_indice_grande_demais_nao_comeca_sem_alguem_decidir(tmp_path, monkeypatch):
@@ -7711,3 +7716,118 @@ def test_indice_grande_demais_nao_comeca_sem_alguem_decidir(tmp_path, monkeypatc
         assert "teto de 200" in str(erro)
     else:
         raise AssertionError("deveria ter recusado")
+
+
+# ==========================================================================
+# A ABA DO PORTAL tambem pode morrer
+#
+# Eu tinha escrito em `baixar_um_a_um` que depois de cada download "a janela
+# do Visualizador morre e e reaberta", e dei a aba do portal por viva. Em
+# 20/10/2026 o reabrir morreu com `TargetClosedError` na terceira peca: a aba
+# capturada no comeco da consulta tambem nao respondia mais. Suposicao minha,
+# desmentida em campo.
+# ==========================================================================
+
+
+class _AbaQueMorre:
+    """Aba que pode morrer, e que sabe quem sao as vizinhas."""
+
+    def __init__(self, endereco, fechada=False, vizinhas=None):
+        self.url = endereco
+        self.fechada = fechada
+        self.na_frente = False
+        self._vizinhas = vizinhas
+
+    @property
+    def context(self):
+        if self._vizinhas is None:
+            raise AssertionError(
+                "aba viva nao deve custar uma ida ao navegador")
+        return _ContextoDeAbas([self] + list(self._vizinhas))
+
+    def is_closed(self):
+        return self.fechada
+
+    def bring_to_front(self):
+        self.na_frente = True
+
+    def wait_for_timeout(self, _):
+        if self.fechada:
+            raise RuntimeError("TargetClosedError")
+
+
+class _ContextoDeAbas:
+    def __init__(self, abas):
+        self.pages = list(abas)
+
+
+def test_aba_viva_volta_sem_procurar_no_navegador():
+    """Enquanto a aba segurada responde, ela E a certa: procurar outra seria
+    gastar ida ao navegador para trocar o certo pelo mesmo."""
+    from justica_mcp.dcp import aba_do_portal_viva
+
+    aba = _AbaQueMorre("https://www3.tjrj.jus.br/portalservicos/#/consultar")
+    assert aba_do_portal_viva(aba, 1) is aba
+
+
+def test_aba_morta_e_trocada_pela_do_portal_que_esta_viva():
+    from justica_mcp.dcp import aba_do_portal_viva
+
+    viva = _AbaQueMorre(
+        "https://www3.tjrj.jus.br/portalservicos/#/consultar/detalhes-processo")
+    morta = _AbaQueMorre("https://www3.tjrj.jus.br/portalservicos/#/consultar",
+                         fechada=True, vizinhas=[viva])
+    achada = aba_do_portal_viva(morta, 1)
+    assert achada is viva
+    assert viva.na_frente, "a aba precisa estar na frente para aceitar clique"
+
+
+def test_sem_aba_do_portal_viva_a_recusa_diz_que_abas_existem():
+    """`TargetClosedError` sozinho nao distingue aba morta de navegador morto.
+    A recusa precisa dizer o que sobrou aberto."""
+    from justica_mcp.dcp import ConsultaIndisponivel, aba_do_portal_viva
+
+    outra = _AbaQueMorre("https://www.tjrj.jus.br/inicio")
+    morta = _AbaQueMorre("https://www3.tjrj.jus.br/portalservicos/#/consultar",
+                         fechada=True, vizinhas=[outra])
+    with pytest.raises(ConsultaIndisponivel) as erro:
+        aba_do_portal_viva(morta, 1)
+    assert "ABAS VIVAS NO NAVEGADOR" in str(erro.value)
+    assert "www.tjrj.jus.br/inicio" in str(erro.value)
+
+
+def test_navegador_inteiro_caido_e_dito_com_todas_as_letras():
+    from justica_mcp.dcp import ConsultaIndisponivel, aba_do_portal_viva
+
+    morta = _AbaQueMorre("https://www3.tjrj.jus.br/portalservicos/#/consultar",
+                         fechada=True, vizinhas=[])
+    with pytest.raises(ConsultaIndisponivel) as erro:
+        aba_do_portal_viva(morta, 1)
+    assert "o navegador inteiro caiu" in str(erro.value)
+
+
+def test_o_endereco_da_aba_na_recusa_vai_sem_parametros():
+    """E nos parametros que viajam identificador de cliente e numero de
+    processo."""
+    from justica_mcp.dcp import ConsultaIndisponivel, aba_do_portal_viva
+
+    outra = _AbaQueMorre(
+        "https://www.tjrj.jus.br/inicio?numeroProcesso=00047245120138190078")
+    morta = _AbaQueMorre("https://www3.tjrj.jus.br/portalservicos/#/consultar",
+                         fechada=True, vizinhas=[outra])
+    with pytest.raises(ConsultaIndisponivel) as erro:
+        aba_do_portal_viva(morta, 1)
+    assert "00047245120138190078" not in str(erro.value)
+
+
+def test_o_reabrir_procura_a_aba_do_portal_em_vez_de_reusar_a_capturada():
+    """Guarda de fonte. Passar `pagina` direto para `abrir_visualizador` e
+    exatamente o defeito de 20/10/2026, e e o que um `return` curto refaz."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split("def reabrir_o_visualizador()")[1].split("resposta =")[0]
+    assert "aba_do_portal_viva(pagina)" in trecho
+    assert "abrir_visualizador(pagina," not in trecho

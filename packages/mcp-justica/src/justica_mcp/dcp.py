@@ -1717,9 +1717,19 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
             try:
                 janela = reabrir()
             except Exception as erro:
-                falhas.append(f"pagina {inicio}: o Visualizador nao reabriu "
-                              f"({type(erro).__name__}); os documentos "
-                              "seguintes nem chegaram a ser tentados")
+                from .portal import sem_dado_de_processo
+
+                # O NOME da excecao nao basta, e custou uma corrida inteira:
+                # `TargetClosedError` sozinho nao diz se morreu a aba, o
+                # contexto ou o navegador. A lista de abas vivas diz.
+                vivas = abas_do_navegador(janela)
+                falhas.append(
+                    f"pagina {inicio}: o Visualizador nao reabriu "
+                    f"({type(erro).__name__}: "
+                    f"{sem_dado_de_processo(str(erro))[:300]}); os documentos "
+                    "seguintes nem chegaram a ser tentados. ABAS VIVAS NO "
+                    "NAVEGADOR: "
+                    + ("; ".join(vivas) if vivas else "nenhuma"))
                 break
             if not abrir_caixa_de_selecao(janela, guarda):
                 falhas.append(f"pagina {inicio}: a caixa de selecao nao abriu "
@@ -4244,6 +4254,45 @@ def achar_aba_do_portal(pagina: Any, segundos: int = 20) -> Optional[Any]:
             pagina.wait_for_timeout(400)
         except Exception:
             _tempo.sleep(0.4)
+
+
+def aba_do_portal_viva(pagina: Any, segundos: int = 15) -> Any:
+    """A aba que o programa segura, se viva; senao a aba do portal AGORA.
+
+    Esta funcao existe por causa de uma suposicao minha que o campo desmentiu
+    em 20/10/2026. Eu tinha escrito, em `baixar_um_a_um`, que depois de cada
+    download "a janela do Visualizador morre e e reaberta" a partir da aba do
+    portal, e dei a aba do portal por viva. Na terceira peca o reabrir morreu
+    com `TargetClosedError`, que nao e falta de botao nem tela errada: e a aba
+    sobre a qual se ia agir nao respondendo mais.
+
+    Enquanto a aba segurada estiver viva ela E a certa, e volta daqui sem ida
+    nenhuma ao navegador. So quando ela morre vale procurar outra, e a procura
+    e a que ja existe desde 06/10/2026 para o caso vizinho, o de a aba aceita
+    como portal ter virado outra coisa.
+
+    Quando nao ha aba de portal viva, a recusa diz QUE ABAS existem. Sem isso o
+    relato da corrida seguinte diria de novo so `TargetClosedError`, e nao da
+    para distinguir aba morta de contexto morto nem de navegador morto por um
+    nome de excecao.
+    """
+    from .portal import pagina_de
+
+    alvo = pagina_de(pagina)
+    if not janela_fechada(alvo):
+        return alvo
+
+    achada = achar_aba_do_portal(alvo, segundos)
+    if achada is not None:
+        return trazer_para_a_frente(achada)
+
+    vivas = abas_do_navegador(alvo)
+    raise ConsultaIndisponivel(
+        f"A aba do portal nao responde mais e nenhuma outra aba em "
+        f"{MARCA_DO_PORTAL} esta viva neste navegador, depois de "
+        f"{segundos}s procurando. Nada foi reaberto."
+        + "\n    ABAS VIVAS NO NAVEGADOR: "
+        + ("; ".join(vivas) if vivas else "nenhuma (o navegador inteiro caiu)"))
 
 
 def abas_do_navegador(pagina: Any, teto: int = 10) -> list[str]:

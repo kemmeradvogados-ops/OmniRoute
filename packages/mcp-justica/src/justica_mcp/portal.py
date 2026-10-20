@@ -6254,8 +6254,15 @@ def consultar_processo(
                     from .dcp import baixar_um_a_um
 
                     def reabrir_o_visualizador():
-                        return abrir_visualizador(pagina, guarda, segundos,
-                                                  motivo)
+                        # A aba do portal AGORA, e nao a que foi capturada no
+                        # comeco da consulta. Em 20/10/2026 o reabrir morreu
+                        # com TargetClosedError na terceira peca: a aba
+                        # capturada tambem ja nao respondia. Ver
+                        # `aba_do_portal_viva`.
+                        from .dcp import aba_do_portal_viva
+
+                        return abrir_visualizador(aba_do_portal_viva(pagina),
+                                                  guarda, segundos, motivo)
 
                     resposta = baixar_um_a_um(
                         janela, guarda, pasta, numero.apenas_digitos,
