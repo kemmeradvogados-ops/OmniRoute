@@ -6453,7 +6453,8 @@ def test_a_consulta_do_dcp_grava_o_arquivo_e_o_snapshot(monkeypatch, tmp_path):
     estado = _EstadoFalso()
     dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(), estado)
 
-    assert dados["totais"] == {"principais": 1, "partes": 0, "movimentacoes": 2}
+    assert dados["totais"] == {"principais": 1, "partes": 0, "mandados": 0,
+                               "movimentacoes": 2}
     # Sem o botao na tela falsa, a leitura segue e avisa.
     assert "nao esta na tela" in dados["leitura"]["todos_os_movimentos"]
     gravado = json.loads(
@@ -7253,7 +7254,8 @@ def _arquivo_de_consulta(tmp_path, estrutura=None, leitura=None):
                    {"tipo": "Reu", "nome": "Banco Exemplo S/A"}],
         "movimentacoes": [{"data": "10/02/2014", "hora": "",
                            "descricao": "Juntada de peticao", "origem": ""}],
-        "totais": {"principais": 2, "partes": 2, "movimentacoes": 1},
+        "totais": {"principais": 2, "partes": 2, "mandados": 0,
+                               "movimentacoes": 1},
         "leitura": leitura if leitura is not None else {
             "tela_do_processo_confirmada": False,
             "endereco_do_quadro": "https://exemplo/#/consultaportal",

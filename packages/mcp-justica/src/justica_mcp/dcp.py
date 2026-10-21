@@ -3403,6 +3403,40 @@ JS_DA_TELA_DO_PROCESSO = r"""
     }
   }
 
+  // O HISTORICO DE MANDADOS, pela mesma tecnica das partes: assinatura do
+  // cabecalho, lida da tela real em 21/10/2026 pelo relato de estrutura. A
+  // tabela tem nove colunas e tres delas sao DATA DE ENVIO, DATA DE
+  // RECEBIMENTO e DATA DE DEVOLUCAO, que e material de prazo e nao estava
+  // sendo lido por ninguem.
+  //
+  // Casa pela PRIMEIRA coluna e nao pela segunda de proposito: na mesma tela o
+  // portal escreve "Nome da Central Destinataria" numa copia da tabela e
+  // "Nome da Central Destinaria" noutra, e casar por um cabecalho que o
+  // proprio portal escreve de dois jeitos e casar com um deles so.
+  const mandados = [];
+  const mandadosVistos = new Set();
+  for (const tabela of document.querySelectorAll('table')) {
+    const topo = tabela.querySelector('tr');
+    if (!topo) continue;
+    const cabecalho = Array.from(topo.children)
+      .map(c => semAcento(corta(c.innerText, 60)));
+    if (cabecalho[0] !== 'numero do mandado') continue;
+    for (const linha of Array.from(tabela.querySelectorAll('tr')).slice(1)) {
+      const celulas = Array.from(linha.children);
+      if (celulas.length !== cabecalho.length) continue;
+      const valores = celulas.map(c => corta(c.innerText, 120));
+      if (!valores.some(v => v)) continue;
+      const chave = valores.join('\u0000');
+      if (mandadosVistos.has(chave)) continue;
+      mandadosVistos.add(chave);
+      const registro = [];
+      for (let i = 0; i < cabecalho.length; i++) {
+        registro.push([corta(topo.children[i].innerText, 60), valores[i]]);
+      }
+      mandados.push(registro);
+    }
+  }
+
   const folhas = document.querySelectorAll(
     'span, div, p, li, label, strong, b, td, h1, h2, h3, h4, h5');
   for (const e of folhas) {
@@ -3826,7 +3860,8 @@ JS_DA_TELA_DO_PROCESSO = r"""
     familias[nome] = (familias[nome] || 0) + 1;
   }
 
-  return {pares: pares, partes: partes, movimentacoes: movimentacoes,
+  return {pares: pares, partes: partes, mandados: mandados,
+          movimentacoes: movimentacoes,
           tabelas: tabelas, familias: familias,
           rotulosCandidatos: rotulosCandidatos,
           secoes: secoes, botoes: botoes, diagnostico: diagnostico,
@@ -3901,6 +3936,56 @@ def _diagnostico(bruto: Any) -> dict:
     }
 
 
+# O que esta leitura LE, por secao da tela, conferido pelo relato de estrutura
+# de 21/10/2026. Serve para dizer o que ela NAO le, que e a informacao que
+# faltava: uma bandeira so para a tela inteira nao distingue o que foi lido por
+# cabecalho conferido do que nao foi lido de jeito nenhum.
+SECOES_QUE_A_LEITURA_COBRE = (
+    "todos os personagens",      # as partes, por cabecalho Tipo/Personagem
+    "historico de mandados",     # por cabecalho Numero do Mandado
+)
+
+# Secoes que sao BOTAO para outra tela, e nao dado a ler nesta.
+SECOES_QUE_SAO_PASSAGEM = (
+    "visualizacao de documentos do processo eletronico",
+    "visualizacao detalhada dos autos do processo",
+    "aviso",
+)
+
+
+def secoes_nao_lidas(secoes: Any) -> list:
+    """Titulos de secao da tela que esta leitura nao aproveita.
+
+    A capa deste portal mora em "Descricao Detalhada", e a leitura generica nao
+    acha nada la: em 21/10/2026 os unicos tres rotulos que ela achou na tela
+    inteira foram "Destinatario:", "Data da remessa:" e "Prazo:", que nao sao
+    campos da capa. Dizer quais secoes ficaram de fora e o unico jeito de quem
+    le o arquivo nao supor que a tela foi lida por inteiro.
+    """
+    from .portal import sem_acento
+
+    vistos: list = []
+    for item in secoes or []:
+        titulo = ""
+        if isinstance(item, dict):
+            titulo = str(item.get("texto") or item.get("titulo") or "")
+        elif isinstance(item, (list, tuple)) and len(item) > 1:
+            titulo = str(item[1])
+        else:
+            titulo = str(item or "")
+        titulo = titulo.strip()
+        if not titulo:
+            continue
+        chave = sem_acento(titulo)
+        if chave in SECOES_QUE_A_LEITURA_COBRE:
+            continue
+        if chave in SECOES_QUE_SAO_PASSAGEM:
+            continue
+        if titulo not in vistos:
+            vistos.append(titulo)
+    return vistos
+
+
 def _leitura_vazia(falha: Optional[str] = None) -> dict:
     """O mesmo formato, quando nao houve o que ler. Nunca um dicionario torto.
 
@@ -3910,6 +3995,7 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
     return {
         "principais": {},
         "partes": [],
+        "mandados": [],
         "movimentacoes": [],
         "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": [],
                       "secoes": [], "botoes": [], "rotulos_lidos": [],
@@ -3919,6 +4005,25 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
+            # POR BLOCO, e nao uma bandeira so para a tela inteira. A bandeira
+            # unica custava nos dois sentidos: fazia desconfiar das partes e
+            # das movimentacoes, que SAO lidas por cabecalho e por rotulo
+            # conferidos na tela real em 13/10/2026, e nao apontava a capa, que
+            # e a unica que de fato nao foi conferida e que, em 21/10/2026, se
+            # viu estar lendo outro bloco.
+            "conferido": {
+                "partes": True,
+                "mandados": True,
+                "movimentacoes": True,
+                "principais": False,
+            },
+            "o_que_nao_foi_conferido": (
+                "`principais` (a capa). Ela e lida pela estrutura generica, e o "
+                "relato de estrutura de 21/10/2026 mostrou que os unicos tres "
+                "rotulos achados na tela inteira foram 'Destinatario:', 'Data "
+                "da remessa:' e 'Prazo:', que nao sao campos da capa deste "
+                "processo. A capa mora na secao 'Descricao Detalhada' e esta "
+                "leitura nao acha nada la. Nao use `principais` como capa."),
             # Coisa diferente da linha acima, e as duas precisam existir. A de
             # cima diz que a REGRA de leitura nunca foi conferida contra a tela
             # real. Esta diz se a tela lida era mesmo a do processo, e nao o
@@ -3928,7 +4033,8 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
             "aviso": AVISO_DA_LEITURA,
             "falha": falha,
         },
-        "totais": {"principais": 0, "partes": 0, "movimentacoes": 0},
+        "totais": {"principais": 0, "partes": 0, "mandados": 0,
+                   "movimentacoes": 0},
     }
 
 
@@ -4002,9 +4108,25 @@ def extrair(quadro: Any) -> dict:
         except Exception:
             continue
 
+    # O HISTORICO DE MANDADOS, por cabecalho. Cada linha vira um dicionario
+    # com as chaves que a propria tela nomeou, e nao com nomes inventados aqui:
+    # tres delas sao data de envio, de recebimento e de devolucao, que e
+    # material de prazo.
+    mandados = []
+    for linha in bruto.get("mandados") or []:
+        registro: dict = {}
+        for par in linha or []:
+            try:
+                registro[str(par[0])] = str(par[1])
+            except Exception:
+                continue
+        if registro:
+            mandados.append(registro)
+
     saida = _leitura_vazia()
     saida["principais"] = principais
     saida["partes"] = partes
+    saida["mandados"] = mandados
     saida["movimentacoes"] = movimentacoes
     saida["estrutura"] = {
         "tabelas": tabelas,
@@ -4025,9 +4147,14 @@ def extrair(quadro: Any) -> dict:
         "diagnostico_dos_blocos": _diagnostico(bruto.get("diagnostico")),
         "caixas_de_movimentacao": _caixas(bruto.get("caixasDeMovimentacao")),
         "componentes_de_movimento": len(do_componente),
+        # As secoes que esta leitura NAO aproveita. Sem isto, quem abre o
+        # arquivo supoe que a tela foi lida por inteiro.
+        "secoes_nao_lidas": secoes_nao_lidas(
+            [(s[0], s[1]) for s in (bruto.get("secoes") or []) if len(s) > 1]),
     }
     saida["totais"] = {"principais": len(principais),
                        "partes": len(partes),
+                       "mandados": len(mandados),
                        "movimentacoes": len(movimentacoes)}
     return saida
 
@@ -4383,6 +4510,7 @@ def resumo_seguro(dados: dict) -> list:
     linhas = [
         f"rotulos lidos: {totais.get('principais', 0)}   "
         f"partes: {totais.get('partes', 0)}   "
+        f"mandados: {totais.get('mandados', 0)}   "
         f"movimentacoes: {totais.get('movimentacoes', 0)}",
         f"componentes app-movimento: "
         f"{estrutura.get('componentes_de_movimento', 0)}   "
@@ -4392,6 +4520,18 @@ def resumo_seguro(dados: dict) -> list:
         f"{len(estrutura.get('rotulos_candidatos') or [])}",
     ]
     leitura = dados.get("leitura") or {}
+    nao_lidas = estrutura.get("secoes_nao_lidas") or []
+    if nao_lidas:
+        linhas.append(
+            f"secoes da tela que esta leitura NAO aproveita ({len(nao_lidas)}): "
+            + "; ".join(nao_lidas[:6])
+            + (" e mais." if len(nao_lidas) > 6 else ""))
+    if leitura.get("conferido", {}).get("principais") is False:
+        linhas.append(
+            "ATENCAO: `principais` (a capa) NAO foi conferida contra a tela "
+            "real. Em 21/10/2026 viu-se que ela le outro bloco. As partes, os "
+            "mandados e as movimentacoes sao lidos por cabecalho e rotulo "
+            "conferidos, e esses valem.")
     if leitura.get("tela_do_processo_confirmada") is False:
         linhas.append(
             "ATENCAO: a tela lida NAO foi confirmada como a do processo. O "

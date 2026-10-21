@@ -6891,6 +6891,8 @@ def mostrar_estrutura(caminho: str) -> int:
 
     estrutura = bruto.get("estrutura") or {}
     leitura = bruto.get("leitura") or {}
+    _nao_lidas = estrutura.get("secoes_nao_lidas") or []
+    _conferido = leitura.get("conferido") or {}
     totais = bruto.get("totais") or {}
     if not estrutura:
         print("Este arquivo nao tem bloco de estrutura.", file=sys.stderr)
@@ -6908,7 +6910,24 @@ def mostrar_estrutura(caminho: str) -> int:
                   f"{leitura.get('paginas_de_movimentacao') or '(nao registrado)'}")
     linhas.append(f"  totais: principais={totais.get('principais', 0)} "
                   f"partes={totais.get('partes', 0)} "
+                  f"mandados={totais.get('mandados', 0)} "
                   f"movimentacoes={totais.get('movimentacoes', 0)}")
+    if _conferido:
+        conferidos = [k for k, v in _conferido.items() if v]
+        pendentes = [k for k, v in _conferido.items() if not v]
+        linhas.append("  conferido contra a tela real: "
+                      + (", ".join(conferidos) if conferidos else "(nada)"))
+        if pendentes:
+            linhas.append("  NAO conferido: " + ", ".join(pendentes))
+            recado = leitura.get("o_que_nao_foi_conferido")
+            if recado:
+                linhas.append(f"    {recado}")
+    if _nao_lidas:
+        linhas.append(f"  SECOES QUE A LEITURA NAO APROVEITA ({len(_nao_lidas)}):")
+        for titulo in _nao_lidas[:20]:
+            linhas.append(f"    {titulo}")
+        if len(_nao_lidas) > 20:
+            linhas.append(f"    e mais {len(_nao_lidas) - 20}.")
 
     tabelas = estrutura.get("tabelas") or []
     linhas.append(f"  TABELAS ({len(tabelas)}):")

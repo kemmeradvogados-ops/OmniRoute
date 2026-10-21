@@ -4640,7 +4640,8 @@ def test_tela_vazia_devolve_a_mesma_forma():
     assert dados["principais"] == {}
     assert dados["partes"] == []
     assert dados["movimentacoes"] == []
-    assert dados["totais"] == {"principais": 0, "partes": 0, "movimentacoes": 0}
+    assert dados["totais"] == {"principais": 0, "partes": 0, "mandados": 0,
+                               "movimentacoes": 0}
 
 
 def test_a_leitura_se_declara_nao_conferida():
@@ -4666,7 +4667,8 @@ def test_tela_ilegivel_nao_derruba_a_consulta():
             raise RuntimeError("execution context was destroyed")
 
     dados = extrair(_TelaQueRecusa())
-    assert dados["totais"] == {"principais": 0, "partes": 0, "movimentacoes": 0}
+    assert dados["totais"] == {"principais": 0, "partes": 0, "mandados": 0,
+                               "movimentacoes": 0}
     assert "RuntimeError" in dados["leitura"]["falha"]
 
 
@@ -5022,7 +5024,8 @@ def test_o_resumo_conta_o_que_o_botao_do_historico_fez():
     dados = {
         "principais": {}, "partes": [], "movimentacoes": [],
         "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": []},
-        "totais": {"principais": 3, "partes": 4, "movimentacoes": 141},
+        "totais": {"principais": 3, "partes": 4, "mandados": 0,
+                               "movimentacoes": 141},
         "leitura": {"falha": None, "tela_do_processo_confirmada": True,
                     "todos_os_movimentos": "clicado, 1 -> 141 movimentacao(oes)"},
     }
@@ -8657,3 +8660,188 @@ def test_o_percurso_nao_pula_peca_por_inferencia():
     trecho = fonte.split("if inicio <= coberto_ate:")[1].split("try:")[0]
     assert "continue" not in trecho, "avisa, nao pula"
     assert "repetidas.append" in trecho
+
+
+# ==========================================================================
+# O QUE A TELA DO PROCESSO OFERECE, e o que esta leitura aproveita
+#
+# Relato de estrutura da tela real, 21/10/2026. Ele desmentiu o que eu
+# supunha: os tres unicos rotulos que a leitura generica acha na tela inteira
+# sao "Destinatario:", "Data da remessa:" e "Prazo:", e eles NAO sao a capa.
+# A capa mora na secao "Descricao Detalhada", onde esta leitura nao acha nada.
+#
+# A tela tambem oferece secoes que ninguem estava lendo, e uma delas e material
+# de prazo: "Historico de Mandados", tabela de nove colunas com data de envio,
+# data de recebimento e data de devolucao.
+# ==========================================================================
+
+SECOES_DA_TELA_REAL = [
+    ("h4", "Descrição Detalhada"),
+    ("h4", "Todos os Personagens"),
+    ("h4", "Lista de Alterações / Exclusões Personagens"),
+    ("h4", "Histórico de Mandados"),
+    ("h4", "Petições Pendentes de Análise ou Juntada"),
+    ("h4", "Visualização de documentos do processo eletrônico"),
+    ("h4", "Visualização Detalhada dos Autos do Processo"),
+    ("h4", "Informações da Migração"),
+    ("h4", "Mensagem Processo do PJe"),
+    ("h4", "Aviso"),
+]
+
+
+def test_as_secoes_nao_lidas_nomeiam_a_capa():
+    """A capa esta em 'Descricao Detalhada' e nao e lida. Quem abre o arquivo
+    precisa ver isso escrito, nao deduzir de um total baixo."""
+    from justica_mcp.dcp import secoes_nao_lidas
+
+    nao_lidas = secoes_nao_lidas(SECOES_DA_TELA_REAL)
+    assert "Descrição Detalhada" in nao_lidas
+    assert "Petições Pendentes de Análise ou Juntada" in nao_lidas
+    assert "Informações da Migração" in nao_lidas
+
+
+def test_o_que_a_leitura_cobre_fica_fora_das_nao_lidas():
+    from justica_mcp.dcp import secoes_nao_lidas
+
+    nao_lidas = secoes_nao_lidas(SECOES_DA_TELA_REAL)
+    assert "Todos os Personagens" not in nao_lidas
+    assert "Histórico de Mandados" not in nao_lidas
+
+
+def test_secao_que_e_passagem_para_outra_tela_nao_conta_como_nao_lida():
+    """'Visualizacao Detalhada dos Autos' e botao para o Visualizador, nao dado
+    a ler nesta tela. Lista-la como pendencia seria alarme permanente."""
+    from justica_mcp.dcp import secoes_nao_lidas
+
+    nao_lidas = secoes_nao_lidas(SECOES_DA_TELA_REAL)
+    assert "Visualização Detalhada dos Autos do Processo" not in nao_lidas
+    assert "Aviso" not in nao_lidas
+
+
+def test_a_conferencia_e_por_bloco_e_nao_uma_bandeira_so():
+    """A bandeira unica custava nos dois sentidos: fazia desconfiar das partes
+    e das movimentacoes, que SAO lidas por cabecalho e rotulo conferidos, e nao
+    apontava a capa, que e a unica errada."""
+    from justica_mcp.dcp import _leitura_vazia
+
+    conferido = _leitura_vazia()["leitura"]["conferido"]
+    assert conferido["partes"] is True
+    assert conferido["mandados"] is True
+    assert conferido["movimentacoes"] is True
+    assert conferido["principais"] is False
+
+
+def test_o_recado_diz_por_que_a_capa_nao_vale():
+    from justica_mcp.dcp import _leitura_vazia
+
+    recado = _leitura_vazia()["leitura"]["o_que_nao_foi_conferido"]
+    assert "Descricao Detalhada" in recado
+    assert "Nao use `principais` como capa" in recado
+
+
+def test_o_resumo_de_terminal_avisa_que_a_capa_nao_vale():
+    from justica_mcp.dcp import _leitura_vazia, resumo_seguro
+
+    dados = _leitura_vazia()
+    dados["estrutura"]["secoes_nao_lidas"] = ["Descrição Detalhada"]
+    junto = " ".join(resumo_seguro(dados))
+    assert "mandados: 0" in junto
+    assert "NAO aproveita" in junto
+    assert "`principais` (a capa) NAO foi conferida" in junto
+
+
+def test_o_historico_de_mandados_casa_pela_primeira_coluna():
+    """O proprio portal escreve 'Central Destinataria' numa copia da tabela e
+    'Central Destinaria' noutra. Casar por um cabecalho que o portal escreve de
+    dois jeitos e casar com um deles so."""
+    from justica_mcp.dcp import JS_DA_TELA_DO_PROCESSO
+
+    bloco = JS_DA_TELA_DO_PROCESSO.split("const mandados = [];")[1].split(
+        "const folhas =")[0]
+    codigo = "\n".join(linha for linha in bloco.splitlines()
+                       if not linha.strip().startswith("//"))
+    assert "cabecalho[0] !== 'numero do mandado'" in codigo
+    assert "cabecalho[1] !==" not in codigo, (
+        "casar pela segunda coluna casaria com uma das duas grafias so")
+
+
+TELA_COM_MANDADOS = """<!doctype html><html lang="pt-BR"><head>
+<meta charset="utf-8"><title>Processo</title></head><body>
+<h4>Todos os Personagens</h4>
+<table><tr><th>Tipo</th><th>Personagem</th></tr>
+  <tr><td>Autor</td><td>Fulano de Tal</td></tr>
+  <tr><td>Reu</td><td>Beltrano Sociedade Anonima</td></tr>
+</table>
+<h4>Histórico de Mandados</h4>
+<table><tr>
+  <th>Número do Mandado</th><th>Nome da Central Destinatária</th>
+  <th>Data de Envio do Documento</th><th>Status</th></tr>
+  <tr><td>2024.001</td><td>Central de Buzios</td>
+      <td>10/03/2024</td><td>Devolvido</td></tr>
+</table>
+<h4>Histórico de Mandados</h4>
+<table><tr>
+  <th>Número do Mandado</th><th>Nome da Central Destinária</th>
+  <th>Data de Envio do Documento</th><th>Status</th></tr>
+  <tr><td>2024.002</td><td>Central da Capital</td>
+      <td>11/03/2024</td><td>Cumprido</td></tr>
+</table>
+</body></html>"""
+
+
+def _extrair_em_navegador(html):
+    import tempfile
+    from pathlib import Path as _P
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import extrair
+
+    executavel = _navegador_de_teste()
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = _P(pasta) / "processo.html"
+        arquivo.write_text(html, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(executable_path=executavel,
+                                          args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                return extrair(pagina)
+            finally:
+                navegador.close()
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_os_mandados_saem_das_duas_grafias():
+    """O portal escreve 'Central Destinataria' numa copia da tabela e
+    'Central Destinaria' noutra. As duas sao Historico de Mandados."""
+    dados = _extrair_em_navegador(TELA_COM_MANDADOS)
+    numeros = [m.get("Número do Mandado") for m in dados["mandados"]]
+    assert numeros == ["2024.001", "2024.002"]
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_o_mandado_carrega_as_datas():
+    """Data de envio, de recebimento e de devolucao sao material de prazo, e
+    nao estavam sendo lidas por ninguem."""
+    dados = _extrair_em_navegador(TELA_COM_MANDADOS)
+    primeiro = dados["mandados"][0]
+    assert primeiro["Data de Envio do Documento"] == "10/03/2024"
+    assert primeiro["Status"] == "Devolvido"
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_a_tabela_de_partes_nao_vira_mandado():
+    """As duas leituras casam por cabecalho, e os cabecalhos sao outros."""
+    dados = _extrair_em_navegador(TELA_COM_MANDADOS)
+    assert [p["tipo"] for p in dados["partes"]] == ["Autor", "Reu"]
+    assert all("Tipo" not in m for m in dados["mandados"])
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_a_secao_nao_lida_e_apontada():
+    dados = _extrair_em_navegador(TELA_COM_MANDADOS)
+    nao_lidas = dados["estrutura"]["secoes_nao_lidas"]
+    assert "Todos os Personagens" not in nao_lidas
+    assert "Histórico de Mandados" not in nao_lidas
