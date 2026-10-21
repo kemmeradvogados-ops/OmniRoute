@@ -753,19 +753,46 @@ JS_DAS_LINHAS_MARCAVEIS = r"""
   const MARCA = 'data-justica-pagina';
   const antigas = document.querySelectorAll('[' + MARCA + ']');
   for (const e of antigas) e.removeAttribute(MARCA);
+  // O texto PROPRIO da linha: os nos de texto dela, sem descer nos ramos que
+  // carregam OUTRA caixa de marcacao. Esses ramos sao os filhos da arvore, e
+  // o texto deles nao e o rotulo desta linha. Usar o texto cru do no fazia um
+  // no com filhos abertos devolver o indice inteiro, e por isso em 21/10/2026
+  // as 41 linhas com filho ficaram de fora e so 305 das 347 foram marcadas.
+  const textoDaLinha = (no, origem) => {
+    let saida = '';
+    for (const filho of no.childNodes) {
+      if (filho.nodeType === 3) { saida += filho.nodeValue; continue; }
+      if (filho.nodeType !== 1 || filho === origem) continue;
+      if (!filho.contains(origem)) {
+        // Ramo que carrega OUTRA caixa e filho da arvore, e o texto dele nao e
+        // o rotulo desta linha.
+        const outra = filho.querySelector
+          ? filho.querySelector('input[type=checkbox]') : null;
+        if (outra) continue;
+        // BOTAO tambem nao e rotulo. No Chromium de verdade, em 21/10/2026, o
+        // no com filhos devolveu "expand_more 1356 - ...": o botao de abrir e
+        // fechar e um icone de fonte, que e TEXTO e vem antes do rotulo, e a
+        // pagina deixava de abrir a linha.
+        if (filho.matches && filho.matches('button, a, [role=button]')) continue;
+      }
+      saida += textoDaLinha(filho, origem);
+    }
+    return saida;
+  };
   const caixas = document.querySelectorAll('input[type=checkbox]');
   let marcadas = 0, semLinha = 0, semNumero = 0;
   for (const caixa of caixas) {
-    let no = caixa, linha = null;
-    for (let i = 0; i < 5 && no; i++) {
+    let no = caixa, achado = null;
+    for (let i = 0; i < 6 && no && !achado; i++) {
       no = no.parentElement;
       if (!no) break;
-      const t = (no.textContent || '').replace(/\s+/g, ' ').trim();
-      if (t.length >= 3 && t.length <= 200) { linha = t; break; }
+      const linha = textoDaLinha(no, caixa).replace(/\s+/g, ' ').trim();
+      if (linha.length < 2) continue;
+      achado = linha.match(/^(\d{1,6})\b/);
+      if (!achado) { semNumero++; break; }
     }
-    if (!linha) { semLinha++; continue; }
-    const achado = linha.match(/^(\d{1,6})\b/);
-    if (!achado) { semNumero++; continue; }
+    if (!no) { semLinha++; continue; }
+    if (!achado) continue;
     caixa.setAttribute(MARCA, achado[1]);
     marcadas++;
   }

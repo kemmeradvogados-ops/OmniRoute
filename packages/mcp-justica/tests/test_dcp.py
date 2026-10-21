@@ -8289,3 +8289,101 @@ def test_o_comando_aceita_o_teto_no_proprio_documentos():
         'elif escolha.startswith("lote:")')[0]
     assert "teto=teto_do_percurso" in trecho
     assert "nao e um numero de" in trecho
+
+
+# ==========================================================================
+# O leitor do indice numa ARVORE DE VERDADE
+#
+# Em 21/10/2026 o leitor novo marcou 305 das 347 caixas. As 42 que faltaram sao
+# exatamente os nos que TEM FILHOS: com os filhos abertos, o `textContent` do
+# no devolve o indice inteiro, e o numero da pagina deixa de abrir o texto.
+# Entre esses nos esta o documento de uma folha so que traz o seguinte junto,
+# como as paginas 1356 e 1493 mostraram em disco, entao perde-los nao e
+# detalhe.
+# ==========================================================================
+
+ARVORE_DO_INDICE = """<!doctype html><html lang="pt-BR"><head>
+<meta charset="utf-8"><title>Indice</title></head><body>
+<mat-tree>
+  <mat-nested-tree-node>
+    <div class="mat-tree-node">
+      <button aria-label="Alternar 1356 - Peticao">expand_more</button>
+      <mat-checkbox><input type="checkbox" id="pai"></mat-checkbox>
+      <span>1356 - Peticao Inicial</span>
+    </div>
+    <div role="group">
+      <mat-tree-node class="mat-tree-node">
+        <mat-checkbox><input type="checkbox" id="filho"></mat-checkbox>
+        <span>1357 - Anexo da peticao</span>
+      </mat-tree-node>
+    </div>
+  </mat-nested-tree-node>
+  <mat-tree-node class="mat-tree-node">
+    <mat-checkbox><input type="checkbox" id="folha"></mat-checkbox>
+    <span>1351 - Certidao de publicacao de ato ordinatorio</span>
+  </mat-tree-node>
+  <mat-tree-node class="mat-tree-node">
+    <mat-checkbox><input type="checkbox" id="semnumero"></mat-checkbox>
+    <span>Volume 1</span>
+  </mat-tree-node>
+</mat-tree>
+</body></html>"""
+
+
+def _ler_arvore_em_navegador(html):
+    """Roda o leitor do indice num Chromium de verdade."""
+    import tempfile
+    from pathlib import Path as _P
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import linhas_marcaveis
+
+    executavel = _navegador_de_teste()
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = _P(pasta) / "indice.html"
+        arquivo.write_text(html, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(executable_path=executavel,
+                                          args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                lidas = linhas_marcaveis(pagina)
+                return [(n, c.get_attribute("id")) for n, c in lidas]
+            finally:
+                navegador.close()
+
+
+@semNavegadorDcp
+def test_na_arvore_de_verdade_o_no_com_filhos_tambem_e_lido():
+    lidas = _ler_arvore_em_navegador(ARVORE_DO_INDICE)
+    assert lidas == [(1356, "pai"), (1357, "filho"), (1351, "folha")], (
+        "o no com filhos, o filho dele e a folha solta, todos pela caixa")
+
+
+@semNavegadorDcp
+def test_na_arvore_de_verdade_linha_sem_numero_fica_de_fora():
+    """'Volume 1' e no de agrupamento, nao documento: a pagina nao abre o
+    texto da linha."""
+    paginas = [n for n, _ in _ler_arvore_em_navegador(ARVORE_DO_INDICE)]
+    assert 1 not in paginas
+
+
+@semNavegadorDcp
+def test_o_no_com_filhos_nao_herda_a_pagina_do_filho():
+    """Se o leitor usasse `textContent`, o pai leria o indice inteiro e o
+    numero do filho poderia acabar no lugar do dele."""
+    lidas = dict((c, n) for n, c in _ler_arvore_em_navegador(ARVORE_DO_INDICE))
+    assert lidas["pai"] == 1356
+    assert lidas["filho"] == 1357
+
+
+def test_o_leitor_do_indice_nao_usa_textContent_cru():
+    """Guarda de fonte, da mesma familia da que existe para a lista de
+    resultado: foi `textContent` que perdeu as 42 linhas com filho."""
+    from justica_mcp.dcp import JS_DAS_LINHAS_MARCAVEIS
+
+    assert "nodeType === 3" in JS_DAS_LINHAS_MARCAVEIS
+    assert "textContent" not in JS_DAS_LINHAS_MARCAVEIS
+    assert "removeAttribute" in JS_DAS_LINHAS_MARCAVEIS
