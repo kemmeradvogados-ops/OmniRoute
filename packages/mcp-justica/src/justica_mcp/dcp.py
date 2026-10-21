@@ -800,6 +800,30 @@ JS_DAS_LINHAS_MARCAVEIS = r"""
            semLinha: semLinha, semNumero: semNumero };
 }"""
 
+def contagem_do_leitor(pagina: Any) -> dict:
+    """Quantas caixas a tela tem e de quantas o leitor tirou pagina.
+
+    Os dois censos desta tela acharam o defeito de 21/10/2026 e o defeito foi
+    consertado. Continuar imprimindo os dois a cada corrida passou a anunciar
+    como problema o que ja nao e: a linha sobre "6 itens descartados" fala do
+    caminho antigo, que virou ultimo recurso, e a linha sobre "aqui estao as
+    folhas que faltam" ficou falsa no instante em que essas linhas passaram a
+    ser lidas. Alarme que mente e pior que silencio.
+
+    Fica esta conta, que e monitor e nao diagnostico. Os censos continuam no
+    codigo e so saem quando o leitor pela caixa nao achar nada, que e quando
+    eles voltam a ser diagnostico.
+    """
+    try:
+        lido = pagina.evaluate(JS_DAS_LINHAS_MARCAVEIS)
+    except Exception:
+        lido = None
+    if not isinstance(lido, dict):
+        lido = {}
+    return {chave: int(lido.get(chave) or 0)
+            for chave in ("marcadas", "caixas", "semLinha", "semNumero")}
+
+
 MARCA_DA_PAGINA = "data-justica-pagina"
 ALVO_DAS_LINHAS_MARCAVEIS = f"input[{MARCA_DA_PAGINA}]"
 
@@ -2028,10 +2052,18 @@ def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
     com_marca = [t[0] for t in indice if t[2] is not None]
     sem_marca = [t[0] for t in indice if t[2] is None]
     if relatar:
-        for linha in relatar_o_censo(censo_do_indice(pagina), len(indice)):
-            print(f"    {linha}")
-        for linha in relatar_as_linhas(censo_das_linhas(pagina)):
-            print(f"    {linha}")
+        conta = contagem_do_leitor(pagina)
+        print(f"    Indice lido pela caixa de marcacao: {conta['marcadas']} "
+              f"de {conta['caixas']} caixa(s) com pagina na linha "
+              f"({conta['semNumero']} sem numero, {conta['semLinha']} sem "
+              "linha).")
+        if not conta["marcadas"]:
+            # O leitor pela caixa nao achou nada: os censos voltam a ser
+            # diagnostico e saem.
+            for linha in relatar_o_censo(censo_do_indice(pagina), len(indice)):
+                print(f"    {linha}")
+            for linha in relatar_as_linhas(censo_das_linhas(pagina)):
+                print(f"    {linha}")
     if relatar and sem_marca:
         print(f"    [ATENCAO] O indice tem {len(indice)} item(ns) com pagina "
               f"legivel, e {len(sem_marca)} deles NAO tem caixa de marcacao: "

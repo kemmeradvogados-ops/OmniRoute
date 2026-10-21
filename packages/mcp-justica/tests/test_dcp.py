@@ -8148,17 +8148,49 @@ def test_sem_linha_fora_de_alternar_nao_ha_acusacao():
     assert "ATENCAO" not in linhas[0]
 
 
-def test_o_percurso_imprime_os_dois_censos(monkeypatch, capsys):
+_CONTA_DE_CAMPO = {"marcadas": 340, "caixas": 347, "semLinha": 0,
+                   "semNumero": 7}
+
+
+def test_o_percurso_imprime_a_conta_do_leitor(monkeypatch, capsys):
+    """Monitor, nao diagnostico: quantas caixas a tela tem e de quantas o
+    leitor tirou pagina."""
     from justica_mcp import dcp
     from justica_mcp.dcp import _paginas_do_indice
 
     _indice_falso(monkeypatch, [_ItemDoIndice(1342), _ItemDoIndice(1344)])
-    monkeypatch.setattr(dcp, "censo_do_indice", lambda _: _CENSO_DE_CAMPO)
-    monkeypatch.setattr(dcp, "censo_das_linhas", lambda _: _LINHAS_DE_CAMPO)
+    monkeypatch.setattr(dcp, "contagem_do_leitor", lambda _: _CONTA_DE_CAMPO)
     _paginas_do_indice(object(), 1)
     saida = capsys.readouterr().out
-    assert "input=347" in saida
-    assert "FORA de qualquer no 'Alternar': 306" in saida
+    assert "340 de 347 caixa(s) com pagina na linha" in saida
+    assert "7 sem numero" in saida
+
+
+def test_os_censos_so_saem_quando_o_leitor_pela_caixa_nao_acha_nada(
+        monkeypatch, capsys):
+    """Os censos acharam o defeito e o defeito foi consertado. Imprimi-los a
+    cada corrida passou a anunciar como problema o que ja nao e, e a linha
+    sobre "aqui estao as folhas que faltam" ficou FALSA no instante em que
+    essas linhas passaram a ser lidas."""
+    from justica_mcp import dcp
+    from justica_mcp.dcp import _paginas_do_indice
+
+    _indice_falso(monkeypatch, [_ItemDoIndice(1342)])
+    monkeypatch.setattr(dcp, "censo_do_indice", lambda _: _CENSO_DE_CAMPO)
+    monkeypatch.setattr(dcp, "censo_das_linhas", lambda _: _LINHAS_DE_CAMPO)
+
+    monkeypatch.setattr(dcp, "contagem_do_leitor", lambda _: _CONTA_DE_CAMPO)
+    _paginas_do_indice(object(), 1)
+    com_leitor = capsys.readouterr().out
+    assert "folhas que faltam" not in com_leitor
+    assert "DESCARTADOS" not in com_leitor
+
+    monkeypatch.setattr(dcp, "contagem_do_leitor",
+                        lambda _: dict(_CONTA_DE_CAMPO, marcadas=0))
+    _paginas_do_indice(object(), 1)
+    sem_leitor = capsys.readouterr().out
+    assert "DESCARTADOS" in sem_leitor
+    assert "FORA de qualquer no 'Alternar'" in sem_leitor
 
 
 # ==========================================================================
