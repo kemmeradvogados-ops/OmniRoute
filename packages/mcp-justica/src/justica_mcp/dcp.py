@@ -1588,8 +1588,28 @@ ESPERA_DO_PEDIDO_NOVO = 120
 # O conteudo volta em base64 porque e assim que byte atravessa a ponte com o
 # navegador sem se corromper. Custa um terco a mais de tamanho na travessia, e
 # e o preco de ter o arquivo.
-JS_DO_BLOB = r"""async (pedido) => {
-  const TETO = pedido.teto;
+# A PONTE DO BLOB, em PEDACOS.
+#
+# Ela nasceu de uma vez so: `fetch` do blob, `arrayBuffer`, `btoa` do conteudo
+# inteiro, e o resultado voltava numa chamada unica. Funcionou por dez dias e
+# derrubou a corrida de 21/10/2026 no documento 65 de 340.
+#
+# O que caiu nao foi o navegador nem o portal: foi o PROCESSO NODE do
+# Playwright, com `SyntaxError: Unexpected end of JSON input` dentro do proprio
+# analisador de mensagens dele, e depois dezenas de `socket.send() raised
+# exception` do lado de ca, que e o Python escrevendo num driver que ja morreu.
+#
+# A corrida tinha acabado de trazer, pela ponte, um documento de 24.708.073
+# bytes, que em base64 e uma string de cerca de 33 MB, e varios outros de
+# alguns MB. Cada um desses atravessa como UMA mensagem JSON do protocolo do
+# Playwright. [Inferencia] Mensagem desse tamanho, repetida dezenas de vezes, e
+# a explicacao mais provavel; nao da para provar daqui qual limite foi atingido.
+#
+# O conserto nao depende de saber o limite exato: nenhuma mensagem precisa ser
+# grande. O blob e buscado UMA vez e fica na memoria da propria janela, que ja
+# o continha; daqui se pedem fatias de tamanho fixo. A travessia passa a ser
+# dezenas de mensagens pequenas em vez de uma enorme.
+JS_DA_PONTE_ABRIR = r"""async (pedido) => {
   let resposta;
   try {
     resposta = await fetch(pedido.url);
@@ -1599,53 +1619,129 @@ JS_DO_BLOB = r"""async (pedido) => {
   const pedaco = await resposta.blob();
   const tamanho = pedaco.size;
   if (tamanho <= 0) return {erro: 'o blob esta vazio'};
-  if (tamanho > TETO) return {erro: 'blob maior que o teto', tamanho: tamanho};
-  const buffer = await pedaco.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binario = '';
-  const passo = 0x8000;
-  for (let i = 0; i < bytes.length; i += passo) {
-    binario += String.fromCharCode.apply(null, bytes.subarray(i, i + passo));
+  if (tamanho > pedido.teto) {
+    return {erro: 'blob maior que o teto', tamanho: tamanho};
   }
-  return {tamanho: tamanho, tipo: pedaco.type || '', base64: btoa(binario)};
+  const buffer = await pedaco.arrayBuffer();
+  // Fica na janela, e nao volta: e dela a memoria que ja segurava o blob.
+  window.__justicaPonte = new Uint8Array(buffer);
+  return {tamanho: tamanho, tipo: pedaco.type || ''};
 }"""
 
-# Teto do que se traz pela ponte, em bytes. Acima disso a travessia em base64
-# custa memoria demais, e a recusa diz o tamanho para o operador saber que o
-# arquivo existe e que o caminho e outro.
+JS_DA_PONTE_PEDACO = r"""(pedido) => {
+  const bytes = window.__justicaPonte;
+  if (!bytes) return {erro: 'a ponte nao esta aberta nesta janela'};
+  const fim = Math.min(bytes.length, pedido.inicio + pedido.quanto);
+  if (pedido.inicio >= fim) return {erro: 'pedaco fora do conteudo'};
+  const fatia = bytes.subarray(pedido.inicio, fim);
+  let binario = '';
+  const passo = 0x8000;
+  for (let i = 0; i < fatia.length; i += passo) {
+    binario += String.fromCharCode.apply(null, fatia.subarray(i, i + passo));
+  }
+  return {ate: fim, base64: btoa(binario)};
+}"""
+
+JS_DA_PONTE_FECHAR = r"""() => {
+  try { delete window.__justicaPonte; } catch (e) { window.__justicaPonte = null; }
+  return true;
+}"""
+
+# Teto do que se traz pela ponte, em bytes. Acima disso a travessia custa
+# memoria demais, e a recusa diz o tamanho para o operador saber que o arquivo
+# existe e que o caminho e outro.
 TETO_DO_BLOB = 200 * 1024 * 1024
+
+# Tamanho de cada fatia, em bytes do arquivo. Em base64 cada fatia vira cerca
+# de um terco a mais, entao 4 MiB daqui sao perto de 5,6 MB de mensagem. O
+# numero e escolhido para ser pequeno perto dos 33 MB que derrubaram o driver e
+# grande o bastante para um documento de 25 MB caber em sete fatias.
+PEDACO_DA_PONTE = 4 * 1024 * 1024
+
+# Quantas fatias no maximo, para um blob que nao termina nunca nao virar laco
+# infinito. Com o teto de 200 MB e fatia de 4 MiB, 60 fatias ja sobram.
+TETO_DE_PEDACOS = 64
 
 
 def ler_o_blob(pagina: Any, url: Optional[str],
-               teto: int = TETO_DO_BLOB) -> dict:
-    """Le o conteudo do blob de dentro da pagina que o criou.
+               teto: int = TETO_DO_BLOB,
+               pedaco: int = PEDACO_DA_PONTE) -> dict:
+    """Le o conteudo do blob de dentro da pagina que o criou, EM PEDACOS.
 
     Devolve {"bytes": ...} quando consegue, ou {"erro": ...} dizendo por que
     nao. Nunca levanta: isto roda dentro do aviso de download, e erro aqui nao
     pode derrubar o aviso.
+
+    Em pedacos desde 21/10/2026. Ver o bloco em `JS_DA_PONTE_ABRIR`: a
+    travessia de uma vez so derrubou o processo Node do Playwright no documento
+    65 de 340, depois de passar um arquivo de 24.708.073 bytes por uma mensagem
+    JSON unica.
+
+    A janela e fechada no fim, com `finally`, porque o `Uint8Array` fica na
+    memoria dela ate alguem o soltar, e o percurso um a um abre e fecha esta
+    ponte uma vez por documento.
     """
     import base64
 
     if not url or not url.lower().startswith("blob:"):
         return {"erro": "o endereco nao e um blob"}
     try:
-        lido = pagina.evaluate(JS_DO_BLOB, {"url": url, "teto": teto})
+        aberto = pagina.evaluate(JS_DA_PONTE_ABRIR, {"url": url, "teto": teto})
     except Exception as erro:
         return {"erro": f"a pagina nao respondeu: {type(erro).__name__}"}
-    if not isinstance(lido, dict):
+    if not isinstance(aberto, dict):
         return {"erro": "a pagina devolveu algo que nao e conteudo"}
-    if lido.get("erro"):
-        recado = str(lido["erro"])
-        if lido.get("tamanho"):
-            recado += f" ({int(lido['tamanho'])} byte(s))"
+    if aberto.get("erro"):
+        recado = str(aberto["erro"])
+        if aberto.get("tamanho"):
+            recado += f" ({int(aberto['tamanho'])} byte(s))"
         return {"erro": recado}
+
+    tamanho = int(aberto.get("tamanho") or 0)
+    passo = max(1, int(pedaco))
+    partes: list = []
+    lidos = 0
     try:
-        dados = base64.b64decode(lido.get("base64") or "")
-    except Exception:
-        return {"erro": "o conteudo veio ilegivel da ponte"}
+        for _ in range(TETO_DE_PEDACOS):
+            if lidos >= tamanho:
+                break
+            try:
+                fatia = pagina.evaluate(JS_DA_PONTE_PEDACO,
+                                        {"inicio": lidos, "quanto": passo})
+            except Exception as erro:
+                return {"erro": f"a pagina parou de responder na travessia, "
+                                f"{lidos} de {tamanho} byte(s): "
+                                f"{type(erro).__name__}"}
+            if not isinstance(fatia, dict) or fatia.get("erro"):
+                motivo = (fatia.get("erro") if isinstance(fatia, dict)
+                          else "a pagina devolveu algo que nao e pedaco")
+                return {"erro": f"{motivo} ({lidos} de {tamanho} byte(s))"}
+            try:
+                bruto = base64.b64decode(fatia.get("base64") or "")
+            except Exception:
+                return {"erro": f"um pedaco veio ilegivel da ponte ({lidos} de "
+                                f"{tamanho} byte(s))"}
+            if not bruto:
+                return {"erro": f"um pedaco veio vazio ({lidos} de {tamanho} "
+                                "byte(s))"}
+            partes.append(bruto)
+            lidos += len(bruto)
+    finally:
+        # Solta a memoria da janela mesmo quando a travessia falha no meio.
+        try:
+            pagina.evaluate(JS_DA_PONTE_FECHAR)
+        except Exception:
+            pass
+
+    dados = b"".join(partes)
     if not dados:
         return {"erro": "o conteudo veio vazio"}
-    return {"bytes": dados, "tipo": lido.get("tipo") or "",
+    if tamanho and len(dados) != tamanho:
+        # Parcial nunca se disfarca de inteiro: e a regra deste projeto desde o
+        # primeiro dia, e aqui ela vale byte a byte.
+        return {"erro": f"a travessia trouxe {len(dados)} de {tamanho} byte(s) "
+                        "e nao se completou"}
+    return {"bytes": dados, "tipo": aberto.get("tipo") or "",
             "tamanho": len(dados)}
 
 

@@ -6994,20 +6994,40 @@ import base64 as _base64
 
 
 class _PaginaComBlob:
+    """A janela com a ponte aberta: responde abrir, pedaco e fechar.
+
+    Em pedacos desde 21/10/2026, como a janela de verdade. A travessia de uma
+    vez so derrubou o processo Node do Playwright no documento 65 de 340.
+    """
+
     def __init__(self, conteudo=b"%PDF-1.7 documento", erro=None, tamanho=None):
         self._conteudo, self._erro = conteudo, erro
         self._tamanho = tamanho
         self.pedidos = []
+        self.fatias = 0
+        self.fechou = False
 
     def evaluate(self, js, pedido=None):
         self.pedidos.append(pedido)
+        from justica_mcp.dcp import (JS_DA_PONTE_FECHAR, JS_DA_PONTE_PEDACO)
+
+        if js is JS_DA_PONTE_FECHAR:
+            self.fechou = True
+            return True
+        if js is JS_DA_PONTE_PEDACO:
+            self.fatias += 1
+            inicio = int(pedido["inicio"])
+            fim = min(len(self._conteudo), inicio + int(pedido["quanto"]))
+            if inicio >= fim:
+                return {"erro": "pedaco fora do conteudo"}
+            return {"ate": fim, "base64": _base64.b64encode(
+                self._conteudo[inicio:fim]).decode("ascii")}
         if self._erro:
             saida = {"erro": self._erro}
             if self._tamanho:
                 saida["tamanho"] = self._tamanho
             return saida
-        return {"tamanho": len(self._conteudo), "tipo": "application/pdf",
-                "base64": _base64.b64encode(self._conteudo).decode("ascii")}
+        return {"tamanho": len(self._conteudo), "tipo": "application/pdf"}
 
 
 def test_o_conteudo_do_blob_e_lido_de_dentro_da_pagina():
@@ -7089,7 +7109,9 @@ def test_o_aviso_le_o_blob_ANTES_de_tentar_o_canal():
     escutar_descargas(pagina, capturados, gravar)
     pagina.ouvintes["download"](_Baixado(pagina))
 
-    assert ordem == ["blob", "canal"]
+    assert ordem[0] == "blob", "a janela e lida antes de qualquer gravacao"
+    assert ordem[-1] == "canal"
+    assert "canal" not in ordem[:-1], "o canal so e tentado depois da ponte"
     assert capturados[0]["bytes"] == b"%PDF-1.7 conteudo"
     assert capturados[0]["arquivo"] is None
 
@@ -7195,6 +7217,43 @@ def test_na_tela_de_verdade_o_blob_volta_byte_a_byte():
     assert dados.startswith(b"%PDF-1.7\n")
     assert dados[9:] == bytes(i % 251 for i in range(200000))
     assert lido["tipo"] == "application/pdf"
+
+
+@semNavegadorDcp
+def test_na_tela_de_verdade_a_ponte_em_fatias_pequenas_nao_corrompe():
+    """A mesma prova, com fatia forcada a 7 mil bytes: 29 travessias do mesmo
+    arquivo, remontado byte a byte. E assim que a ponte roda em campo desde
+    21/10/2026, so que com fatia de 4 MiB."""
+    import tempfile
+    from pathlib import Path as _P
+
+    from playwright.sync_api import sync_playwright
+
+    from justica_mcp.dcp import ler_o_blob
+
+    executavel = _navegador_de_teste()
+    with tempfile.TemporaryDirectory() as pasta:
+        arquivo = _P(pasta) / "blob.html"
+        arquivo.write_text(TELA_QUE_MONTA_BLOB, encoding="utf-8")
+        with sync_playwright() as p:
+            navegador = p.chromium.launch(executable_path=executavel,
+                                          args=["--no-sandbox"])
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(arquivo.as_uri())
+                url = pagina.evaluate("() => window.enderecoDoBlob")
+                lido = ler_o_blob(pagina, url, pedaco=7000)
+                # A ponte foi fechada: a janela nao fica segurando o conteudo.
+                sobrou = pagina.evaluate(
+                    "() => typeof window.__justicaPonte !== 'undefined' "
+                    "&& window.__justicaPonte !== null")
+            finally:
+                navegador.close()
+
+    assert "erro" not in lido, lido.get("erro")
+    assert len(lido["bytes"]) == 200009
+    assert lido["bytes"][9:] == bytes(i % 251 for i in range(200000))
+    assert sobrou is False, "a memoria da janela foi solta"
 
 
 @semNavegadorDcp
@@ -8845,3 +8904,93 @@ def test_na_tela_de_verdade_a_secao_nao_lida_e_apontada():
     nao_lidas = dados["estrutura"]["secoes_nao_lidas"]
     assert "Todos os Personagens" not in nao_lidas
     assert "Histórico de Mandados" not in nao_lidas
+
+
+# ==========================================================================
+# A PONTE EM PEDACOS
+#
+# A travessia de uma vez so derrubou a corrida de 21/10/2026 no documento 65 de
+# 340, depois de passar um arquivo de 24.708.073 bytes por uma mensagem JSON
+# unica. O que caiu foi o PROCESSO NODE do Playwright, com
+# `SyntaxError: Unexpected end of JSON input` dentro do analisador de mensagens
+# dele, seguido de dezenas de `socket.send() raised exception` do lado de ca.
+#
+# O conserto nao depende de saber que limite foi atingido: nenhuma mensagem
+# precisa ser grande.
+# ==========================================================================
+
+
+def test_a_ponte_atravessa_em_varias_fatias():
+    from justica_mcp.dcp import ler_o_blob
+
+    conteudo = bytes(i % 251 for i in range(10_000))
+    pagina = _PaginaComBlob(conteudo=conteudo)
+    lido = ler_o_blob(pagina, "blob:x", pedaco=1000)
+    assert lido["bytes"] == conteudo, "byte a byte, em dez fatias"
+    assert pagina.fatias == 10
+
+
+def test_a_ponte_e_fechada_no_fim():
+    """O `Uint8Array` fica na memoria da janela ate alguem o soltar, e o
+    percurso abre esta ponte uma vez por documento."""
+    from justica_mcp.dcp import ler_o_blob
+
+    pagina = _PaginaComBlob(conteudo=b"%PDF-1.7 documento")
+    ler_o_blob(pagina, "blob:x")
+    assert pagina.fechou
+
+
+def test_a_ponte_e_fechada_mesmo_quando_a_travessia_falha():
+    from justica_mcp.dcp import ler_o_blob
+
+    class _MorreNaFatia(_PaginaComBlob):
+        def evaluate(self, js, pedido=None):
+            from justica_mcp.dcp import JS_DA_PONTE_PEDACO
+
+            if js is JS_DA_PONTE_PEDACO:
+                raise RuntimeError("TargetClosedError")
+            return super().evaluate(js, pedido)
+
+    pagina = _MorreNaFatia(conteudo=b"%PDF-1.7 documento")
+    lido = ler_o_blob(pagina, "blob:x")
+    assert "parou de responder na travessia" in lido["erro"]
+    assert pagina.fechou
+
+
+def test_travessia_pela_metade_nao_se_disfarca_de_inteira():
+    """Parcial nunca se disfarca de inteiro: e a regra deste projeto desde o
+    primeiro dia, e aqui ela vale byte a byte."""
+    from justica_mcp.dcp import ler_o_blob
+
+    class _MenteNoTamanho(_PaginaComBlob):
+        def evaluate(self, js, pedido=None):
+            from justica_mcp.dcp import JS_DA_PONTE_ABRIR
+
+            saida = super().evaluate(js, pedido)
+            if js is JS_DA_PONTE_ABRIR and isinstance(saida, dict):
+                saida["tamanho"] = len(self._conteudo) * 2
+            return saida
+
+    lido = ler_o_blob(_MenteNoTamanho(conteudo=b"x" * 100), "blob:x")
+    # O que importa e nao devolver conteudo e DIZER quanto veio de quanto. Se a
+    # janela acaba antes (pedaco fora do conteudo) ou se a conta nao fecha no
+    # fim, as duas recusas servem: o que nao pode e voltar bytes.
+    assert "bytes" not in lido
+    assert "100 de 200" in lido["erro"]
+
+
+def test_a_travessia_nao_vira_laco_infinito():
+    from justica_mcp.dcp import TETO_DE_PEDACOS, ler_o_blob
+
+    pagina = _PaginaComBlob(conteudo=b"y" * 10_000)
+    ler_o_blob(pagina, "blob:x", pedaco=1)
+    assert pagina.fatias == TETO_DE_PEDACOS
+
+
+def test_a_fatia_e_pequena_perto_do_que_derrubou_o_driver():
+    """33 MB numa mensagem so derrubaram o driver. A fatia tem de ser uma
+    fracao disso."""
+    from justica_mcp.dcp import PEDACO_DA_PONTE
+
+    assert PEDACO_DA_PONTE <= 8 * 1024 * 1024
+    assert PEDACO_DA_PONTE >= 1024 * 1024
