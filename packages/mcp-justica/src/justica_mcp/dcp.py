@@ -2203,7 +2203,8 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
                    reabrir: Any,
                    segundos: int = TETO_DO_DOWNLOAD,
                    segundos_do_indice: int = SEGUNDOS_DO_INDICE,
-                   teto: int = TETO_DE_DOCUMENTOS_UM_A_UM) -> dict:
+                   teto: int = TETO_DE_DOCUMENTOS_UM_A_UM,
+                   pular: Any = ()) -> dict:
     """Baixa o processo inteiro, UM documento por vez.
 
     Devolve {"arquivos": [...], "pulados": [...], "falhas": [...],
@@ -2248,8 +2249,24 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
     # para pular: ver o bloco abaixo.
     coberto_ate = 0
     repetidas: list = []
+    pulados_a_pedido: list = []
+
+    a_pular = {int(p) for p in (pular or ()) if str(p).isdigit()
+               or isinstance(p, int)}
+    if a_pular:
+        print(f"    Pulando a pedido do operador: "
+              + ", ".join(str(p) for p in sorted(a_pular))
+              + ". Esses documentos NAO entram na pasta.")
 
     for ordem, inicio in enumerate(paginas, start=1):
+        if inicio in a_pular:
+            # PULADO A PEDIDO, e isto nunca e calado nem confundido com "ja
+            # estava em disco". Documento que o operador manda pular e buraco
+            # conhecido na copia, e buraco conhecido ainda e buraco.
+            pulados_a_pedido.append(inicio)
+            print(f"    {ordem}/{len(paginas)} pagina {inicio}: PULADO a "
+                  "pedido. Nao esta na pasta.")
+            continue
         pronto = ja_baixado(destino, chave, inicio)
         if pronto:
             pulados.append(inicio)
@@ -2293,13 +2310,26 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
                 # `TargetClosedError` sozinho nao diz se morreu a aba, o
                 # contexto ou o navegador. A lista de abas vivas diz.
                 vivas = abas_do_navegador(janela)
+                caiu_inteiro = not vivas
                 falhas.append(
                     f"pagina {inicio}: o Visualizador nao reabriu "
                     f"({type(erro).__name__}: "
                     f"{sem_dado_de_processo(str(erro))[:300]}); os documentos "
                     "seguintes nem chegaram a ser tentados. ABAS VIVAS NO "
                     "NAVEGADOR: "
-                    + ("; ".join(vivas) if vivas else "nenhuma"))
+                    + ("; ".join(vivas) if vivas else "nenhuma")
+                    + ("" if not caiu_inteiro else
+                       # Aconteceu em 21/10/2026, duas corridas seguidas, no
+                       # MESMO documento: a primeira depois de baixar 65, a
+                       # segunda depois de so pular esses 65. Nao e cansaco
+                       # acumulado, e aquele documento.
+                       f" O NAVEGADOR INTEIRO CAIU no documento anterior "
+                       f"(pagina {paginas[ordem - 2] if ordem > 1 else inicio})."
+                       " Repetir o comando vai parar no mesmo ponto, porque o "
+                       "que ja esta em disco e pulado e a corrida chega nele de "
+                       "novo. Para passar adiante, repita com --pular "
+                       f"{paginas[ordem - 2] if ordem > 1 else inicio} e baixe "
+                       "esse documento depois, sozinho."))
                 break
             if not abrir_caixa_de_selecao(janela, guarda):
                 falhas.append(f"pagina {inicio}: a caixa de selecao nao abriu "
@@ -2327,8 +2357,14 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
         print(f"    [REPETICAO] {len(repetidas)} peca(s) cairam dentro da faixa "
               "de uma anterior. Rode `justica-portal reindexar --processo "
               "<numero>` para ver quais e quanto isso pesa na pasta.")
+    if pulados_a_pedido:
+        print(f"    [BURACO CONHECIDO] {len(pulados_a_pedido)} documento(s) "
+              "foram pulados a pedido e NAO estao na pasta: "
+              + ", ".join(str(p) for p in pulados_a_pedido)
+              + ". O `reindexar` vai apontar as paginas que faltam.")
     return {"arquivos": arquivos, "pulados": pulados, "falhas": falhas,
-            "repetidas": repetidas, "janela": janela}
+            "repetidas": repetidas, "pulados_a_pedido": pulados_a_pedido,
+            "janela": janela}
 
 
 def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,

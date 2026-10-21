@@ -8994,3 +8994,95 @@ def test_a_fatia_e_pequena_perto_do_que_derrubou_o_driver():
 
     assert PEDACO_DA_PONTE <= 8 * 1024 * 1024
     assert PEDACO_DA_PONTE >= 1024 * 1024
+
+
+# ==========================================================================
+# PULAR UM DOCUMENTO QUE DERRUBA O NAVEGADOR INTEIRO
+#
+# 21/10/2026, duas corridas seguidas, o MESMO documento: a pagina 781. Na
+# primeira, depois de baixar 65 documentos; na segunda, depois de so PULAR esses
+# 65, sem baixar nada. Entao nao e cansaco acumulado da sessao: e aquele
+# documento.
+#
+# E o que caiu nao foi a aba nem a janela do Visualizador. A recusa trouxe
+# "ABAS VIVAS NO NAVEGADOR: nenhuma (o navegador inteiro caiu)", que foi
+# exatamente a pergunta que a instrumentacao de 20/10 existia para responder.
+#
+# Sem um jeito de pular, a corrida nunca passa dali: o que ja esta em disco e
+# pulado e ela chega no 781 de novo, toda vez.
+# ==========================================================================
+
+
+def test_a_pagina_pedida_e_pulada_e_nao_entra_na_pasta(tmp_path, monkeypatch,
+                                                       capsys):
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([])
+    baixados = []
+    _montar_percurso(monkeypatch, janela, baixados, [779, 781, 782])
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: janela, segundos=1, pular=[781])
+
+    assert 781 not in baixados, "o documento que derruba nao e pedido"
+    assert resposta["pulados_a_pedido"] == [781]
+    saida = capsys.readouterr().out
+    assert "PULADO a pedido. Nao esta na pasta." in saida
+    assert "[BURACO CONHECIDO] 1 documento(s)" in saida
+
+
+def test_pulado_a_pedido_nao_se_confunde_com_ja_esta_em_disco(tmp_path,
+                                                              monkeypatch):
+    """Sao coisas opostas: um ja esta na pasta, o outro NUNCA vai estar. Juntar
+    os dois na mesma contagem esconderia um buraco."""
+    from justica_mcp.dcp import baixar_um_a_um
+
+    (tmp_path / "proc-pagina779-Doc.pdf").write_bytes(b"%PDF-1.7 antigo")
+    janela = _JanelaDoPercurso([])
+    _montar_percurso(monkeypatch, janela, [], [779, 781])
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: janela, segundos=1, pular=[781])
+    assert resposta["pulados"] == [779]
+    assert resposta["pulados_a_pedido"] == [781]
+
+
+def test_a_recusa_diz_que_repetir_para_no_mesmo_ponto(tmp_path, monkeypatch):
+    """Sem isso o operador repete o comando a noite inteira e para sempre no
+    mesmo documento."""
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([781, 782])
+    _montar_percurso(monkeypatch, janela, [], [781, 782])
+
+    def reabrir():
+        raise RuntimeError("o navegador morreu")
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              reabrir, segundos=1)
+    falha = resposta["falhas"][0]
+    assert "O NAVEGADOR INTEIRO CAIU no documento anterior (pagina 781)" in falha
+    assert "Repetir o comando vai parar no mesmo ponto" in falha
+    assert "--pular 781" in falha
+
+
+def test_a_lista_de_pular_aceita_virgula_e_recusa_o_resto():
+    from justica_mcp.portal import _paginas_pedidas
+
+    assert _paginas_pedidas("781") == (781,)
+    assert _paginas_pedidas("781, 1342;99") == (99, 781, 1342)
+    assert _paginas_pedidas("781,781") == (781,)
+    assert _paginas_pedidas(None) == ()
+    assert _paginas_pedidas("abc,781") == (781,), "o que nao e pagina sai fora"
+    assert _paginas_pedidas("0") == (), "pagina zero nao existe no indice"
+
+
+def test_pular_chega_aos_dois_caminhos_do_percurso():
+    """Guarda de fonte: o padrao e o `um-a-um:N` tem de aceitar a mesma opcao,
+    senao o operador descobre na terceira corrida que ela so vale num deles."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert fonte.count("pular=paginas_a_pular") == 2

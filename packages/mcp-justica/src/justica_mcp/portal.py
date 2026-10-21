@@ -5843,6 +5843,31 @@ def consultar_processo_estruturado(
     return guardado["dados"]
 
 
+def _paginas_pedidas(bruto: Any) -> tuple:
+    """As paginas que `--pular 781,1342` nomeia. Recusa silenciosa nao existe.
+
+    Entrada torta vira lista vazia e um recado, nao uma excecao: o comando que
+    recebe `--pular abc` deve dizer isso e seguir, e nao morrer depois da
+    autenticacao com a credencial ja gasta.
+    """
+    if not bruto:
+        return ()
+    saida = []
+    sobrou = []
+    for pedaco in str(bruto).replace(";", ",").split(","):
+        limpo = pedaco.strip()
+        if not limpo:
+            continue
+        if limpo.isdigit() and int(limpo) > 0:
+            saida.append(int(limpo))
+        else:
+            sobrou.append(limpo)
+    if sobrou:
+        print("  [ATENCAO] --pular ignorou o que nao e pagina: "
+              + ", ".join(repr(s) for s in sobrou[:10]), file=sys.stderr)
+    return tuple(sorted(set(saida)))
+
+
 def consultar_processo(
     url: str,
     tribunal: str,
@@ -5872,6 +5897,7 @@ def consultar_processo(
     # autenticacao, com a credencial ja gasta. Nenhum teste pegou porque
     # nenhum deles executava aquele trecho.
     linha_do_resultado: int = 1,
+    paginas_a_pular: Any = (),
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -6288,7 +6314,7 @@ def consultar_processo(
                     resposta = baixar_um_a_um(
                         janela, guarda, pasta, numero.apenas_digitos,
                         reabrir_o_visualizador, prazo_do_arquivo,
-                        teto=teto_do_percurso)
+                        teto=teto_do_percurso, pular=paginas_a_pular)
                     janela = resposta["janela"]
                     arquivos = resposta["arquivos"]
                     if resposta["pulados"]:
@@ -6373,7 +6399,8 @@ def consultar_processo(
 
                     resposta = _um_a_um(
                         janela, guarda, pasta, numero.apenas_digitos,
-                        _reabrir_padrao, prazo_do_arquivo)
+                        _reabrir_padrao, prazo_do_arquivo,
+                        pular=paginas_a_pular)
                     janela = resposta["janela"]
                     arquivos = resposta["arquivos"]
                     if resposta["pulados"]:
@@ -7210,6 +7237,12 @@ def main(argv: list[str] | None = None) -> int:
                          "disco: e o unico tamanho de selecao que este portal "
                          "entrega em processo grande. 'um-a-um:N' sobe o teto "
                          "de documentos do percurso, que e 200 por padrao")
+    cp.add_argument("--pular", default=None,
+                    help="paginas iniciais de documento que o percurso deve "
+                         "PULAR, separadas por virgula. Serve para passar "
+                         "adiante de um documento que derruba o navegador "
+                         "inteiro: ele nao entra na pasta, e o `reindexar` "
+                         "aponta as paginas que faltam")
     cp.add_argument("--linha", type=int, default=1,
                     help="qual linha do resultado abrir, quando a busca "
                          "devolve mais de uma com o mesmo numero. Cada linha "
@@ -7351,6 +7384,7 @@ def main(argv: list[str] | None = None) -> int:
                 segundos_download=args.segundos_download,
                 sem_movimentacoes=args.sem_movimentacoes,
                 linha_do_resultado=args.linha,
+                paginas_a_pular=_paginas_pedidas(args.pular),
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
                 espera_humana=args.espera_humana, reenviar=args.reenviar,
             )
