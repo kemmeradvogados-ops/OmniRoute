@@ -7074,6 +7074,20 @@ def main(argv: list[str] | None = None) -> int:
                      dest="reenviar",
                      help="reenvia a credencial na hora se o portal voltar ao login apos o desafio, e so quando nao houver mensagem de erro")
 
+    pc = sub.add_parser("pecas", help="lista as pecas ja gravadas na pasta do processo")
+    pc.add_argument("--processo", required=True)
+    pc.add_argument("--teto", type=int, default=40,
+                    help="quantas pecas listar")
+
+    pl = sub.add_parser("peca", help="le o texto de UMA peca gravada na pasta")
+    pl.add_argument("--processo", required=True)
+    pl.add_argument("--peca", type=int, required=True,
+                    help="pagina em que a peca comeca, a que aparece no indice")
+    pl.add_argument("--de", type=int, default=1,
+                    help="primeira folha a ler, dentro da peca")
+    pl.add_argument("--ate", type=int, default=None,
+                    help="ultima folha a ler, dentro da peca")
+
     cp = sub.add_parser("consultar", help="autentica e consulta um processo pela busca rapida")
     cp.add_argument("--url", default=None, help=AJUDA_URL)
     cp.add_argument("--tribunal", required=True)
@@ -7162,9 +7176,44 @@ def main(argv: list[str] | None = None) -> int:
         # `estrutura` le um arquivo ja gravado: nao tem tribunal, nao tem
         # sistema e nao abre navegador nenhum.
         if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente",
-                                "estrutura", "telas", "tela"):
+                                "estrutura", "telas", "tela", "pecas", "peca"):
             _do_ambiente(args)
             completar_seletores(args)
+        if args.comando in ("pecas", "peca"):
+            # Nao abre navegador, nao autentica, nao gasta tentativa: le a
+            # pasta de copias do disco.
+            from .core.cnj import parse_numero as _parse
+            from .pecas import (ler_peca, pecas_da_pasta, gravar_o_texto,
+                                relatar_a_leitura, relatar_as_pecas)
+            try:
+                _numero = _parse(args.processo)
+            except ValueError as exc:
+                print(f"Numero de processo invalido: {exc}", file=sys.stderr)
+                return 1
+            if args.comando == "pecas":
+                dados = pecas_da_pasta(_numero.apenas_digitos,
+                                       _numero.formatado)
+                for linha in relatar_as_pecas(dados, args.teto):
+                    print(linha)
+                return 0
+            lido = ler_peca(_numero.apenas_digitos, _numero.formatado,
+                            args.peca, de=args.de, ate=args.ate)
+            if "erro" in lido:
+                print(f"[PAROU] {lido['erro']}", file=sys.stderr)
+                if lido.get("pecas_na_pasta"):
+                    print("  Pecas na pasta: "
+                          + ", ".join(str(p) for p in lido["pecas_na_pasta"]),
+                          file=sys.stderr)
+                return 1
+            # O TEXTO vai para arquivo. O terminal recebe so o caminho e as
+            # contagens: dado de cliente nao se imprime em tela que se cola.
+            destino = (gravar_o_texto(_numero.apenas_digitos,
+                                      _numero.apenas_digitos, args.peca,
+                                      lido["texto"])
+                       if lido["texto"] else None)
+            for linha in relatar_a_leitura(lido, destino):
+                print(f"  {linha}")
+            return 0
         if args.comando == "reconhecer":
             return reconhecer(args.url, oculto=args.oculto, segundos=args.segundos)
         if args.comando == "acompanhar":

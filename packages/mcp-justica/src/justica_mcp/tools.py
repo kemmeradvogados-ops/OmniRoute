@@ -70,6 +70,18 @@ class AndamentosInput(NumeroInput):
     limite: int = Field(default=50, ge=1, le=500, description="Maximo de movimentos retornados.")
 
 
+class LerPecaInput(NumeroInput):
+    peca: int = Field(..., ge=1, description=(
+        "Pagina em que a peca COMECA, que e o numero que aparece ao lado do "
+        "nome do documento no indice do Visualizador e que esta no nome do "
+        "arquivo gravado."))
+    de: int = Field(default=1, ge=1, description=(
+        "Primeira folha a ler, contada dentro da propria peca."))
+    ate: Optional[int] = Field(default=None, ge=1, description=(
+        "Ultima folha a ler, dentro da peca. Em branco le ate o fim ou ate o "
+        "teto de caracteres."))
+
+
 class PublicacoesOabInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     numero_oab: str = Field(..., description="Inscricao na Ordem, apenas digitos, por exemplo '218174'.")
@@ -423,6 +435,77 @@ def registrar(mcp: Any) -> None:
         except Exception as exc:
             _estado.registrar(acao="consulta_processo_autenticada", numero=params.numero,
                               resultado="erro", detalhe=type(exc).__name__)
+            return _tratar(exc)
+
+    @mcp.tool(name="justica_pecas_do_processo",
+              annotations=somente_leitura("Pecas gravadas na pasta"))
+    async def justica_pecas_do_processo(params: NumeroInput) -> str:
+        """O que ja esta GRAVADO na pasta de copias deste processo.
+
+        Nao abre o portal, nao autentica, nao baixa: le a pasta do disco. De
+        graca e instantaneo, e pode ser repetido a vontade.
+
+        Devolve so a lista: nome do arquivo, pagina em que a peca comeca,
+        quantas folhas e quantos bytes. NENHUM conteudo. Serve para escolher o
+        que ler antes de ler, e para ver o tamanho do que a pasta tem.
+
+        A pasta pode estar INCOMPLETA, e isso nao aparece aqui. Quem baixa e o
+        comando `justica-portal consultar --documentos`, e ate 21/10/2026 o
+        leitor do indice enxergava 35 de 340 documentos. Antes de concluir que
+        o processo nao tem determinada peca, confira o indice no portal: a
+        ausencia na pasta nao prova ausencia nos autos.
+        """
+        try:
+            from .pecas import pecas_da_pasta
+
+            numero = parse_numero(params.numero)
+            dados = pecas_da_pasta(numero.apenas_digitos, numero.formatado)
+            _estado.registrar(acao="pecas_do_processo",
+                              solicitante=params.solicitante,
+                              tribunal="", numero=numero.formatado,
+                              resultado=f"{len(dados['pecas'])} peca(s)")
+            return _json(dados)
+        except Exception as exc:
+            return _tratar(exc)
+
+    @mcp.tool(name="justica_ler_peca",
+              annotations=somente_leitura("Ler o texto de uma peca"))
+    async def justica_ler_peca(params: LerPecaInput) -> str:
+        """O TEXTO de uma peca ja gravada na pasta. Devolve conteudo dos autos.
+
+        Esta e a unica ferramenta deste servidor que devolve conteudo do
+        processo. Todas as outras devolvem estrutura, contagem e metadado. O
+        texto que volta aqui e dado do cliente: use-o para a analise e nao o
+        reproduza fora do trabalho para o qual o advogado o pediu.
+
+        Le do disco, nao do portal: nao autentica, nao gasta tentativa, nao tem
+        teto por hora, e pode ser repetido quantas vezes a analise precisar.
+
+        Tres avisos que a resposta pode trazer, e os tres mudam a conclusao:
+
+        - `cortado: true` com `aviso`: o teto de caracteres foi atingido e o
+          texto parou numa folha. Peca a continuacao com `de` na folha que o
+          aviso indica.
+        - `folhas_sem_texto`: folhas que sao imagem digitalizada. Elas NAO
+          estao em branco: o programa e que nao faz reconhecimento optico. Nao
+          conclua que a peca nada diz nessas folhas.
+        - `folhas_ilegiveis`: folhas que levantaram erro na extracao. As outras
+          vieram assim mesmo.
+        """
+        try:
+            from .pecas import ler_peca
+
+            numero = parse_numero(params.numero)
+            dados = ler_peca(numero.apenas_digitos, numero.formatado,
+                             params.peca, de=params.de, ate=params.ate)
+            _estado.registrar(
+                acao="ler_peca", solicitante=params.solicitante, tribunal="",
+                numero=numero.formatado,
+                resultado=(dados.get("erro") or
+                           f"peca {params.peca}, "
+                           f"{dados.get('caracteres', 0)} caractere(s)"))
+            return _json(dados)
+        except Exception as exc:
             return _tratar(exc)
 
     @mcp.tool(name="justica_acesso_autenticado_situacao",
