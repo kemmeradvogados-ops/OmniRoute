@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -304,6 +305,159 @@ def carregar_indice(numero_digitos: str, numero_formatado: str) -> Indice:
         criado_em=bruto.get("criado_em"),
         itens=[Item(**i) for i in bruto.get("itens", [])],
     )
+
+
+# COBERTURA DA PASTA, em paginas do PROCESSO.
+#
+# Esta conta eu fiz a mao em 20/10/2026, com os numeros que o `reindexar`
+# imprimia, e ela mostrou duas coisas que ninguem veria de outro jeito numa
+# pasta de 35 arquivos e 624 folhas:
+#
+#   - quatro arquivos eram subconjunto EXATO do anterior, sempre com a mesma
+#     pagina final, porque o documento de uma folha so traz o seguinte inteiro
+#     junto. Eram 264 folhas contadas duas vezes, 42% da pasta;
+#   - 26 paginas numeradas pelo indice nao estavam em arquivo nenhum, e eram
+#     justamente certidoes de publicacao e atos ordinatorios, que sao as pecas
+#     que fixam termo inicial de prazo.
+#
+# Enquanto esta conta for feita a mao, nenhuma pasta do escritorio tem essa
+# conferencia, porque ninguem a faz duas vezes. A folha do PROCESSO nao e a
+# folha do acervo: o acervo numera em sequencia de chegada, e a do processo vem
+# do NOME do arquivo, que carrega a pagina em que a peca comeca no indice do
+# portal. Sem essa distincao a conta nao fecha.
+PADRAO_DA_PAGINA_NO_NOME = re.compile(r"-pagina(\d+)-")
+
+
+def pagina_do_nome(nome: str) -> Optional[int]:
+    """A pagina do PROCESSO em que esta peca comeca, lida do nome do arquivo."""
+    achado = PADRAO_DA_PAGINA_NO_NOME.search(nome or "")
+    return int(achado.group(1)) if achado else None
+
+
+def _faixas(numeros: list) -> list:
+    """Numeros soltos viram faixas: [1,2,3,7] vira [(1,3),(7,7)]."""
+    saida: list = []
+    inicio = anterior = None
+    for numero in numeros:
+        if inicio is None:
+            inicio = anterior = numero
+        elif numero == anterior + 1:
+            anterior = numero
+        else:
+            saida.append((inicio, anterior))
+            inicio = anterior = numero
+    if inicio is not None:
+        saida.append((inicio, anterior))
+    return saida
+
+
+def cobertura_do_acervo(indice: "Indice") -> dict:
+    """Que paginas do processo a pasta cobre, o que cobre duas vezes e o que falta.
+
+    Nao apaga nem move nada: so conta. Quem decide o que fazer com uma peca
+    contida noutra e o advogado, porque a conteneza e medida pela FAIXA de
+    paginas e nao pelo conteudo byte a byte, e peca de autos nao se descarta
+    por inferencia.
+    """
+    if not indice.pasta.is_dir():
+        return {"existe": False, "pecas": [], "sem_pagina": [], "contidas": [],
+                "folhas_repetidas": 0, "distintas": 0, "faltam": [],
+                "faixas_que_faltam": [], "primeira": None, "ultima": None}
+
+    pecas: list = []
+    sem_pagina: list = []
+    for arquivo in sorted(indice.pasta.glob("*.pdf")):
+        try:
+            if not arquivo.is_file() or arquivo.stat().st_size <= 0:
+                continue
+        except OSError:
+            continue
+        inicio = pagina_do_nome(arquivo.name)
+        folhas = contar_paginas(arquivo)
+        if inicio is None or not folhas:
+            sem_pagina.append(arquivo.name)
+            continue
+        pecas.append({"arquivo": arquivo.name, "inicio": inicio,
+                      "folhas": folhas, "fim": inicio + folhas - 1})
+    pecas.sort(key=lambda p: (p["inicio"], p["fim"]))
+
+    contidas: list = []
+    repetidas = 0
+    for i, peca in enumerate(pecas):
+        for outra in pecas[:i]:
+            if outra["inicio"] <= peca["inicio"] and peca["fim"] <= outra["fim"]:
+                contidas.append({"arquivo": peca["arquivo"],
+                                 "dentro_de": outra["arquivo"],
+                                 "folhas": peca["folhas"],
+                                 "faixa": (peca["inicio"], peca["fim"])})
+                repetidas += peca["folhas"]
+                break
+
+    cobertas: set = set()
+    for peca in pecas:
+        cobertas.update(range(peca["inicio"], peca["fim"] + 1))
+    primeira = min(cobertas) if cobertas else None
+    ultima = max(cobertas) if cobertas else None
+    faltam = (sorted(set(range(primeira, ultima + 1)) - cobertas)
+              if cobertas else [])
+    return {"existe": True, "pecas": pecas, "sem_pagina": sem_pagina,
+            "contidas": contidas, "folhas_repetidas": repetidas,
+            "distintas": len(cobertas), "faltam": faltam,
+            "faixas_que_faltam": _faixas(faltam),
+            "primeira": primeira, "ultima": ultima}
+
+
+def relatar_a_cobertura(cobertura: dict, teto: int = 12) -> list:
+    """A cobertura em linhas. Nenhuma delas carrega conteudo do processo."""
+    if not cobertura.get("existe"):
+        return ["A pasta nao existe."]
+    pecas = cobertura["pecas"]
+    if not pecas:
+        return ["Nenhuma peca com pagina legivel no nome: a cobertura nao "
+                "pode ser conferida."]
+    somadas = sum(p["folhas"] for p in pecas)
+    linhas = [
+        f"COBERTURA: {len(pecas)} peca(s), {somadas} folha(s) somadas, "
+        f"cobrindo {cobertura['distintas']} pagina(s) distinta(s) do processo "
+        f"(da {cobertura['primeira']} a {cobertura['ultima']})."
+    ]
+    if cobertura["sem_pagina"]:
+        linhas.append(
+            f"{len(cobertura['sem_pagina'])} arquivo(s) sem pagina legivel no "
+            "nome ficaram FORA desta conta.")
+    if cobertura["contidas"]:
+        linhas.append(
+            f"REPETIDO: {len(cobertura['contidas'])} peca(s) estao inteiras "
+            f"dentro de outra, somando {cobertura['folhas_repetidas']} folha(s) "
+            f"contadas duas vezes de {somadas}.")
+        for item in cobertura["contidas"][:teto]:
+            linhas.append(
+                f"  {item['arquivo']} (fls. {item['faixa'][0]}-"
+                f"{item['faixa'][1]}) esta dentro de {item['dentro_de']}")
+        if len(cobertura["contidas"]) > teto:
+            linhas.append(f"  e mais {len(cobertura['contidas']) - teto}.")
+        linhas.append(
+            "  Nada foi apagado: a conteneza aqui e medida pela FAIXA de "
+            "paginas, nao pelo conteudo byte a byte, e peca de autos nao se "
+            "descarta por inferencia.")
+    if cobertura["faltam"]:
+        faixas = ", ".join(f"{a}" if a == b else f"{a}-{b}"
+                           for a, b in cobertura["faixas_que_faltam"][:teto])
+        linhas.append(
+            f"FALTAM {len(cobertura['faltam'])} pagina(s) dentro do intervalo "
+            f"que a pasta cobre: {faixas}"
+            + (" e mais." if len(cobertura["faixas_que_faltam"]) > teto else ""))
+        linhas.append(
+            "  Pagina que falta dentro do intervalo e peca que o indice numera "
+            "e a pasta nao tem. Pode ser certidao de publicacao ou ato "
+            "ordinatorio, que sao as pecas que fixam termo inicial de prazo.")
+    if not cobertura["contidas"] and not cobertura["faltam"]:
+        linhas.append(
+            "Sem repeticao e sem buraco DENTRO do intervalo coberto. Isto nao "
+            "diz que a copia esta completa: o intervalo pode comecar depois do "
+            "inicio dos autos. So o indice do portal diz onde o processo "
+            "comeca.")
+    return linhas
 
 
 def planejar_reindexacao(indice: "Indice") -> dict:

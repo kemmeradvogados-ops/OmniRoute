@@ -2908,7 +2908,8 @@ def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
     estrago que nao se desfaz com um comando.
     """
     from .core.acervo import (
-        aplicar_reindexacao, carregar_indice, planejar_reindexacao,
+        aplicar_reindexacao, carregar_indice, cobertura_do_acervo,
+        planejar_reindexacao, relatar_a_cobertura,
     )
     from .core.cnj import parse_numero
 
@@ -2942,6 +2943,15 @@ def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
                  if item["folha_inicial"] else "folhas nao contadas")
         print(f"    {item['arquivo'].name}  {faixa}  [{item['tipo']}]")
     print(f"\n  Total: {plano['total']} folha(s).")
+
+    # A COBERTURA, em paginas do processo. O total acima conta folha de acervo,
+    # que e sequencia de chegada: ele nao sabe se duas pecas cobrem a mesma
+    # pagina dos autos nem se falta pagina no meio. Ver `cobertura_do_acervo`:
+    # esta conta foi feita a mao em 20/10/2026 e achou 264 folhas repetidas e
+    # 26 paginas ausentes numa pasta que se apresentava como 624 folhas.
+    print()
+    for linha in relatar_a_cobertura(cobertura_do_acervo(indice)):
+        print(f"  {linha}")
 
     if not confirmar:
         print("\n  ENSAIO: nada foi alterado. Para aplicar, repita com --confirmar.")

@@ -21,7 +21,6 @@ natureza, entao disco ganha de tela com folga.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -36,13 +35,16 @@ TETO_DE_CARACTERES = 200_000
 # mesma diferenca de sempre, e ela vale decisao.
 MINIMO_POR_FOLHA = 20
 
-PADRAO_DA_PECA = re.compile(r"-pagina(\d+)-")
-
-
 def peca_do_nome(nome: str) -> Optional[int]:
-    """A pagina inicial que o nome do arquivo carrega, se carregar."""
-    achado = PADRAO_DA_PECA.search(nome or "")
-    return int(achado.group(1)) if achado else None
+    """A pagina inicial que o nome do arquivo carrega, se carregar.
+
+    Delega ao acervo de proposito. Duas copias deste padrao divergem no
+    primeiro conserto, e divergir aqui significa a leitura abrir um documento e
+    a cobertura medir outro.
+    """
+    from .core.acervo import pagina_do_nome
+
+    return pagina_do_nome(nome)
 
 
 def pasta_do_processo(numero_digitos: str, numero_formatado: str) -> Path:

@@ -2084,6 +2084,25 @@ def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
 TETO_DE_DOCUMENTOS_UM_A_UM = 200
 
 
+def _ate_onde_vai(arquivo: Any, inicio: int, atual: int) -> int:
+    """Ate que pagina do processo este arquivo alcanca. `atual` quando nao da.
+
+    Contar a folha exige abrir o PDF, e um arquivo que nao abre nao pode
+    derrubar o percurso: nesse caso a cobertura simplesmente nao avanca, e o
+    aviso de repeticao deixa de sair para as pecas seguintes. Perder um aviso e
+    aceitavel; perder o percurso inteiro por causa dele, nao.
+    """
+    from pathlib import Path
+
+    from .core.acervo import contar_paginas
+
+    try:
+        folhas = contar_paginas(Path(arquivo))
+    except Exception:
+        return atual
+    return inicio + folhas - 1 if folhas else atual
+
+
 def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
                    reabrir: Any,
                    segundos: int = TETO_DO_DOWNLOAD,
@@ -2129,6 +2148,10 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
     arquivos: list = []
     pulados: list = []
     falhas: list = []
+    # Ate que pagina do processo o que ja veio alcanca. Serve para AVISAR, nao
+    # para pular: ver o bloco abaixo.
+    coberto_ate = 0
+    repetidas: list = []
 
     for ordem, inicio in enumerate(paginas, start=1):
         pronto = ja_baixado(destino, chave, inicio)
@@ -2136,7 +2159,31 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
             pulados.append(inicio)
             print(f"    {ordem}/{len(paginas)} pagina {inicio}: ja estava em "
                   "disco, pulado.")
+            coberto_ate = max(coberto_ate,
+                              _ate_onde_vai(pronto, inicio, coberto_ate))
             continue
+
+        # PECA QUE CAI DENTRO DA ANTERIOR, e por que ela e baixada assim mesmo.
+        #
+        # Medido em 20/10/2026: quatro pecas eram subconjunto exato da anterior,
+        # sempre com a mesma pagina final, somando 264 folhas repetidas de 624.
+        # O documento de uma folha so traz o seguinte inteiro junto.
+        #
+        # Pular seria mais rapido, e eu nao vou pular. A conteneza aqui e
+        # INFERIDA da faixa de paginas: eu nao li o conteudo das duas para
+        # comparar. Se a inferencia estiver errada uma vez, falta uma peca numa
+        # pasta que nao mostra buraco nenhum, porque a peca anterior cobre a
+        # faixa. Falta invisivel e o pior resultado possivel deste programa, e
+        # tempo de maquina e barato perto disso.
+        #
+        # Quem aponta a repeticao depois e `cobertura_do_acervo`, com os dois
+        # arquivos ja em disco e as faixas medidas, e quem decide o que fazer
+        # com ela e o advogado.
+        if inicio <= coberto_ate:
+            repetidas.append(inicio)
+            print(f"    {ordem}/{len(paginas)} pagina {inicio}: cai dentro do "
+                  f"que ja veio (coberto ate {coberto_ate}). Baixando assim "
+                  "mesmo: a conteneza e inferida da faixa, nao do conteudo.")
 
         if janela_fechada(janela):
             print(f"    {ordem}/{len(paginas)} pagina {inicio}: reabrindo o "
@@ -2176,10 +2223,16 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
             print(f"    {ordem}/{len(paginas)} pagina {inicio}: NAO veio.")
             continue
         arquivos.append(arquivo)
+        coberto_ate = max(coberto_ate,
+                          _ate_onde_vai(arquivo, inicio, coberto_ate))
         print(f"    {ordem}/{len(paginas)} pagina {inicio}: gravado em {arquivo}")
 
+    if repetidas:
+        print(f"    [REPETICAO] {len(repetidas)} peca(s) cairam dentro da faixa "
+              "de uma anterior. Rode `justica-portal reindexar --processo "
+              "<numero>` para ver quais e quanto isso pesa na pasta.")
     return {"arquivos": arquivos, "pulados": pulados, "falhas": falhas,
-            "janela": janela}
+            "repetidas": repetidas, "janela": janela}
 
 
 def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,

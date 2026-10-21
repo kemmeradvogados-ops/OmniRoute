@@ -8511,3 +8511,149 @@ def test_a_ajuda_do_comando_nao_promete_mais_a_integra_como_padrao():
     trecho = fonte.split('cp.add_argument("--documentos"')[1][:600]
     assert "integra se nao ha copia" not in trecho
     assert "um download por documento" in trecho
+
+
+# ==========================================================================
+# PECA QUE CAI DENTRO DA ANTERIOR
+#
+# Medido em 20/10/2026: quatro pecas eram subconjunto exato da anterior, sempre
+# com a mesma pagina final, somando 264 folhas repetidas de 624. O documento de
+# uma folha so traz o seguinte inteiro junto.
+#
+# O percurso AVISA e baixa assim mesmo. Pular seria mais rapido, e a conteneza
+# aqui e INFERIDA da faixa de paginas: ninguem leu o conteudo das duas para
+# comparar. Se a inferencia errar uma vez, falta uma peca numa pasta que nao
+# mostra buraco nenhum, porque a anterior cobre a faixa. Falta invisivel e o
+# pior resultado possivel deste programa.
+# ==========================================================================
+
+def pdf_com_textos(textos):
+    """Um PDF minimo e valido, uma folha por texto. Texto vazio = folha sem
+    camada de texto, que e o que uma folha digitalizada parece."""
+    objetos = []
+    n_paginas = len(textos)
+    ids_paginas = [3 + 2 * i for i in range(n_paginas)]
+    objetos.append(b"<</Type/Catalog/Pages 2 0 R>>")
+    kids = b" ".join(b"%d 0 R" % i for i in ids_paginas)
+    objetos.append(b"<</Type/Pages/Kids[" + kids + b"]/Count %d>>" % n_paginas)
+    for i, texto in enumerate(textos):
+        conteudo_id = ids_paginas[i] + 1
+        objetos.append(
+            b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents %d 0 R"
+            b"/Resources<</Font<</F1 %d 0 R>>>>>>" % (conteudo_id, 3 + 2 * n_paginas))
+        if texto:
+            escapado = texto.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            fluxo = ("BT /F1 12 Tf 72 720 Td (%s) Tj ET" % escapado).encode("latin-1")
+        else:
+            fluxo = b""
+        objetos.append(b"<</Length %d>>stream\n" % len(fluxo) + fluxo + b"\nendstream")
+    objetos.append(b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>")
+
+    saida = bytearray(b"%PDF-1.4\n")
+    posicoes = []
+    for numero, corpo in enumerate(objetos, start=1):
+        posicoes.append(len(saida))
+        saida += b"%d 0 obj" % numero + corpo + b"endobj\n"
+    inicio_xref = len(saida)
+    saida += b"xref\n0 %d\n" % (len(objetos) + 1)
+    saida += b"0000000000 65535 f \n"
+    for pos in posicoes:
+        saida += b"%010d 00000 n \n" % pos
+    saida += (b"trailer<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n"
+              % (len(objetos) + 1, inicio_xref))
+    return bytes(saida)
+
+
+def _percurso_que_grava_folhas(monkeypatch, tmp_path, janela, baixados,
+                               paginas, folhas_por_peca):
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "permitir_o_download_marcado", lambda *a: None)
+    monkeypatch.setattr(dcp, "abrir_caixa_de_selecao", lambda *a: True)
+    monkeypatch.setattr(dcp, "_paginas_do_indice",
+                        lambda *a, **k: list(paginas))
+
+    def _baixar(janela_atual, guarda, destino, chave, inicio, *resto):
+        from pathlib import Path as _P
+
+        caminho = _P(destino) / f"{chave}-pagina{inicio}-Doc.pdf"
+        folhas = folhas_por_peca.get(inicio, 1)
+        caminho.write_bytes(pdf_com_textos(["folha com texto aqui"] * folhas))
+        baixados.append(inicio)
+        return str(caminho)
+
+    monkeypatch.setattr(dcp, "baixar_uma_peca", _baixar)
+
+
+def test_a_peca_contida_e_avisada_e_baixada_assim_mesmo(tmp_path, monkeypatch,
+                                                        capsys):
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([])
+    baixados = []
+    # 1356 com tres folhas cobre 1356 a 1358; 1357 cai dentro dela.
+    _percurso_que_grava_folhas(monkeypatch, tmp_path, janela, baixados,
+                               [1356, 1357, 1488], {1356: 3, 1357: 2, 1488: 1})
+
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: janela, segundos=1)
+
+    assert baixados == [1356, 1357, 1488], "nenhuma peca deixou de ser baixada"
+    assert resposta["repetidas"] == [1357]
+    saida = capsys.readouterr().out
+    assert "cai dentro do que ja veio (coberto ate 1358)" in saida
+    assert "a conteneza e inferida da faixa, nao do conteudo" in saida
+    assert "[REPETICAO] 1 peca(s)" in saida
+
+
+def test_peca_que_apenas_encosta_nao_e_avisada(tmp_path, monkeypatch, capsys):
+    """1342 com duas folhas cobre 1342 e 1343. 1344 comeca onde a outra acaba e
+    nao esta dentro dela: avisar aqui seria alarme falso em todo processo."""
+    from justica_mcp.dcp import baixar_um_a_um
+
+    janela = _JanelaDoPercurso([])
+    _percurso_que_grava_folhas(monkeypatch, tmp_path, janela, [],
+                               [1342, 1344], {1342: 2, 1344: 2})
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: janela, segundos=1)
+    assert resposta["repetidas"] == []
+    assert "REPETICAO" not in capsys.readouterr().out
+
+
+def test_o_que_ja_estava_em_disco_tambem_conta_na_cobertura(tmp_path,
+                                                            monkeypatch):
+    """Repetir o comando nao pode perder o aviso: a peca pulada tambem cobre
+    paginas."""
+    from justica_mcp.dcp import baixar_um_a_um
+
+    (tmp_path / "proc-pagina1356-Doc.pdf").write_bytes(
+        pdf_com_textos(["folha com texto aqui"] * 3))
+    janela = _JanelaDoPercurso([])
+    _percurso_que_grava_folhas(monkeypatch, tmp_path, janela, [],
+                               [1356, 1357], {1357: 2})
+    resposta = baixar_um_a_um(janela, _GuardaQueLibera(), tmp_path, "proc",
+                              lambda: janela, segundos=1)
+    assert resposta["pulados"] == [1356]
+    assert resposta["repetidas"] == [1357]
+
+
+def test_arquivo_que_nao_abre_nao_derruba_o_percurso(tmp_path, monkeypatch):
+    """Perder um aviso e aceitavel; perder o percurso por causa dele, nao."""
+    from justica_mcp.dcp import _ate_onde_vai
+
+    ruim = tmp_path / "nao-e-pdf.pdf"
+    ruim.write_bytes(b"isto nao e um PDF")
+    assert _ate_onde_vai(str(ruim), 1356, 1300) == 1300
+
+
+def test_o_percurso_nao_pula_peca_por_inferencia():
+    """Guarda de fonte. Pular por faixa inferida poria falta INVISIVEL na
+    pasta, porque a peca anterior cobre o buraco."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.baixar_um_a_um)
+    trecho = fonte.split("if inicio <= coberto_ate:")[1].split("try:")[0]
+    assert "continue" not in trecho, "avisa, nao pula"
+    assert "repetidas.append" in trecho
