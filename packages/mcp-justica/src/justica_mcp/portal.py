@@ -134,6 +134,67 @@ def pasta_de_descargas() -> "Path":
     return destino
 
 
+# A pasta de descargas CRESCE PARA SEMPRE, e isso e defeito desde o primeiro
+# dia: nada nunca a limpou. Cada arquivo que o navegador escreve ali fica, e a
+# corrida de 21/10/2026 passou por ela documentos de 24,7 MB, 11,5 MB duas
+# vezes, 5,2 MB, 4,1 MB e dezenas de outros, alem de tudo o que os dias
+# anteriores deixaram.
+#
+# Isto entrou na lista de suspeitos da queda do navegador junto com outra
+# evidencia que eu vinha atribuindo ao Google Drive: as falhas de gravacao com
+# `OSError`, que apareceram em quatro documentos. Disco cheio produz exatamente
+# essas duas coisas. [Nao verificado] se foi essa a causa.
+#
+# Independente da causa da queda, pasta que cresce sem limite e defeito. Quem
+# resgata um arquivo dali ja o copiou para o acervo: a copia do navegador e
+# peso morto no instante seguinte.
+def medida_das_descargas() -> tuple:
+    """Quantos arquivos e quantos bytes a pasta de descargas guarda."""
+    try:
+        arquivos = [a for a in pasta_de_descargas().iterdir() if a.is_file()]
+    except OSError:
+        return (0, 0)
+    total = 0
+    for arquivo in arquivos:
+        try:
+            total += arquivo.stat().st_size
+        except OSError:
+            continue
+    return (len(arquivos), total)
+
+
+def limpar_descargas(antes_de: float) -> tuple:
+    """Apaga da pasta de descargas o que e ANTERIOR a esta corrida.
+
+    Devolve (quantos, bytes). Nunca levanta: pasta de cache nao pode derrubar
+    um download.
+
+    So o que e anterior, e isso nao e cautela de sobra: o resgate pela pasta do
+    navegador compara contra uma lista tirada no instante do clique, entao
+    arquivo mais novo que o inicio da corrida pode ser justamente o que a
+    proxima redea vai procurar. Arquivo anterior, nao: ele ja foi resgatado ou
+    ja se perdeu, e nos dois casos nao serve mais.
+    """
+    apagados = 0
+    bytes_livres = 0
+    try:
+        arquivos = [a for a in pasta_de_descargas().iterdir() if a.is_file()]
+    except OSError:
+        return (0, 0)
+    for arquivo in arquivos:
+        try:
+            dados = arquivo.stat()
+            if dados.st_mtime >= antes_de:
+                continue
+            tamanho = dados.st_size
+            arquivo.unlink()
+        except OSError:
+            continue
+        apagados += 1
+        bytes_livres += tamanho
+    return (apagados, bytes_livres)
+
+
 def nome_do_perfil() -> str:
     """Um perfil por NAVEGADOR, nunca um perfil para todos.
 
@@ -6271,6 +6332,23 @@ def consultar_processo(
                 segundos_download if segundos_download else segundos)
             try:
                 from .core.acervo import garantir_pasta
+
+                # A pasta de descargas do navegador cresce para sempre, e nada
+                # nunca a limpou. Ver o bloco em `limpar_descargas`: ela entrou
+                # na lista de suspeitos da queda do navegador de 21/10/2026,
+                # junto das falhas de gravacao com OSError. O que e anterior a
+                # esta corrida ja foi resgatado ou ja se perdeu.
+                import time as _tempo
+
+                _inicio_da_corrida = _tempo.time()
+                _quantos, _bytes = limpar_descargas(_inicio_da_corrida)
+                _restam, _ocupado = medida_das_descargas()
+                if _quantos:
+                    print(f"  Cache do navegador: {_quantos} arquivo(s) "
+                          f"anteriores apagados, {_bytes // (1024 * 1024)} MB "
+                          "liberados.")
+                print(f"  Cache do navegador em {pasta_de_descargas()}: "
+                      f"{_restam} arquivo(s), {_ocupado // (1024 * 1024)} MB.")
 
                 pasta = garantir_pasta(numero.apenas_digitos)
                 if escolha.startswith("peca:"):
