@@ -6319,27 +6319,66 @@ def consultar_processo(
                         janela, guarda, pasta, numero.apenas_digitos,
                         tamanho_do_lote, prazo_do_arquivo)
                 else:
-                    # A integra primeiro, e os LOTES por conta propria quando
-                    # ela nao vem. Instrucao do advogado em 08/10/2026: "eu
-                    # queria isso como padrao para problemas como esse".
+                    # O PADRAO vai para `um-a-um`, que e o unico tamanho de
+                    # selecao que este portal foi visto entregar.
                     #
-                    # Cair para os lotes sozinho e seguro porque a parte nao se
-                    # disfarca de inteiro: cada arquivo nasce com a faixa de
-                    # paginas no nome, e o comando diz que caiu. O risco que
-                    # este projeto evita e o contrario, um PDF parcial gravado
-                    # como integra, e esse continua impossivel.
-                    try:
-                        arquivos = [baixar_integra(
-                            janela, guarda, pasta, numero.apenas_digitos,
-                            prazo_do_arquivo)]
-                    except DownloadIndisponivel as exc:
-                        print(f"  [INTEGRA NAO VEIO] {exc}")
-                        print("  Caindo para o download em lotes de "
-                              f"{PAGINAS_POR_LOTE} paginas, sem precisar de "
-                              "nova tentativa de login.")
-                        arquivos = baixar_em_lotes(
-                            janela, guarda, pasta, numero.apenas_digitos,
-                            PAGINAS_POR_LOTE, prazo_do_arquivo)
+                    # Isto contraria uma instrucao do advogado, e por isso fica
+                    # escrito. Em 08/10/2026 ele pediu "a integra primeiro, e os
+                    # lotes por conta propria quando ela nao vem: eu queria isso
+                    # como padrao para problemas como esse". A instrucao foi
+                    # dada quando ninguem sabia que NENHUM dos dois vem. O que
+                    # se mediu em campo em 20/10/2026, no mesmo processo e na
+                    # mesma corrida:
+                    #
+                    #   integra (35 documentos)          nada em 900s
+                    #   lote de 25 documentos, 300 pag.  nada em 900s
+                    #   1 documento de 131 paginas       gravado
+                    #
+                    # A integra continua inteira, para quem a pedir de proposito
+                    # com `--documentos integra`: nada foi tirado. O que mudou e
+                    # a aposta do PADRAO, porque gastar 900s num caminho que
+                    # nunca foi visto entregar, e depois mais 900s noutro
+                    # igual, e meia hora da vida de quem roda o comando.
+                    #
+                    # A desistencia do portal, que existe desde 20/10/2026, nao
+                    # salva aqui: ela so dispara quando o indicador de geracao
+                    # CHEGA A APARECER, e na integra ele nunca apareceu.
+                    #
+                    # O teto de documentos continua valendo: `um-a-um` com teto
+                    # padrao recusa indice grande e diz como subi-lo. O padrao
+                    # nao comeca horas de download sozinho.
+                    from .dcp import baixar_um_a_um as _um_a_um
+
+                    print("  Padrao: um download por documento. A integra e o "
+                          "lote de 300 paginas nao foram vistos entregar neste "
+                          "portal (medido em 20/10/2026); para tenta-los assim "
+                          "mesmo, use --documentos integra ou --documentos "
+                          "lotes.")
+
+                    def _reabrir_padrao():
+                        from .dcp import aba_do_portal_viva
+
+                        return abrir_visualizador(aba_do_portal_viva(pagina),
+                                                  guarda, segundos, motivo)
+
+                    resposta = _um_a_um(
+                        janela, guarda, pasta, numero.apenas_digitos,
+                        _reabrir_padrao, prazo_do_arquivo)
+                    janela = resposta["janela"]
+                    arquivos = resposta["arquivos"]
+                    if resposta["pulados"]:
+                        print(f"  {len(resposta['pulados'])} documento(s) ja "
+                              "estavam em disco e foram pulados.")
+                    if resposta["falhas"]:
+                        print(f"  [INCOMPLETO] {len(resposta['falhas'])} "
+                              "documento(s) nao vieram:")
+                        for falha in resposta["falhas"][:10]:
+                            print(f"    {falha}")
+                        if len(resposta["falhas"]) > 10:
+                            print(f"    e mais {len(resposta['falhas']) - 10}.")
+                        print("  Os que deram certo estao em disco e valem. "
+                              "Repita o comando: o que ja esta gravado e "
+                              "pulado.")
             except DownloadIndisponivel as exc:
                 print(f"  [PAROU] {exc}")
                 _relatar_tela(janela, "TELA DO VISUALIZADOR")
@@ -7126,7 +7165,9 @@ def main(argv: list[str] | None = None) -> int:
                          "sendo lidas. Serve para testar o download sem "
                          "esperar o historico inteiro")
     cp.add_argument("--documentos", default="auto",
-                    help="'auto' (padrao: integra se nao ha copia, complemento se ha), "
+                    help="'auto' (padrao: um download por documento, que e o "
+                         "unico tamanho que o DCP do Rio de Janeiro foi visto "
+                         "entregar), "
                          "'integra', 'ultimos:N' ou 'nenhum'. No DCP do Rio de "
                          "Janeiro, para processo grande que nao baixa de uma vez: "
                          "'peca:N' baixa SO o documento que comeca na pagina N "

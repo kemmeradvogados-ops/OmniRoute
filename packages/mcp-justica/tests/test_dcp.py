@@ -3986,29 +3986,41 @@ def test_o_caminho_da_selecao_usa_SALVAR_SELECIONADOS_e_nao_CARREGADOS():
 
 
 # ==========================================================================
-# Os lotes como PADRAO, e nao como opcao que o operador precisa lembrar
+# O PADRAO: integra, depois lotes, depois um a um
 #
-# Instrucao do advogado em 08/10/2026, depois de ver as duas opcoes prontas:
-# "eu queria isso como padrao para problemas como esse".
+# A historia desta decisao, porque ela ja mudou duas vezes e as duas por
+# medicao, nao por gosto.
 #
-# Cair para os lotes sozinho e seguro porque a parte nao se disfarca de
-# inteiro: cada arquivo nasce com a faixa de paginas no nome, e o comando diz
-# que caiu. O risco que este projeto evita e o CONTRARIO, um PDF parcial
-# gravado como integra, e esse continua impossivel.
+# Em 08/10/2026, depois de ver as duas opcoes prontas, o advogado pediu: "eu
+# queria isso como padrao para problemas como esse". O padrao passou a tentar a
+# integra e cair para os lotes. Cair sozinho era seguro porque a parte nao se
+# disfarca de inteiro: cada arquivo nasce com a faixa de paginas no nome, e o
+# comando diz que caiu. O risco que este projeto evita e o CONTRARIO, um PDF
+# parcial gravado como integra, e esse continua impossivel.
+#
+# Em 20/10/2026, no mesmo processo e na mesma corrida, mediu-se:
+#
+#   integra (35 documentos)          nada em 900s
+#   lote de 25 documentos, 300 pag.  nada em 900s
+#   1 documento de 131 paginas       gravado
+#
+# A instrucao de 08/10 foi dada quando ninguem sabia que NENHUM dos dois vem.
+# O padrao passou a ir direto ao um a um. A integra e os lotes continuam
+# inteiros para quem os pedir de proposito: nada foi tirado, mudou a aposta do
+# padrao. Gastar 900s num caminho nunca visto entregar, e depois mais 900s
+# noutro igual, e meia hora da vida de quem roda o comando.
 # ==========================================================================
 
-def test_a_integra_que_nao_vem_cai_sozinha_para_os_lotes():
-    """Guarda de fonte: o padrao tenta a integra e, so entao, os lotes."""
+def test_a_queda_para_os_lotes_saiu_do_padrao():
+    """Guarda de fonte do que mudou em 21/10/2026. O aviso 'INTEGRA NAO VEIO'
+    pertencia ao padrao antigo e nao deve voltar sozinho num conserto
+    futuro."""
     import inspect
 
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal.consultar_processo)
-    # A queda existe, e vem DEPOIS da tentativa de integra.
-    assert "INTEGRA NAO VEIO" in fonte
-    assert fonte.index("baixar_integra(") < fonte.index("INTEGRA NAO VEIO")
-    assert fonte.index("INTEGRA NAO VEIO") < fonte.index(
-        "baixar_em_lotes(\n                            janela")
+    assert "INTEGRA NAO VEIO" not in fonte
 
 
 def test_o_nome_do_arquivo_de_lote_carrega_a_faixa_de_paginas(tmp_path):
@@ -8419,3 +8431,83 @@ def test_o_leitor_do_indice_nao_usa_textContent_cru():
     assert "nodeType === 3" in JS_DAS_LINHAS_MARCAVEIS
     assert "textContent" not in JS_DAS_LINHAS_MARCAVEIS
     assert "removeAttribute" in JS_DAS_LINHAS_MARCAVEIS
+
+
+# ==========================================================================
+# O PADRAO tem de apontar para o caminho que entrega
+#
+# Medido em 20/10/2026, no mesmo processo e na mesma corrida:
+#
+#   integra (35 documentos)          nada em 900s
+#   lote de 25 documentos, 300 pag.  nada em 900s
+#   1 documento de 131 paginas       gravado
+#
+# O padrao `auto` tentava a integra e caia para os lotes: os dois caminhos que
+# nunca foram vistos entregar. Quem rodasse o comando sem saber do `um-a-um`
+# gastava meia hora e nao levava arquivo nenhum.
+#
+# A desistencia do portal, que existe desde 20/10/2026, nao salva nesse caso:
+# ela so dispara quando o indicador de geracao CHEGA A APARECER, e na integra
+# ele nunca apareceu.
+# ==========================================================================
+
+
+def _trecho_do_padrao():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    depois = fonte.split('elif escolha.startswith("lotes")')[1]
+    padrao = depois.split("\n                else:\n")[1]
+    return padrao.split("except DownloadIndisponivel as exc:")[0]
+
+
+def test_o_padrao_baixa_um_documento_por_vez():
+    trecho = _trecho_do_padrao()
+    assert "baixar_um_a_um as _um_a_um" in trecho
+    assert "_um_a_um(" in trecho
+
+
+def test_o_padrao_nao_aposta_mais_na_integra_nem_nos_lotes():
+    trecho = _trecho_do_padrao()
+    assert "baixar_integra(" not in trecho
+    assert "baixar_em_lotes(" not in trecho
+
+
+def test_a_integra_e_os_lotes_continuam_disponiveis_de_proposito():
+    """Nada foi tirado: o que mudou foi a aposta do padrao. Quem quiser tentar
+    a integra pede a integra."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "baixar_integra(" in fonte
+    assert "baixar_em_lotes(" in fonte
+
+
+def test_o_padrao_respeita_o_teto_de_documentos():
+    """`auto` e o padrao: ele nao pode comecar horas de download sozinho. Sem
+    teto passado, vale o da funcao, e a recusa diz como subi-lo."""
+    trecho = _trecho_do_padrao()
+    assert "teto=" not in trecho.split("_um_a_um(")[1].split(")")[0]
+
+
+def test_o_padrao_diz_na_tela_o_que_escolheu_e_por_que():
+    """Mudanca de padrao que nao se anuncia e mudanca que ninguem percebe."""
+    trecho = _trecho_do_padrao()
+    assert "um download por documento" in trecho
+    assert "20/10/2026" in trecho
+    assert "--documentos integra" in trecho
+
+
+def test_a_ajuda_do_comando_nao_promete_mais_a_integra_como_padrao():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.main)
+    trecho = fonte.split('cp.add_argument("--documentos"')[1][:600]
+    assert "integra se nao ha copia" not in trecho
+    assert "um download por documento" in trecho
