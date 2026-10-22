@@ -40,11 +40,19 @@ def test_resolver_recusa_tribunal_desconhecido():
 # ==========================================================================
 # Semente repetida em dois pares
 #
-# Cada cadastro de autenticador gera a sua semente, entao duas contas nunca
-# tem a mesma. Semente repetida no cofre quer dizer que a de um portal foi
-# gravada no lugar da de outro, e o sintoma esconde a causa: o comando que
-# confere diz que ela bate com o aplicativo, porque bate mesmo, so que com a
-# entrada do OUTRO tribunal.
+# DETECTAR a repeticao e util, e o sintoma esconde a causa: o comando que
+# confere diz que a semente bate com o aplicativo, porque bate mesmo, sem
+# dizer com a entrada de QUAL tribunal.
+#
+# CONCLUIR a partir dela era erro, e o advogado o corrigiu em 22/10/2026. O
+# aviso dizia "cada cadastro de autenticador gera a sua, entao duas contas
+# nunca tem a mesma" e afirmava que uma fora gravada por cima da outra. Nao e
+# verdade como regra: sistema nacional atende instalacoes de varios tribunais
+# com UMA identidade, e ai a semente e a mesma de propósito. Foi o caso do PJe
+# do Rio de Janeiro e do PJe do Tribunal Regional do Trabalho da 1a Regiao.
+#
+# O alarme falso teve preco: levou a regravar uma semente que funcionava. O
+# aviso passa a relatar o fato e oferecer as duas leituras.
 # ==========================================================================
 
 from justica_mcp.core.cofre import Cofre, Identidade, SERVICO_SEMENTE  # noqa: E402
@@ -119,3 +127,29 @@ def test_a_janela_do_codigo_muda_a_cada_trinta_segundos(monkeypatch):
     primeira = cofre.janela_do_codigo()
     assert cofre.janela_do_codigo() == primeira
     assert cofre.janela_do_codigo() == primeira + 1
+
+
+def test_o_aviso_de_semente_repetida_nao_acusa_defeito():
+    """Guarda de fonte, e ela protege contra um dano concreto.
+
+    Ate 22/10/2026 este aviso afirmava que duas contas nunca tem a mesma
+    semente e que uma fora gravada por cima da outra. O advogado leu, acreditou
+    e REGRAVOU uma semente que funcionava, porque o PJe do Rio de Janeiro e o
+    do Tribunal Regional do Trabalho da 1a Regiao compartilham o cadastro.
+
+    O programa nao tem como saber se dois portais compartilham identidade.
+    Quem tem e o advogado, e o aviso precisa deixar a conclusao com ele.
+    """
+    import inspect
+
+    from justica_mcp import credenciais
+
+    fonte = inspect.getsource(credenciais)
+    trecho = fonte.split("onde_mais_esta_esta_semente(identidade")[1][:2000]
+    sem_comentario = "\n".join(
+        linha for linha in trecho.splitlines()
+        if not linha.strip().startswith("#"))
+    assert "duas contas nunca" not in sem_comentario
+    assert "ATENCAO" not in sem_comentario
+    assert "NORMAL" in sem_comentario
+    assert "DEFEITO" in sem_comentario

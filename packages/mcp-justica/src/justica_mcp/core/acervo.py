@@ -153,8 +153,68 @@ def impressao_do_arquivo(arquivo: Path) -> Optional[str]:
 
 
 REPETIDA_IGUAL = "igual"
+REPETIDA_NO_TEXTO = "igual-no-texto"
 REPETIDA_SUSPEITA = "suspeita"
 NOVA = "nova"
+
+
+def mesmo_texto(primeiro: Path, segundo: Path) -> Optional[bool]:
+    """Diz se dois PDFs tem o MESMO TEXTO, folha a folha. `None` se nao deu.
+
+    Existe por causa da corrida de 22/10/2026 no e-SAJ. O acervo ja tinha a
+    integra de um processo, de setembro; a corrida baixou de novo, e as duas
+    copias tinham 114 folhas e bytes diferentes. O programa classificou como
+    `suspeita` e, corretamente, nao numerou: folha errada em citacao e o pior
+    defeito deste indice.
+
+    So que "suspeita" devolvia a pergunta ao advogado sem lhe dar como
+    responde-la. A resposta foi obtida a mao, comparando o texto das 114 folhas
+    com um comando escrito na hora: ZERO folhas diferentes. Era a mesma
+    integra, e o que mudava era o carimbo de geracao que o proprio portal
+    escreve dentro do PDF, fora da camada de texto.
+
+    Medir isso e barato e cabe ao programa. `None` quando nao deu para ler:
+    aqui a recusa precisa ser distinguivel do "sao diferentes", senao um PDF
+    corrompido viraria "mesma copia" e seria descartado.
+    """
+    import logging
+
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        return None
+
+    # O pypdf grita por folha quando falta `fontTools`, e uma integra de 114
+    # folhas rende centenas de linhas que escondem o que importa. O aviso e
+    # sobre decodificar fonte, nao sobre o texto, e aqui so o texto interessa.
+    calado = logging.getLogger("pypdf")
+    nivel = calado.level
+    calado.setLevel(logging.ERROR)
+    try:
+        a, b = PdfReader(str(primeiro)), PdfReader(str(segundo))
+        if len(a.pages) != len(b.pages):
+            return False
+        houve_texto = False
+        for folha_a, folha_b in zip(a.pages, b.pages):
+            texto_a, texto_b = folha_a.extract_text(), folha_b.extract_text()
+            if texto_a != texto_b:
+                return False
+            if (texto_a or "").strip():
+                houve_texto = True
+        # AUSENCIA DE TEXTO NAO E PROVA DE IGUALDADE, e esta linha impede uma
+        # perda de arquivo. Integra DIGITALIZADA e imagem pura: nao tem camada
+        # de texto, e toda folha dela extrai string vazia. Sem esta guarda,
+        # duas integras digitalizadas DIFERENTES, com o mesmo numero de folhas,
+        # dariam "mesmo texto" e uma seria APAGADA pelo programa.
+        #
+        # Encontrado em 22/10/2026 por um teste que ja existia e passou a
+        # falhar: ele monta PDFs de paginas em branco, que e o mesmo caso.
+        # A falha foi do conserto, nao do teste.
+        return True if houve_texto else None
+    except Exception:
+        return None
+    finally:
+        calado.setLevel(nivel)
 
 
 @dataclass
@@ -243,8 +303,14 @@ class Indice:
         paginas = contar_paginas(arquivo)
         if paginas:
             for item in self.itens:
-                if item.tipo == "integra" and item.paginas == paginas:
-                    return REPETIDA_SUSPEITA, item
+                if item.tipo != "integra" or item.paginas != paginas:
+                    continue
+                # Antes de devolver a pergunta ao advogado, MEDIR. Texto igual
+                # folha a folha e a mesma copia, e isso nao e julgamento: e
+                # leitura. So o que a medida nao resolver vira `suspeita`.
+                if mesmo_texto(Path(item.arquivo), arquivo) is True:
+                    return REPETIDA_NO_TEXTO, item
+                return REPETIDA_SUSPEITA, item
         return NOVA, None
 
     def acrescentar(

@@ -296,17 +296,33 @@ def cmd_testar(cofre: Cofre, tribunal: str, sistema: str) -> int:
         return 1
     from datetime import datetime, timezone
 
-    # Antes do codigo, porque esta e a causa que o proprio codigo esconde: ele
-    # vai bater com o aplicativo de qualquer jeito, so que com a entrada errada.
+    # Antes do codigo, porque este e o caso que o proprio codigo esconde: ele
+    # bate com o aplicativo de qualquer jeito, e nao diz com QUAL entrada.
+    #
+    # Este aviso ja afirmou demais, e o advogado o corrigiu em 22/10/2026.
+    # Dizia: "cada cadastro de autenticador gera a sua, entao duas contas nunca
+    # tem a mesma", e concluia que uma tinha sido gravada por cima da outra.
+    # Nao e verdade como regra. Sistema nacional atende instalacoes de varios
+    # tribunais com UMA identidade, e ai a semente e a mesma de propósito: foi
+    # o caso do PJe do Rio de Janeiro e do PJe do Tribunal Regional do Trabalho
+    # da 1a Regiao, que compartilham o cadastro.
+    #
+    # O alarme falso teve preco: levou a regravar uma semente que funcionava.
+    # Entao o aviso passa a RELATAR o fato e a oferecer as duas leituras, sem
+    # escolher por quem sabe. O programa nao tem como saber se dois portais
+    # compartilham identidade; o advogado tem.
     repetida = cofre.onde_mais_esta_esta_semente(identidade, _pares_esperados())
     if repetida:
-        print("\n  ATENCAO: esta semente e a MESMA de " + ", ".join(repetida) + ".")
-        print("  Cada cadastro de autenticador gera a sua, entao duas contas nunca")
-        print("  tem a mesma. Uma das duas foi gravada no lugar da outra, e o")
-        print("  codigo abaixo vai bater com o aplicativo de um dos dois portais")
-        print("  e ser recusado pelo outro.")
-        print("  Confira no aplicativo QUAL das entradas mostra o codigo abaixo,")
-        print("  e regrave a do outro portal com a semente que falta.")
+        print("\n  Esta semente e a MESMA de " + ", ".join(repetida) + ".")
+        print("  Isso pode ser as duas coisas, e quem sabe qual e voce:")
+        print("    - NORMAL, se os portais compartilham um unico cadastro. E o")
+        print("      caso de sistema nacional que atende varios tribunais com a")
+        print("      mesma identidade. Nada a fazer.")
+        print("    - DEFEITO, se sao cadastros distintos: uma semente teria sido")
+        print("      gravada por cima da outra, e o codigo abaixo seria recusado")
+        print("      por um dos dois portais.")
+        print("  Para separar: veja no aplicativo se ha UMA entrada ou DUAS para")
+        print("  esses portais. Uma so, com o codigo abaixo, e o caso normal.")
 
     print(f"\n  Codigo agora: {codigo}  (vale por mais "
           f"{cofre.segundos_restantes_do_codigo()}s)")

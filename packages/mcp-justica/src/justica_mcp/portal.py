@@ -5763,7 +5763,9 @@ def consultar_processo(
                     if resultado["situacao"] == "gravada":
                         from pathlib import Path as _P
 
-                        from .core.acervo import REPETIDA_IGUAL, REPETIDA_SUSPEITA
+                        from .core.acervo import (
+                            REPETIDA_IGUAL, REPETIDA_NO_TEXTO, REPETIDA_SUSPEITA,
+                        )
 
                         baixado = _P(resultado["arquivo"])
                         veredicto, gemeo = indice.avaliar_repeticao(baixado)
@@ -5784,6 +5786,29 @@ def consultar_processo(
                                 acao="copia_repetida", tribunal=identidade.tribunal,
                                 sistema=identidade.sistema, numero=numero.formatado,
                                 documento=str(baixado), resultado=gemeo.faixa(),
+                            )
+                        elif veredicto == REPETIDA_NO_TEXTO:
+                            # Bytes diferentes, TEXTO identico folha a folha.
+                            # Nao ha o que o advogado decida aqui: a diferenca
+                            # esta no carimbo de geracao que o portal escreve
+                            # dentro do PDF, fora da camada de texto.
+                            print(f"    Esta copia tem o MESMO TEXTO de "
+                                  f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), "
+                                  "folha a folha.")
+                            print("    Os bytes diferem so no carimbo de geracao, que o")
+                            print("    proprio portal escreve dentro do PDF. E a mesma")
+                            print("    integra, entao o indice NAO foi alterado.")
+                            if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
+                                try:
+                                    baixado.unlink()
+                                    print("    O arquivo repetido foi removido da pasta.")
+                                except OSError as exc:
+                                    print(f"    Nao consegui remover o repetido: {exc}")
+                            estado_local.registrar(
+                                acao="copia_repetida_no_texto",
+                                tribunal=identidade.tribunal, sistema=identidade.sistema,
+                                numero=numero.formatado, documento=str(baixado),
+                                resultado=gemeo.faixa(),
                             )
                         elif veredicto == REPETIDA_SUSPEITA:
                             print(f"    ATENCAO: esta copia tem o mesmo numero de paginas de "
