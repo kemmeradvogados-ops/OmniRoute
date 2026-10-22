@@ -7817,3 +7817,55 @@ def test_o_servidor_nao_despeja_pilha_no_ctrl_c():
     fonte = inspect.getsource(server.main)
     assert "KeyboardInterrupt" in fonte
     assert "Servidor encerrado" in fonte
+
+
+def test_avisa_quando_o_env_e_mais_novo_que_a_copia(tmp_path, monkeypatch, capsys):
+    """Visto na primeira corrida em campo deste comando, 22/10/2026: a copia do
+    dia era das 10:14, o arquivo tinha sido editado as 12:43 com uma chave
+    nova, e o comando ofereceu a copia sem dizer nada. Repor teria jogado fora
+    a edicao. O comando sabia dos dois horarios."""
+    import os
+    import time
+
+    from justica_mcp import portal
+
+    env, pasta = _config_de_teste(
+        tmp_path, monkeypatch,
+        {"env-20261022.txt": "DA_COPIA=1\n"},
+        atual="EDITADO_DEPOIS=1\n")
+    agora = time.time()
+    os.utime(pasta / "env-20261022.txt", (agora - 9000, agora - 9000))
+    os.utime(env, (agora, agora))
+
+    assert portal.repor_config() == 0
+    saida = capsys.readouterr().out
+    assert "MAIS NOVO" in saida
+    assert "NAO esta nela" in saida
+
+
+def test_nao_avisa_quando_a_copia_e_mais_nova(tmp_path, monkeypatch, capsys):
+    """O aviso so vale onde ha o que perder. Fora disso seria ruido, e ruido
+    em aviso de perda e como ele deixa de ser lido."""
+    import os
+    import time
+
+    from justica_mcp import portal
+
+    env, pasta = _config_de_teste(
+        tmp_path, monkeypatch,
+        {"env-20261022.txt": "DA_COPIA=1\n"},
+        atual="DESTRUIDO=1\n")
+    agora = time.time()
+    os.utime(env, (agora - 9000, agora - 9000))
+    os.utime(pasta / "env-20261022.txt", (agora, agora))
+
+    assert portal.repor_config() == 0
+    assert "MAIS NOVO" not in capsys.readouterr().out
+
+
+def test_nao_avisa_quando_nao_ha_env(tmp_path, monkeypatch, capsys):
+    from justica_mcp import portal
+
+    _config_de_teste(tmp_path, monkeypatch, {"env-20261022.txt": "DA_COPIA=1\n"})
+    assert portal.repor_config() == 0
+    assert "MAIS NOVO" not in capsys.readouterr().out

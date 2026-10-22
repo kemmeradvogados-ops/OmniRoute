@@ -2538,6 +2538,31 @@ def repor_config(*, confirmar: bool = False, copia: Optional[str] = None) -> int
     print(f"\n  Copia a repor: {escolhida.name}")
     print(f"    {escolhida.stat().st_size} byte(s), de {escolhida.parent}")
 
+    # O .env pode ser MAIS NOVO que a copia escolhida, e foi o que apareceu na
+    # primeira vez que este comando rodou em campo, em 22/10/2026: a copia do
+    # dia era das 10:14 e o arquivo tinha sido editado as 12:43, com uma chave
+    # nova. Repor, ali, teria jogado fora a edicao. O arquivo guardado salva a
+    # situacao, mas descobrir isso DEPOIS e trabalho a toa; o comando sabia dos
+    # dois horarios e nao disse nada.
+    if atual is not None:
+        try:
+            quando_o_env = arquivo.stat().st_mtime
+            quando_a_copia = escolhida.stat().st_mtime
+        except OSError:
+            quando_o_env = quando_a_copia = None
+        if quando_o_env and quando_a_copia and quando_o_env > quando_a_copia:
+            from datetime import datetime
+
+            def _momento(instante):
+                return datetime.fromtimestamp(instante).strftime("%d/%m/%Y %H:%M")
+
+            print(f"\n  ATENCAO: o .env atual e MAIS NOVO que esta copia.")
+            print(f"    .env   : {_momento(quando_o_env)}")
+            print(f"    copia  : {_momento(quando_a_copia)}")
+            print("  O que foi escrito no arquivo depois da copia NAO esta nela,")
+            print("  e repor o substitui. Confira se e isso mesmo que voce quer.")
+            print("  (O .env atual e guardado antes de ser substituido.)")
+
     if len(copias) > 1:
         print(f"\n  Ha {len(copias)} copias. As outras, da mais nova para a mais velha:")
         for c in reversed([c for c in copias if c != escolhida][-5:]):
