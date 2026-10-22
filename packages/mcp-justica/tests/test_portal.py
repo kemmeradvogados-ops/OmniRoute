@@ -7557,70 +7557,17 @@ def test_o_comando_oferece_o_download_um_a_um():
 
 
 # ==========================================================================
-# A PASTA DE DESCARGAS cresce para sempre
+# A PASTA DE DESCARGAS mudou de endereco em 22/10/2026
 #
-# Nada nunca a limpou. A corrida de 21/10/2026 passou por ela documentos de
-# 24,7 MB, 11,5 MB duas vezes, 5,2 MB, 4,1 MB e dezenas de outros, alem de tudo
-# o que os dias anteriores deixaram.
+# Os tres testes que cobriam a medida e a limpeza foram para
+# `tests/test_navegador.py`, junto com o codigo. Eles trocavam
+# `portal.pasta_de_descargas` por um duble, e depois da separacao esse duble
+# nao alcanca mais quem chama a funcao de dentro de `navegador.py`: dois deles
+# falharam na hora, e o terceiro passou pelo motivo errado, porque o caminho de
+# pasta inexistente devolve (0, 0) de qualquer jeito.
 #
-# Entrou na lista de suspeitos da queda do navegador junto de outra evidencia
-# que eu vinha atribuindo ao Google Drive: as falhas de gravacao com `OSError`,
-# em quatro documentos. Disco cheio produz exatamente essas duas coisas.
-# [Nao verificado] se foi essa a causa.
-#
-# Independente disso, pasta que cresce sem limite e defeito.
+# Fica aqui so a guarda de fonte, que e de `consultar_processo` e nao mudou.
 # ==========================================================================
-
-
-def _descargas_em(tmp_path, monkeypatch, arquivos):
-    """Monta a pasta de descargas com (nome, bytes, idade_em_segundos)."""
-    import os
-    import time
-
-    from justica_mcp import portal
-
-    pasta = tmp_path / "descargas"
-    pasta.mkdir(parents=True, exist_ok=True)
-    agora = time.time()
-    for nome, tamanho, idade in arquivos:
-        alvo = pasta / nome
-        alvo.write_bytes(b"x" * tamanho)
-        os.utime(alvo, (agora - idade, agora - idade))
-    monkeypatch.setattr(portal, "pasta_de_descargas", lambda: pasta)
-    return pasta, agora
-
-
-def test_a_medida_da_pasta_conta_arquivos_e_bytes(tmp_path, monkeypatch):
-    from justica_mcp.portal import medida_das_descargas
-
-    _descargas_em(tmp_path, monkeypatch,
-                  [("a.pdf", 100, 10), ("b.pdf", 200, 10)])
-    assert medida_das_descargas() == (2, 300)
-
-
-def test_a_limpeza_apaga_so_o_que_e_anterior_a_corrida(tmp_path, monkeypatch):
-    """O resgate compara contra uma lista tirada no instante do clique, entao
-    arquivo mais novo que o inicio da corrida pode ser o que a proxima redea vai
-    procurar. Apagar esse seria jogar fora o download que acabou de chegar."""
-    from justica_mcp.portal import limpar_descargas
-
-    pasta, agora = _descargas_em(
-        tmp_path, monkeypatch,
-        [("velho.pdf", 1000, 600), ("novo.pdf", 2000, 0)])
-    apagados, bytes_livres = limpar_descargas(agora - 300)
-    assert (apagados, bytes_livres) == (1, 1000)
-    assert not (pasta / "velho.pdf").exists()
-    assert (pasta / "novo.pdf").exists()
-
-
-def test_a_limpeza_nao_levanta_quando_a_pasta_nao_existe(tmp_path, monkeypatch):
-    """Pasta de cache nao pode derrubar um download."""
-    from justica_mcp import portal
-
-    monkeypatch.setattr(portal, "pasta_de_descargas",
-                        lambda: tmp_path / "nao-existe")
-    assert portal.limpar_descargas(0) == (0, 0)
-    assert portal.medida_das_descargas() == (0, 0)
 
 
 def test_a_consulta_limpa_e_relata_o_cache_antes_de_baixar():

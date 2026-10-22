@@ -1707,12 +1707,12 @@ class _BaixadoSemCanal:
 def test_arquivo_e_recuperado_da_pasta_de_descargas(tmp_path, monkeypatch):
     """O arquivo ja esta no disco; perde-lo custaria uma tentativa do teto e um
     codigo lido no celular."""
-    from justica_mcp import portal as portal_mod
+    from justica_mcp import navegador as navegador_mod
 
     descargas = tmp_path / "descargas"
     descargas.mkdir()
     (descargas / "a1b2c3").write_bytes(b"%PDF-1.4 integra")
-    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+    monkeypatch.setattr(navegador_mod, "pasta_de_descargas", lambda: descargas)
 
     destino = tmp_path / "copias"
     janela = _JanelaQueMorre(_BaixadoSemCanal())
@@ -1731,7 +1731,7 @@ def test_arquivo_de_execucao_anterior_nao_e_entregue_como_a_integra(
     import os
     import time
 
-    from justica_mcp import portal as portal_mod
+    from justica_mcp import navegador as navegador_mod
 
     descargas = tmp_path / "descargas"
     descargas.mkdir()
@@ -1739,7 +1739,7 @@ def test_arquivo_de_execucao_anterior_nao_e_entregue_como_a_integra(
     velho.write_bytes(b"%PDF-1.4 outro processo")
     antigo = time.time() - 86400
     os.utime(velho, (antigo, antigo))
-    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+    monkeypatch.setattr(navegador_mod, "pasta_de_descargas", lambda: descargas)
 
     destino = tmp_path / "copias"
     janela = _JanelaQueMorre(_BaixadoSemCanal())
@@ -1753,12 +1753,12 @@ def test_arquivo_de_execucao_anterior_nao_e_entregue_como_a_integra(
 def test_arquivo_vazio_nao_e_gravado_como_copia(tmp_path, monkeypatch):
     """Um PDF de zero byte abre como arquivo corrompido e faria o advogado
     acreditar que a copia existe."""
-    from justica_mcp import portal as portal_mod
+    from justica_mcp import navegador as navegador_mod
 
     descargas = tmp_path / "descargas"
     descargas.mkdir()
     (descargas / "vazio").write_bytes(b"")
-    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+    monkeypatch.setattr(navegador_mod, "pasta_de_descargas", lambda: descargas)
 
     destino = tmp_path / "copias"
     janela = _JanelaQueMorre(_BaixadoSemCanal())
@@ -1772,12 +1772,12 @@ def test_arquivo_vazio_nao_e_gravado_como_copia(tmp_path, monkeypatch):
 def test_parcial_do_chromium_e_ignorado(tmp_path, monkeypatch):
     """`.crdownload` e escrita em andamento: copiar dali daria um PDF truncado,
     que abre, parece a integra e esconde as ultimas folhas."""
-    from justica_mcp import portal as portal_mod
+    from justica_mcp import navegador as navegador_mod
 
     descargas = tmp_path / "descargas"
     descargas.mkdir()
     (descargas / "parcial.crdownload").write_bytes(b"%PDF pela metade")
-    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+    monkeypatch.setattr(navegador_mod, "pasta_de_descargas", lambda: descargas)
 
     destino = tmp_path / "copias"
     janela = _JanelaQueMorre(_BaixadoSemCanal())
@@ -1798,12 +1798,12 @@ def test_esperar_parar_de_crescer_devolve_o_tamanho_estavel(tmp_path):
 def test_o_caminho_do_navegador_continua_vindo_antes_do_disco(tmp_path, monkeypatch):
     """O disco e rede de seguranca, nao o caminho principal: quando `save_as`
     responde, e ele que grava."""
-    from justica_mcp import portal as portal_mod
+    from justica_mcp import navegador as navegador_mod
 
     descargas = tmp_path / "descargas"
     descargas.mkdir()
     (descargas / "nao-usar").write_bytes(b"%PDF nao deveria ser lido")
-    monkeypatch.setattr(portal_mod, "pasta_de_descargas", lambda: descargas)
+    monkeypatch.setattr(navegador_mod, "pasta_de_descargas", lambda: descargas)
 
     destino = tmp_path / "copias"
     r = copiar_autos_pelo_visualizador(

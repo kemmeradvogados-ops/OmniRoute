@@ -1335,7 +1335,7 @@ def copiar_autos_pelo_visualizador(
     # de qualquer arquivo de execucao anterior que ainda esteja na pasta.
     import time
 
-    from .portal import pasta_de_descargas
+    from .navegador import pasta_de_descargas
 
     desde = time.time()
     try:

@@ -1855,7 +1855,7 @@ def baixar_marcados(pagina: Any, guarda: Any, destino: Any, nome: str,
     espera = espera_do_arquivo(segundos)
     print(f"      Esperando ate {espera}s pelo arquivo. O portal gera o PDF "
           "agora, e isso demora. Nao feche a janela.")
-    from .portal import pasta_de_descargas
+    from .navegador import pasta_de_descargas
 
     pasta_do_navegador = pasta_de_descargas()
     antes_do_pedido = instantaneo_da_pasta(pasta_do_navegador)
@@ -2431,7 +2431,7 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
     espera = espera_do_arquivo(segundos)
     print(f"    Esperando ate {espera}s pelo arquivo da integra. O portal gera "
           "o PDF agora, e processo grande demora. Nao feche a janela.")
-    from .portal import pasta_de_descargas
+    from .navegador import pasta_de_descargas
 
     pasta_do_navegador = pasta_de_descargas()
     antes_do_pedido = instantaneo_da_pasta(pasta_do_navegador)
@@ -2766,8 +2766,9 @@ def onde_estao_os_botoes(quadro: Any, texto: str) -> str:
     Nenhum rotulo de item e impresso: em grupo grande, rotulo de botao e
     conteudo do processo.
     """
-    from .portal import (caixa_na_tela, janela_de,
-                         relatar_a_medida_do_conteudo, sem_acento)
+    from .navegador import (caixa_na_tela, janela_de,
+                            relatar_a_medida_do_conteudo)
+    from .portal import sem_acento
 
     alvo = sem_acento(texto).strip()
     janela = janela_de(quadro)
@@ -4847,7 +4848,7 @@ def _assentar_a_janela(janela: Any, segundos: int) -> Any:
     O indice de 164 documentos nao aparecia em 45s de espera, com a tela
     mostrando 12 botoes, e tres tentativas de autenticacao foram gastas nisso.
     """
-    from .portal import AREA_DO_VISUALIZADOR, alargar_a_area
+    from .navegador import AREA_DO_VISUALIZADOR, alargar_a_area
 
     trazer_para_a_frente(janela)
     # A LARGURA ENTRA AQUI, e so aqui. A consulta roda na area estreita em que
@@ -5393,7 +5394,8 @@ def achar_por_texto_em_qualquer_lugar(pagina: Any, texto: str,
     dobra tambem conta, e a diferenca entre as duas coisas e justamente o que o
     relato da recusa precisa dizer. Quem a desliga, diz que desligou.
     """
-    from .portal import _na_tela, janela_de, sem_acento
+    from .navegador import _na_tela, janela_de
+    from .portal import sem_acento
 
     alvo = sem_acento(texto).strip()
     janela = janela_de(pagina)
@@ -5428,7 +5430,7 @@ PECAS_DA_LISTA = (
 
 def _estado_do_elemento(elemento: Any, janela: dict) -> str:
     """Como este elemento esta: visivel, onde, e dentro ou fora da janela."""
-    from .portal import caixa_na_tela
+    from .navegador import caixa_na_tela
 
     try:
         visivel = bool(elemento.is_visible())
@@ -5596,7 +5598,7 @@ def relatar_a_lista_de_perfil(pagina: Any, teto: int = 12) -> list[str]:
     esta. O teto e o corte por tamanho ficam, porque a mesma forma de lista
     serve para escolher processo, e ali o texto seria dado de cliente.
     """
-    from .portal import janela_de
+    from .navegador import janela_de
 
     janela = janela_de(pagina)
     linhas = []
