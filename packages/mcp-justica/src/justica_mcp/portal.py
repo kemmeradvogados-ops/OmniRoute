@@ -2479,6 +2479,89 @@ def mostrar_ambiente() -> int:
     return 0 if rotulos else 1
 
 
+def repor_config(*, confirmar: bool = False, copia: Optional[str] = None) -> int:
+    """Repoe o `.env` a partir da copia de seguranca mais recente.
+
+    Existe por causa de 22/10/2026, e o caso merece ficar escrito porque o
+    defeito foi de desenho, nao de quem digitou.
+
+    O guia de instalacao mandava conferir `Test-Path .env` e, SE o arquivo ja
+    existisse, NAO rodar a linha seguinte. Quer dizer: a protecao era o leitor
+    ler um aviso e decidir nao executar um comando que estava ali, pronto, na
+    linha de baixo. O advogado rodou as duas, como qualquer pessoa que segue
+    uma lista faria, e `copy .env.example .env` apagou a configuracao de
+    verdade: sete portais, perfis e pasta de copias viraram o arquivo de
+    exemplo. Protecao que depende de alguem nao fazer o que a lista manda nao
+    e protecao.
+
+    A reposicao existia, e funcionou: `guardar_copia_do_env` tinha a copia do
+    dia, gravada duas horas e meia antes. Mas custou seis comandos, uma data
+    para substituir na mao (substituida errada na primeira tentativa, de novo
+    por minha causa) e a leitura de uma listagem. Nada disso e trabalho de
+    quem perdeu a configuracao; e trabalho que o programa devia fazer.
+
+    Sem `--confirmar` nao toca em nada: diz qual copia usaria e o que ela tem.
+    Com `--confirmar`, guarda o `.env` atual antes de substituir, porque pode
+    haver nele algo escrito depois da ultima copia.
+    """
+    from .core.config import pasta_das_copias_do_env, raiz_do_pacote
+
+    arquivo = raiz_do_pacote() / ".env"
+    copias = sorted(pasta_das_copias_do_env().glob("env-*.txt"))
+    print("=" * LARGURA)
+    print("REPOR A CONFIGURACAO".center(LARGURA))
+    print("=" * LARGURA)
+
+    if not copias:
+        print("\n  Nao ha copia de seguranca nenhuma para repor.")
+        print(f"  Elas sao gravadas em {pasta_das_copias_do_env()}, uma por dia,")
+        print("  toda vez que o programa le o .env. Se a pasta esta vazia, o")
+        print("  programa nunca leu uma configuracao nesta maquina.")
+        return 1
+
+    if copia:
+        escolhida = pasta_das_copias_do_env() / copia
+        if not escolhida.is_file():
+            print(f"\n  A copia {copia!r} nao existe. As que existem:")
+            for c in reversed(copias):
+                print(f"    {c.name}")
+            return 1
+    else:
+        escolhida = copias[-1]
+
+    atual = arquivo.stat().st_size if arquivo.is_file() else None
+    print(f"\n  Configuracao atual: {arquivo}")
+    if atual is None:
+        print("    NAO EXISTE.")
+    else:
+        print(f"    {atual} byte(s).")
+    print(f"\n  Copia a repor: {escolhida.name}")
+    print(f"    {escolhida.stat().st_size} byte(s), de {escolhida.parent}")
+
+    if len(copias) > 1:
+        print(f"\n  Ha {len(copias)} copias. As outras, da mais nova para a mais velha:")
+        for c in reversed([c for c in copias if c != escolhida][-5:]):
+            print(f"    {c.name}  ({c.stat().st_size} byte(s))")
+        print("  Para usar outra, repita com --copia <nome do arquivo>.")
+
+    if not confirmar:
+        print("\n  ENSAIO: nada foi alterado. Repita com --confirmar para repor.")
+        return 0
+
+    if arquivo.is_file():
+        from datetime import datetime
+
+        marca_do_tempo = datetime.now().strftime("%Y%m%d-%H%M%S")
+        guardado = arquivo.with_name(f".env.substituido-{marca_do_tempo}")
+        guardado.write_bytes(arquivo.read_bytes())
+        print(f"\n  O .env que estava ali foi guardado em {guardado.name}.")
+
+    arquivo.write_bytes(escolhida.read_bytes())
+    print(f"  Reposto: {arquivo} agora tem {arquivo.stat().st_size} byte(s).")
+    print("\n  Confira com: justica-portal ambiente")
+    return 0
+
+
 def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
     """Refaz o indice de folhas de um processo a partir dos arquivos na pasta.
 

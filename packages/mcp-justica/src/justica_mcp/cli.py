@@ -73,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
         help="diz onde o programa procura a configuracao e o que encontrou la",
     )
 
+    rc = sub.add_parser(
+        "repor-config",
+        help="repoe o .env a partir da copia de seguranca mais recente",
+    )
+    rc.add_argument("--confirmar", action="store_true",
+                    help="sem isto e ensaio: diz qual copia usaria e nao altera nada")
+    rc.add_argument("--copia", default=None,
+                    help="usar outra copia que nao a mais recente, pelo nome do arquivo")
+
     ri = sub.add_parser(
         "reindexar",
         help="refaz o indice de folhas de um processo a partir dos arquivos na pasta",
@@ -301,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
         # `estrutura` le um arquivo ja gravado: nao tem tribunal, nao tem
         # sistema e nao abre navegador nenhum.
         if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente",
-                                "estrutura", "telas", "tela", "pecas", "peca"):
+                                "repor-config", "estrutura", "telas", "tela",
+                                "pecas", "peca"):
             portal._do_ambiente(args)
             portal.completar_seletores(args)
         if args.comando in ("pecas", "peca"):
@@ -359,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
                                     segundos=args.segundos)
         if args.comando == "ambiente":
             return portal.mostrar_ambiente()
+        if args.comando == "repor-config":
+            return portal.repor_config(confirmar=args.confirmar, copia=args.copia)
         if args.comando == "estrutura":
             return portal.mostrar_estrutura(args.arquivo)
         if args.comando == "telas":

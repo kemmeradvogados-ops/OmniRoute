@@ -86,8 +86,30 @@ Ele fica em silêncio esperando o protocolo, o que é o comportamento certo.
 
 Uma linha por vez, na ordem. Só a primeira precisa ser ajustada.
 
+Primeiro, **descubra** o caminho em vez de digitá-lo. Em 22/10/2026 a versão
+anterior deste guia abria com uma linha contendo `C:\caminho\para\...`, para
+quem instalava substituir pelo caminho real, e ela foi colada literalmente. O
+mesmo aconteceu com uma data de arquivo mais adiante. Lugar reservado em linha
+de comando é erro à espera: a linha parece pronta.
+
 ```powershell
-$projeto = "C:\caminho\para\OmniRoute\packages\mcp-justica"
+Get-ChildItem -Path $env:USERPROFILE -Filter "mcp-justica" -Directory -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+```
+
+Se não devolver nada, a pasta está fora do perfil do usuário:
+
+```powershell
+Get-PSDrive -PSProvider FileSystem | ForEach-Object { Get-ChildItem -Path $_.Root -Filter "mcp-justica" -Directory -Recurse -ErrorAction SilentlyContinue } | Select-Object -ExpandProperty FullName
+```
+
+Se continuar sem resultado, o repositório não está nesta máquina, e o primeiro
+passo é cloná-lo, não instalá-lo.
+
+Com o caminho em mãos, guarde-o. Caminho com espaço ou acento funciona, desde
+que entre aspas aqui:
+
+```powershell
+$projeto = "<cole aqui o caminho que a busca devolveu>"
 ```
 
 ```powershell
@@ -125,21 +147,32 @@ python -m venv .venv
 .venv\Scripts\playwright install chromium
 ```
 
-### O `.env`: conferir antes de copiar
+### O `.env`: uma linha que se recusa a sobrescrever
 
 ```powershell
-Test-Path .env
+if (Test-Path .env) { "JA EXISTE, nao vou sobrescrever." } else { Copy-Item .env.example .env; "criado a partir do exemplo." }
 ```
 
-**Se respondeu `True`, NÃO copie por cima.** O `.env` guarda os endereços dos
-portais, os perfis e os processos de teste, e `copy .env.example .env` apagaria
-tudo. Em 22/09/2026 o `.env` do escritório amanheceu com zero bytes depois de
-uma edição, e reconstruir os endereços deu trabalho de garimpo. Só se a
-resposta for `False`:
+Esta linha é segura rodada em qualquer situação, e isso **não** é detalhe de
+estilo. A versão anterior deste guia mandava rodar `Test-Path .env` e, se a
+resposta fosse `True`, **não** rodar a linha seguinte, que era
+`copy .env.example .env`. Quer dizer: a proteção era o leitor ler um aviso e
+decidir não executar um comando que estava ali, pronto, na linha de baixo.
+
+Em 22/10/2026, na primeira instalação feita por este guia, as duas linhas foram
+rodadas, como qualquer pessoa seguindo uma lista faria, e a configuração de
+verdade (sete portais, perfis, pasta de cópias) virou o arquivo de exemplo.
+Proteção que depende de alguém não fazer o que a lista manda não é proteção.
+
+**Se isso acontecer**, a configuração não se perdeu: o programa guarda uma
+cópia por dia, as dez últimas, toda vez que lê o `.env`. Repor é um comando:
 
 ```powershell
-copy .env.example .env
+.venv\Scripts\python -m justica_mcp.portal repor-config
 ```
+
+Ele mostra qual cópia usaria, e **não altera nada** sem `--confirmar`. Com
+`--confirmar`, guarda o `.env` atual antes de substituir.
 
 ```powershell
 notepad .env

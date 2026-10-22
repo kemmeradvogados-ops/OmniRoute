@@ -7697,3 +7697,123 @@ def test_nenhuma_inscricao_real_da_ordem_no_repositorio():
                     continue
                 achados.append(f"{arquivo.name}:{numero_da_linha} {sigla}{digitos}")
     assert achados == [], achados
+
+
+# ==========================================================================
+# REPOR A CONFIGURACAO
+#
+# Em 22/10/2026 o guia de instalacao mandava conferir `Test-Path .env` e, SE o
+# arquivo existisse, NAO rodar a linha seguinte. A protecao era o leitor ler um
+# aviso e decidir nao executar um comando que estava ali, pronto, na linha de
+# baixo. O advogado rodou as duas, e `copy .env.example .env` apagou sete
+# portais, perfis e pasta de copias.
+#
+# A copia do dia existia e a reposicao funcionou, mas custou seis comandos e
+# uma data substituida na mao. Isto e o que faltava.
+# ==========================================================================
+
+
+def _config_de_teste(tmp_path, monkeypatch, copias, atual=None):
+    """Monta a pasta de estado com copias (nome -> conteudo) e, talvez, um .env."""
+    from justica_mcp.core import config as config_mod
+
+    raiz = tmp_path / "pacote"
+    raiz.mkdir()
+    pasta = tmp_path / "estado" / "config-copias"
+    pasta.mkdir(parents=True)
+    for nome, conteudo in copias.items():
+        (pasta / nome).write_text(conteudo, encoding="utf-8")
+    if atual is not None:
+        (raiz / ".env").write_text(atual, encoding="utf-8")
+    monkeypatch.setattr(config_mod, "raiz_do_pacote", lambda: raiz)
+    monkeypatch.setattr(config_mod, "pasta_das_copias_do_env", lambda: pasta)
+    return raiz / ".env", pasta
+
+
+def test_o_ensaio_nao_toca_em_nada(tmp_path, monkeypatch, capsys):
+    """Sem --confirmar nao se altera arquivo: quem acabou de perder a
+    configuracao nao pode descobrir a copia errada DEPOIS de aplica-la."""
+    from justica_mcp import portal
+
+    env, _ = _config_de_teste(
+        tmp_path, monkeypatch,
+        {"env-20261021.txt": "VELHA=1\n", "env-20261022.txt": "NOVA=1\n"},
+        atual="DESTRUIDA=1\n")
+    assert portal.repor_config() == 0
+    assert env.read_text(encoding="utf-8") == "DESTRUIDA=1\n"
+    saida = capsys.readouterr().out
+    assert "env-20261022.txt" in saida
+    assert "ENSAIO" in saida
+
+
+def test_repoe_a_mais_recente_e_guarda_a_que_estava(tmp_path, monkeypatch):
+    """O .env atual pode ter algo escrito DEPOIS da ultima copia. Substituir
+    sem guardar trocaria uma perda por outra."""
+    from justica_mcp import portal
+
+    env, _ = _config_de_teste(
+        tmp_path, monkeypatch,
+        {"env-20261021.txt": "VELHA=1\n", "env-20261022.txt": "NOVA=1\n"},
+        atual="DESTRUIDA=1\n")
+    assert portal.repor_config(confirmar=True) == 0
+    assert env.read_text(encoding="utf-8") == "NOVA=1\n"
+    guardados = list(env.parent.glob(".env.substituido-*"))
+    assert len(guardados) == 1, guardados
+    assert guardados[0].read_text(encoding="utf-8") == "DESTRUIDA=1\n"
+
+
+def test_repoe_uma_copia_escolhida_pelo_nome(tmp_path, monkeypatch):
+    from justica_mcp import portal
+
+    env, _ = _config_de_teste(
+        tmp_path, monkeypatch,
+        {"env-20261021.txt": "VELHA=1\n", "env-20261022.txt": "NOVA=1\n"})
+    assert portal.repor_config(confirmar=True, copia="env-20261021.txt") == 0
+    assert env.read_text(encoding="utf-8") == "VELHA=1\n"
+
+
+def test_copia_inexistente_lista_as_que_existem(tmp_path, monkeypatch, capsys):
+    """Recusar sem dizer o que ha serviria para errar de novo. O proprio erro
+    deste comando, no dia em que ele nasceu, foi uma data digitada errado."""
+    from justica_mcp import portal
+
+    _config_de_teste(tmp_path, monkeypatch,
+                     {"env-20261022.txt": "NOVA=1\n"})
+    assert portal.repor_config(confirmar=True, copia="env-AAAAMMDD.txt") == 1
+    saida = capsys.readouterr().out
+    assert "env-20261022.txt" in saida
+
+
+def test_sem_copia_nenhuma_diz_por_que(tmp_path, monkeypatch, capsys):
+    from justica_mcp import portal
+
+    _config_de_teste(tmp_path, monkeypatch, {})
+    assert portal.repor_config(confirmar=True) == 1
+    assert "nunca leu uma configuracao" in capsys.readouterr().out
+
+
+def test_repor_config_nao_abre_navegador_nem_resolve_portal():
+    """Guarda de fonte: quem perdeu o .env NAO tem portal configurado, entao
+    passar por `_do_ambiente` faria a reposicao falhar justamente no caso em
+    que ela e necessaria."""
+    import inspect
+
+    from justica_mcp import cli
+
+    fonte = inspect.getsource(cli.main)
+    isentos = fonte.split("args.comando not in (")[1].split("):")[0]
+    assert '"repor-config"' in isentos
+
+
+def test_o_servidor_nao_despeja_pilha_no_ctrl_c():
+    """Guarda de fonte: um Ctrl+C num servidor parado esperando o protocolo nao
+    e defeito, e ate 22/10/2026 parecia um. Sessenta linhas de pilha, com
+    `WouldBlock` e `CancelledError` no meio, em cima de quem so queria
+    encerrar a conferencia da instalacao."""
+    import inspect
+
+    from justica_mcp import server
+
+    fonte = inspect.getsource(server.main)
+    assert "KeyboardInterrupt" in fonte
+    assert "Servidor encerrado" in fonte
