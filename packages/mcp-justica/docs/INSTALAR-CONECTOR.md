@@ -48,8 +48,7 @@ O arquivo de configuração do Claude Desktop fica, no Windows, em
   "mcpServers": {
     "justica": {
       "command": "C:\\caminho\\para\\mcp-justica\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "justica_mcp.server"],
-      "env": { "DATAJUD_API_KEY": "a chave do DataJud" }
+      "args": ["-m", "justica_mcp.server"]
     }
   }
 }
@@ -58,6 +57,14 @@ O arquivo de configuração do Claude Desktop fica, no Windows, em
 Troque `C:\\caminho\\para\\mcp-justica` pelo caminho real da pasta. O `command`
 precisa ser o Python **do ambiente virtual**, com caminho absoluto: o Python do
 sistema não enxerga as dependências instaladas acima.
+
+**A chave do DataJud não entra aqui**, e isso foi conferido em 22/10/2026 e não
+deduzido: `carregar_env` procura o `.env` na raiz do pacote, calculada a partir
+do próprio arquivo de código, e não na pasta de trabalho de quem abriu o
+processo. Com a pasta de trabalho em outro lugar, a chave foi encontrada do
+mesmo jeito. Repeti-la na configuração do Claude criaria uma segunda cópia que
+envelhece sozinha, e o `.env` tem precedência menor que o ambiente, então a
+cópia velha é que venceria.
 
 Feche e reabra o Claude. O servidor deve aparecer com **14 ferramentas**.
 
@@ -72,6 +79,135 @@ do conector:
 
 Ele fica em silêncio esperando o protocolo, o que é o comportamento certo.
 `Ctrl+C` encerra. Se ele morrer com erro, o erro é de instalação.
+
+---
+
+## 2b. A sequência completa, linha por linha (Windows, PowerShell)
+
+Uma linha por vez, na ordem. Só a primeira precisa ser ajustada.
+
+```powershell
+$projeto = "C:\caminho\para\OmniRoute\packages\mcp-justica"
+```
+
+```powershell
+cd $projeto
+```
+
+```powershell
+dir
+```
+
+Tem que listar `pyproject.toml`, `src` e `tests`. Se não listar, o caminho da
+primeira linha está errado.
+
+```powershell
+git fetch origin
+```
+
+```powershell
+git reset --hard origin/<a branch em uso>
+```
+
+```powershell
+git log --oneline -1
+```
+
+```powershell
+python -m venv .venv
+```
+
+```powershell
+.venv\Scripts\pip install -e ".[dev,navegador]"
+```
+
+```powershell
+.venv\Scripts\playwright install chromium
+```
+
+### O `.env`: conferir antes de copiar
+
+```powershell
+Test-Path .env
+```
+
+**Se respondeu `True`, NÃO copie por cima.** O `.env` guarda os endereços dos
+portais, os perfis e os processos de teste, e `copy .env.example .env` apagaria
+tudo. Em 22/09/2026 o `.env` do escritório amanheceu com zero bytes depois de
+uma edição, e reconstruir os endereços deu trabalho de garimpo. Só se a
+resposta for `False`:
+
+```powershell
+copy .env.example .env
+```
+
+```powershell
+notepad .env
+```
+
+Preencha `DATAJUD_API_KEY`. Ao salvar, se o Bloco de Notas perguntar a
+codificação, escolha **UTF-8**: o programa tolera marca de ordem de byte e
+página de código do Windows, mas não lê UTF-16.
+
+### Prova de que o servidor sobe
+
+```powershell
+.venv\Scripts\python -m justica_mcp.server
+```
+
+Ele fica em silêncio, parado, esperando o protocolo. **Silêncio aqui é o
+comportamento certo.** Espere alguns segundos e encerre com `Ctrl+C`. Se
+aparecer erro, o defeito é de instalação e não adianta seguir.
+
+### Registrar no Claude sem apagar o que já existe
+
+```powershell
+$cfg = "$env:APPDATA\Claude\claude_desktop_config.json"
+```
+
+```powershell
+if (Test-Path $cfg) { Copy-Item $cfg "$cfg.bak" -Force }
+```
+
+```powershell
+if (-not (Test-Path $cfg)) { New-Item -ItemType Directory -Force -Path (Split-Path $cfg) | Out-Null; [System.IO.File]::WriteAllText($cfg, '{"mcpServers":{}}') }
+```
+
+```powershell
+$j = Get-Content $cfg -Raw | ConvertFrom-Json
+```
+
+```powershell
+if (-not $j.mcpServers) { $j | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) }
+```
+
+```powershell
+$entrada = [pscustomobject]@{ command = "$projeto\.venv\Scripts\python.exe"; args = @("-m","justica_mcp.server") }
+```
+
+```powershell
+$j.mcpServers | Add-Member -NotePropertyName justica -NotePropertyValue $entrada -Force
+```
+
+```powershell
+[System.IO.File]::WriteAllText($cfg, ($j | ConvertTo-Json -Depth 10))
+```
+
+`WriteAllText` em vez de `Set-Content -Encoding utf8`: o Windows PowerShell 5.1
+grava marca de ordem de byte com `utf8`, e um arquivo de configuração que
+começa com essa marca pode não ser lido.
+
+```powershell
+Get-Content $cfg -Raw
+```
+
+Tem que aparecer `"justica"` com o caminho do `python.exe` do ambiente virtual,
+e tem que continuar aparecendo qualquer outro servidor que já estivesse ali. Se
+sumiu algo, a cópia está em `claude_desktop_config.json.bak`.
+
+Por fim, feche o Claude por inteiro, pelo ícone na bandeja ao lado do relógio, e
+abra de novo. Fechar só a janela não encerra o processo, e o conector não é
+relido.
 
 ---
 
