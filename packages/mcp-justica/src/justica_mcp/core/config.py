@@ -142,6 +142,49 @@ def guardar_copia_do_env(arquivo: Path) -> Optional[Path]:
     return destino
 
 
+def linhas_descartadas(caminho: Optional[Path] = None) -> list[tuple[int, str, str]]:
+    """As linhas que PARECEM configuracao e nao viraram chave, e por que.
+
+    Devolve (numero da linha, nome da chave ou "", motivo). NUNCA devolve
+    valor: de uma chave vazia nao ha valor, e de uma linha malformada o que
+    houver fica de fora de proposito.
+
+    Escrito em 22/10/2026 depois de um silencio que custou tempo. O `.env` do
+    advogado cresceu 71 bytes entre uma leitura e a seguinte, o programa nao
+    leu chave nova nenhuma, e o relato de ambiente nao disse uma palavra sobre
+    isso: mostrou as mesmas 14 chaves de antes, como se nada tivesse sido
+    escrito. O comando existe justamente para responder "por que o programa nao
+    enxerga o que eu escrevi", e ficou mudo na unica pergunta que lhe cabia.
+
+    Comentario e linha em branco NAO entram aqui: sao proposito, nao descarte.
+    """
+    arquivo = caminho or (raiz_do_pacote() / ".env")
+    if not arquivo.is_file():
+        return []
+
+    descartadas: list[tuple[int, str, str]] = []
+    for numero, bruta in enumerate(_ler(arquivo).splitlines(), 1):
+        linha = bruta.strip().lstrip("\ufeff").strip()
+        if not linha or linha.startswith("#"):
+            continue
+        if "=" not in linha:
+            descartadas.append((numero, "", "nao tem '=' (nome=valor)"))
+            continue
+        chave, _, valor = linha.partition("=")
+        limpa = limpar_invisiveis(chave.strip())
+        valor = valor.strip().strip('"').strip("'")
+        if not limpa:
+            descartadas.append((numero, "", "nome vazio antes do '='"))
+        elif not valor:
+            descartadas.append((numero, limpa, "valor vazio depois do '='"))
+        elif limpa != chave.strip():
+            # Foi lida, mas com o nome CORRIGIDO: o arquivo tem um caractere
+            # invisivel que o operador nao ve na tela.
+            descartadas.append(
+                (numero, limpa, "o nome no arquivo tem caractere invisivel"))
+    return descartadas
+
+
 def carregar_env(caminho: Optional[Path] = None) -> list[str]:
     """Carrega o `.env` e devolve os NOMES das chaves lidas, nunca os valores."""
     arquivo = caminho or (raiz_do_pacote() / ".env")

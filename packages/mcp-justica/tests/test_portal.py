@@ -7869,3 +7869,103 @@ def test_nao_avisa_quando_nao_ha_env(tmp_path, monkeypatch, capsys):
     _config_de_teste(tmp_path, monkeypatch, {"env-20261022.txt": "DA_COPIA=1\n"})
     assert portal.repor_config() == 0
     assert "MAIS NOVO" not in capsys.readouterr().out
+
+
+# ==========================================================================
+# O RELATO DE AMBIENTE ESCONDIA UMA CHAVE
+#
+# Em 22/10/2026 o advogado acrescentou `DATAJUD_API_KEY` ao .env, o arquivo
+# cresceu 71 bytes, ele rodou `ambiente` e viu as MESMAS 14 chaves de antes,
+# como se nada tivesse sido escrito. Concluimos os dois que a chave nao estava
+# sendo lida. Estava: o relato filtrava a lista por `JUSTICA_*`, e a credencial
+# da base nacional nao carrega esse prefixo.
+#
+# Um comando que existe para responder "por que o programa nao enxerga o que eu
+# escrevi" nao pode ter filtro escondido na lista.
+# ==========================================================================
+
+
+def _ambiente_com(tmp_path, monkeypatch, conteudo):
+    from justica_mcp.core import config as config_mod
+
+    raiz = tmp_path / "pacote"
+    raiz.mkdir()
+    (raiz / ".env").write_text(conteudo, encoding="utf-8")
+    copias = tmp_path / "copias"
+    copias.mkdir()
+    monkeypatch.setattr(config_mod, "raiz_do_pacote", lambda: raiz)
+    monkeypatch.setattr(config_mod, "pasta_das_copias_do_env", lambda: copias)
+    for chave in ("DATAJUD_API_KEY", "JUSTICA_PORTAL_XX_YY_URL", "SOLTA"):
+        monkeypatch.delenv(chave, raising=False)
+    return raiz / ".env"
+
+
+def test_o_ambiente_mostra_chave_sem_o_prefixo_justica(tmp_path, monkeypatch, capsys):
+    from justica_mcp import portal
+
+    _ambiente_com(tmp_path, monkeypatch,
+                  "JUSTICA_PORTAL_XX_YY_URL=https://exemplo\n"
+                  "DATAJUD_API_KEY=umvalorqualquer\n")
+    portal.mostrar_ambiente()
+    saida = capsys.readouterr().out
+    assert "DATAJUD_API_KEY" in saida
+    assert "CHAVES LIDAS DO ARQUIVO (2)" in saida
+
+
+def test_o_ambiente_nao_imprime_valor_nenhum(tmp_path, monkeypatch, capsys):
+    """A regra que torna este relato colavel numa conversa."""
+    from justica_mcp import portal
+
+    _ambiente_com(tmp_path, monkeypatch,
+                  "DATAJUD_API_KEY=valor-secreto-que-nao-pode-sair\n")
+    portal.mostrar_ambiente()
+    saida = capsys.readouterr().out
+    assert "valor-secreto-que-nao-pode-sair" not in saida
+
+
+def test_o_ambiente_relata_a_linha_que_nao_virou_chave(tmp_path, monkeypatch, capsys):
+    """Era o outro lado do mesmo silencio: arquivo cresce, nada e lido, e o
+    relato nao diz por que."""
+    from justica_mcp import portal
+
+    _ambiente_com(tmp_path, monkeypatch,
+                  "JUSTICA_PORTAL_XX_YY_URL=https://exemplo\n"
+                  "DATAJUD_API_KEY=\n"
+                  "linha sem igual\n")
+    portal.mostrar_ambiente()
+    saida = capsys.readouterr().out
+    assert "LINHAS QUE NAO VIRARAM CHAVE (2)" in saida
+    assert "valor vazio" in saida
+    assert "nao tem '='" in saida
+
+
+def test_comentario_e_linha_em_branco_nao_sao_descarte(tmp_path, monkeypatch):
+    """Sao proposito. Lista-los como problema faria o relato gritar em todo
+    arquivo normal, e aviso que grita sempre deixa de ser lido."""
+    from justica_mcp.core.config import linhas_descartadas
+
+    env = _ambiente_com(tmp_path, monkeypatch,
+                        "# um comentario\n\nJUSTICA_PORTAL_XX_YY_URL=https://exemplo\n")
+    assert linhas_descartadas(env) == []
+
+
+def test_o_descarte_nunca_devolve_valor(tmp_path, monkeypatch):
+    from justica_mcp.core.config import linhas_descartadas
+
+    env = _ambiente_com(tmp_path, monkeypatch, "= valor orfao sem nome\n")
+    descartadas = linhas_descartadas(env)
+    assert len(descartadas) == 1
+    assert "orfao" not in repr(descartadas)
+
+
+def test_o_descarte_aponta_o_caractere_invisivel_no_nome(tmp_path, monkeypatch):
+    """A chave e lida, com o nome corrigido, mas o arquivo esta errado e quem o
+    olha na tela nao ve a diferenca. Foi assim que `TJRJ / pje` aparecia na
+    listagem e nao era encontrado na busca, em 22/09/2026."""
+    from justica_mcp.core.config import linhas_descartadas
+
+    env = _ambiente_com(tmp_path, monkeypatch,
+                        "JUSTICA​PORTAL_XX_YY_URL=https://exemplo\n")
+    descartadas = linhas_descartadas(env)
+    assert len(descartadas) == 1
+    assert "invisivel" in descartadas[0][2]

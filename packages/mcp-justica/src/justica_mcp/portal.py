@@ -2454,12 +2454,30 @@ def mostrar_ambiente() -> int:
         print(f"  Codificacao que serve para le-lo: {codificacao_do_env(arquivo)}")
 
     lidas = carregar_env()
-    nossas = [c for c in lidas if c.startswith("JUSTICA_")]
-    print(f"\n  CHAVES LIDAS DO ARQUIVO ({len(nossas)}):")
-    for chave in sorted(nossas):
+    # TODAS as chaves lidas, e nao so as `JUSTICA_*`. Ate 22/10/2026 este
+    # relato filtrava por esse prefixo, e com isso escondia `DATAJUD_API_KEY`,
+    # que e a credencial da base nacional e nao carrega o prefixo. O advogado
+    # acrescentou a chave ao arquivo, que cresceu 71 bytes, rodou este comando
+    # e viu as mesmas 14 chaves de antes, como se nada tivesse sido escrito.
+    # Concluimos os dois que a chave nao estava sendo lida; ela estava.
+    #
+    # Um comando que existe para responder "por que o programa nao enxerga o
+    # que eu escrevi" nao pode ter uma lista com filtro escondido.
+    print(f"\n  CHAVES LIDAS DO ARQUIVO ({len(lidas)}):")
+    for chave in sorted(lidas):
         print(f"    {chave}")
-    if not nossas:
+    if not lidas:
         print("    (nenhuma)")
+
+    from .core.config import linhas_descartadas
+
+    descartadas = linhas_descartadas()
+    if descartadas:
+        print(f"\n  LINHAS QUE NAO VIRARAM CHAVE ({len(descartadas)}):")
+        for numero, chave, motivo in descartadas:
+            print(f"    linha {numero}: {chave or '(sem nome)'} -- {motivo}")
+        print("  Nenhum valor e mostrado. Comentario e linha em branco nao")
+        print("  entram nesta lista: sao proposito, nao descarte.")
 
     from .core.config import pasta_das_copias_do_env
 
