@@ -1,0 +1,111 @@
+{
+  "manifest_version": "0.3",
+  "name": "justica-mcp",
+  "display_name": "Justiça (tribunais brasileiros)",
+  "version": "0.1.0",
+  "description": "Acesso somente leitura a processos judiciais brasileiros: base nacional, Diário de Justiça Eletrônico, portais dos tribunais e leitura das peças já baixadas.",
+  "long_description": "Camada padronizadora de acesso processual, somente leitura.\n\nO que funciona sem credencial e sem portal: ficha do processo, movimentos e publicações do Diário de Justiça Eletrônico Nacional, pela base nacional do Conselho Nacional de Justiça.\n\nO que funciona a partir do disco: a lista das peças já gravadas de um processo e o texto de cada uma, sem abrir o portal e sem gastar tentativa de autenticação.\n\nO que funciona com credencial: a consulta autenticada no Portal de Serviços do Tribunal de Justiça do Estado do Rio de Janeiro, comprovada em corrida real, e no eproc.\n\nO que NÃO faz, de propósito: não dá ciência de intimação e não inicia prazo; não escreve nada em sistema de tribunal; não manda dado do cliente para fora da máquina.\n\nO download dos autos continua pela linha de comando, porque abre uma janela de verdade, pede presença humana no desafio de verificação e pode levar horas.",
+  "author": {
+    "name": "Kemmer Advogados"
+  },
+  "icon": "icon.png",
+  "keywords": ["juridico", "processo", "tribunal", "datajud", "advocacia"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/lancador.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/lancador.mjs"],
+      "env": {
+        "JUSTICA_PYTHON": "${user_config.python_do_ambiente}",
+        "JUSTICA_PACOTE": "${user_config.pasta_do_projeto}",
+        "DATAJUD_API_KEY": "${user_config.chave_do_datajud}"
+      }
+    }
+  },
+  "user_config": {
+    "python_do_ambiente": {
+      "type": "file",
+      "title": "Python do ambiente virtual",
+      "description": "O ARQUIVO python do ambiente virtual do projeto: .venv\\Scripts\\python.exe no Windows, .venv/bin/python no macOS e no Linux. Não é o Python do sistema: só o do ambiente virtual tem as dependências instaladas.",
+      "required": true
+    },
+    "pasta_do_projeto": {
+      "type": "directory",
+      "title": "Pasta do projeto",
+      "description": "A pasta mcp-justica, aquela que contém pyproject.toml, src e tests.",
+      "required": true
+    },
+    "chave_do_datajud": {
+      "type": "string",
+      "title": "Chave da base nacional (opcional)",
+      "description": "Chave pública da interface do DataJud, do Conselho Nacional de Justiça, obtida em datajud-wiki.cnj.jus.br. Deixe em branco se ela já estiver no arquivo .env do projeto: campo vazio não sobrescreve o que está lá. Sem ela, as cinco ferramentas da base nacional não respondem; as outras nove funcionam.",
+      "sensitive": true,
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "justica_identificar_tribunal",
+      "description": "Tribunal, segmento e ano a partir do número, sem rede. Confere o dígito verificador."
+    },
+    {
+      "name": "justica_resolver_sistema",
+      "description": "Em qual sistema o processo tramita: PJe, eproc, e-SAJ ou Portal de Serviços."
+    },
+    {
+      "name": "justica_consultar_processo",
+      "description": "Ficha pela base nacional: classe, assuntos, órgão e último andamento."
+    },
+    {
+      "name": "justica_listar_andamentos",
+      "description": "Movimentos do processo, do mais recente para o mais antigo."
+    },
+    {
+      "name": "justica_verificar_novos_andamentos",
+      "description": "Só o que mudou desde a última consulta gravada."
+    },
+    {
+      "name": "justica_publicacoes_por_oab",
+      "description": "Publicações do Diário de Justiça Eletrônico Nacional por inscrição na Ordem. Não dispara ciência."
+    },
+    {
+      "name": "justica_publicacoes_por_processo",
+      "description": "Publicações do Diário referentes a um processo. Não dispara ciência."
+    },
+    {
+      "name": "justica_pecas_do_processo",
+      "description": "As peças já gravadas na pasta de cópias: nome, página inicial, folhas e bytes. Nenhum conteúdo."
+    },
+    {
+      "name": "justica_ler_peca",
+      "description": "O texto de uma peça já gravada. É a única ferramenta que devolve conteúdo dos autos."
+    },
+    {
+      "name": "justica_consultar_processo_autenticado",
+      "description": "Consulta no portal do tribunal com a credencial do advogado. Cada chamada consome uma tentativa."
+    },
+    {
+      "name": "justica_capacidades",
+      "description": "O que cada adaptador sabe fazer, e o motivo do que não faz."
+    },
+    {
+      "name": "justica_credenciais_situacao",
+      "description": "Quais credenciais o cofre tem, sem revelar nenhuma."
+    },
+    {
+      "name": "justica_acesso_autenticado_situacao",
+      "description": "Tentativas de autenticação gastas e os tetos."
+    },
+    {
+      "name": "justica_auditoria_recente",
+      "description": "O que o servidor fez por último."
+    }
+  ],
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

@@ -6,3 +6,8 @@ __pycache__/
 *.db
 .pytest_cache/
 *.egg-info/
+
+# O pacote `.mcpb` e GERADO a partir de conector/ com `mcpb pack`. Versionar o
+# zip faria conviverem duas verdades: a fonte e uma copia que envelhece em
+# silencio, e quem instalasse a copia velha acharia que instalou a nova.
+conector/*.mcpb
