@@ -8567,9 +8567,9 @@ def test_o_padrao_diz_na_tela_o_que_escolheu_e_por_que():
 def test_a_ajuda_do_comando_nao_promete_mais_a_integra_como_padrao():
     import inspect
 
-    from justica_mcp import portal
+    from justica_mcp import cli
 
-    fonte = inspect.getsource(portal.main)
+    fonte = inspect.getsource(cli.main)
     trecho = fonte.split('cp.add_argument("--documentos"')[1][:600]
     assert "integra se nao ha copia" not in trecho
     assert "um download por documento" in trecho

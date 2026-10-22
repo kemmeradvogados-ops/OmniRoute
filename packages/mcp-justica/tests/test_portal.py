@@ -6248,9 +6248,11 @@ def test_a_rede_de_seguranca_do_main_continua_estreita():
     nomeado, nao um `except Exception` mudo."""
     import inspect
 
-    from justica_mcp import portal
+    from justica_mcp import cli
 
-    fonte = inspect.getsource(portal.main)
+    from justica_mcp import cli
+
+    fonte = inspect.getsource(cli.main)
     assert "leitura_perdida_para_navegacao(exc)" in fonte
     assert '"has been closed" not in str(exc)' in fonte
     # O `raise` que deixa passar todo o resto continua la.
@@ -7366,7 +7368,9 @@ def test_estrutura_nao_abre_navegador_nem_exige_tribunal():
 
     import re
 
-    fonte = inspect.getsource(portal.main)
+    from justica_mcp import cli
+
+    fonte = inspect.getsource(cli.main)
     assert '"estrutura")' in fonte or '"estrutura",' in fonte
     corpo = inspect.getsource(portal.mostrar_estrutura)
     for proibido in ("sync_playwright", "abrir_navegador", "config_portal"):
@@ -7546,7 +7550,9 @@ def test_o_comando_oferece_o_download_um_a_um():
     # A janela devolvida pelo percurso substitui a antiga: a que entrou morreu.
     assert 'janela = resposta["janela"]' in fonte
 
-    ajuda = inspect.getsource(portal.main)
+    from justica_mcp import cli
+
+    ajuda = inspect.getsource(cli.main)
     assert "um-a-um" in ajuda
 
 
@@ -7629,3 +7635,64 @@ def test_a_consulta_limpa_e_relata_o_cache_antes_de_baixar():
     assert "medida_das_descargas()" in fonte
     assert "Cache do navegador" in fonte
     assert fonte.index("limpar_descargas(") < fonte.index("escolha.startswith")
+
+
+# ==========================================================================
+# A LINHA DE COMANDO mora em `cli.py`
+#
+# Separada de `portal.py` em 22/10/2026. O arquivo tinha 7.394 linhas e fazia
+# tres trabalhos ao mesmo tempo: a linha de comando, as primitivas
+# compartilhadas de navegador e a orquestracao dos cinco portais.
+#
+# A mistura ja custou dinheiro: em 15/10/2026 uma troca de area da janela,
+# feita para consertar a gaveta do Visualizador do Rio de Janeiro, quebrou a
+# consulta que funcionava desde 13/10 em todos os portais.
+# ==========================================================================
+
+
+def test_o_ponto_de_entrada_instalado_continua_valendo():
+    """`justica-portal = justica_mcp.portal:main` esta no pyproject e em toda
+    instalacao ja feita. Mudar isso obrigaria a reinstalar, sem ganho."""
+    from justica_mcp import portal
+
+    assert callable(portal.main)
+
+
+def test_a_linha_de_comando_chama_o_MODULO_e_nao_os_nomes():
+    """`from .portal import reconhecer` congela a referencia: trocar
+    `portal.reconhecer` depois disso nao chegaria mais a linha de comando. Foi
+    o que quebrou dois testes na primeira tentativa desta separacao."""
+    import inspect
+
+    from justica_mcp import cli
+
+    codigo = "\n".join(
+        linha for linha in inspect.getsource(cli).splitlines()
+        if not linha.strip().startswith("#"))
+    assert "from . import portal" in codigo
+    assert "from .portal import" not in codigo
+
+
+def test_a_troca_de_uma_funcao_do_portal_chega_na_linha_de_comando(monkeypatch):
+    """A prova de comportamento da guarda acima, e nao so da forma dela."""
+    from justica_mcp import cli
+    from justica_mcp import portal as portal_mod
+
+    chamou = []
+    monkeypatch.setattr(portal_mod, "reconhecer",
+                        lambda *a, **k: chamou.append(1) or 0)
+    assert cli.main(["reconhecer", "--url", "https://exemplo.invalido/"]) == 0
+    assert chamou == [1]
+
+
+def test_portal_nao_importa_a_linha_de_comando_no_topo():
+    """`cli.py` importa `portal.py` no topo dele. Importar de volta no topo de
+    `portal.py` fecharia o circulo."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal)
+    cabeca = fonte.split("def ")[0]
+    assert "from .cli import" not in cabeca
+    assert "import cli" not in cabeca

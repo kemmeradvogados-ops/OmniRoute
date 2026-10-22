@@ -257,9 +257,9 @@ def test_o_comando_de_terminal_grava_o_texto_em_arquivo():
     que se cola em conversa, e foi assim que isso ja aconteceu uma vez."""
     import inspect
 
-    from justica_mcp import portal
+    from justica_mcp import cli
 
-    fonte = inspect.getsource(portal.main)
+    fonte = inspect.getsource(cli.main)
     trecho = fonte.split('if args.comando in ("pecas", "peca"):')[1].split(
         'if args.comando == "reconhecer":')[0]
     assert "gravar_o_texto(" in trecho
