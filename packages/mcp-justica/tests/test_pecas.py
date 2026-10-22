@@ -281,8 +281,14 @@ def test_a_ferramenta_de_leitura_avisa_que_devolve_dado_do_cliente():
 
 
 def test_a_ferramenta_da_lista_avisa_que_a_pasta_pode_estar_incompleta():
-    """Ausencia na pasta nao prova ausencia nos autos, e ate 21/10/2026 o
-    leitor do indice via 35 de 340 documentos."""
+    """Ausencia na pasta nao prova ausencia nos autos.
+
+    O aviso ja esteve errado por estar velho: ate 22/10/2026 ele dizia que o
+    leitor do indice via 35 de 340 documentos, numero consertado no dia
+    anterior. Descricao de ferramenta e lida pelo modelo como verdade, entao
+    numero desatualizado ali nao e detalhe de documentacao: e o modelo
+    concluindo coisa errada sobre os autos do cliente. Por isso a guarda passa
+    a cobrar tambem o caminho de conferencia, que nao envelhece."""
     import inspect
 
     from justica_mcp import tools
@@ -291,3 +297,5 @@ def test_a_ferramenta_da_lista_avisa_que_a_pasta_pode_estar_incompleta():
     trecho = fonte.split("async def justica_pecas_do_processo")[1][:2000]
     assert "INCOMPLETA" in trecho
     assert "nao prova ausencia" in trecho
+    assert "reindexar" in trecho
+    assert "35 de 340" not in trecho

@@ -296,7 +296,7 @@ def registrar(mcp: Any) -> None:
         contornar por outro caminho.
         """
         return _json({
-            "versao": "0.1.0 (Fase 1, somente leitura, sem credenciais)",
+            "versao": "0.1.0 (somente leitura; acesso autenticado disponivel para dcp e eproc)",
             "adaptadores": matriz_serializavel(),
             "datajud_configurado": _datajud.configurado,
         })
@@ -449,11 +449,18 @@ def registrar(mcp: Any) -> None:
         quantas folhas e quantos bytes. NENHUM conteudo. Serve para escolher o
         que ler antes de ler, e para ver o tamanho do que a pasta tem.
 
-        A pasta pode estar INCOMPLETA, e isso nao aparece aqui. Quem baixa e o
-        comando `justica-portal consultar --documentos`, e ate 21/10/2026 o
-        leitor do indice enxergava 35 de 340 documentos. Antes de concluir que
-        o processo nao tem determinada peca, confira o indice no portal: a
-        ausencia na pasta nao prova ausencia nos autos.
+        A pasta pode estar INCOMPLETA, e isso NAO aparece aqui. Quem baixa e
+        o comando `justica-portal consultar --documentos`, e mesmo uma corrida
+        inteira pode nao trazer tudo: na corrida de 21/10/2026, a primeira a
+        ler o indice completo, vieram 338 dos 340 documentos listados, cobrindo
+        1.783 das 1.897 paginas do processo. Das 114 paginas que faltaram, 6
+        foram puladas de proposito (dois documentos derrubam o navegador) e as
+        outras 108 estao em faixas que o indice do portal nao lista.
+
+        Entao, antes de concluir que o processo nao tem determinada peca,
+        confira o indice no portal: a ausencia na pasta nao prova ausencia nos
+        autos. Use `justica-portal reindexar`, que relata a cobertura por
+        faixa de paginas e mostra exatamente onde estao os buracos.
         """
         try:
             from .pecas import pecas_da_pasta

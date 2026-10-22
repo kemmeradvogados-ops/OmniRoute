@@ -316,8 +316,8 @@ def _botao(identificador, texto, formulario="frmEscolherUsuario", na_tela=True):
 
 
 PERFIS_REAIS = [
-    _botao("tr0", "RJ168943\nADVOGADO"),
-    _botao("tr1", "SP436159\nADVOGADO"),
+    _botao("tr0", "RJ000111\nADVOGADO"),
+    _botao("tr1", "SP000222\nADVOGADO"),
 ]
 
 
@@ -339,7 +339,7 @@ def test_ignora_botoes_fora_do_formulario_de_escolha():
         _botao("backTop", "keyboard_arrow_up", formulario=None, na_tela=False),
     ]
     assert _perfis_disponiveis(ruido + PERFIS_REAIS) == [
-        ("tr0", "RJ168943\nADVOGADO"), ("tr1", "SP436159\nADVOGADO"),
+        ("tr0", "RJ000111\nADVOGADO"), ("tr1", "SP000222\nADVOGADO"),
     ]
 
 
@@ -348,9 +348,9 @@ def test_casa_perfil_por_trecho_do_rotulo():
 
     # `_casar_perfil` recebe os pares ja extraidos, nao os campos crus.
     pares = _perfis_disponiveis(PERFIS_REAIS)
-    assert _casar_perfil(pares, "RJ168943")[0] == "tr0"
-    assert _casar_perfil(pares, "sp436159")[0] == "tr1", "caixa nao importa"
-    assert _casar_perfil(pares, "168943")[0] == "tr0", "trecho basta"
+    assert _casar_perfil(pares, "RJ000111")[0] == "tr0"
+    assert _casar_perfil(pares, "sp000222")[0] == "tr1", "caixa nao importa"
+    assert _casar_perfil(pares, "000111")[0] == "tr0", "trecho basta"
 
 
 def test_perfil_inexistente_nao_casa_com_nada():
@@ -576,15 +576,15 @@ def test_endereco_do_comando_tem_precedencia_sobre_o_ambiente(monkeypatch):
 
 def test_perfil_vem_do_ambiente_quando_nao_veio_no_comando(monkeypatch):
     monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/")
-    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ000000")
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ000111")
     args = _args(perfil=None)
     _do_ambiente(args)
-    assert args.perfil == "RJ000000"
+    assert args.perfil == "RJ000111"
 
 
 def test_perfil_do_comando_tem_precedencia(monkeypatch):
     monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/")
-    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ000000")
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ000111")
     args = _args(url="https://x/", perfil="RJ999999")
     _do_ambiente(args)
     assert args.perfil == "RJ999999"
@@ -728,8 +728,8 @@ def test_tela_de_perfil_prova_que_a_sessao_esta_aberta(monkeypatch):
     """A selecao de perfil nao existe antes da autenticacao, entao serve de
     prova positiva."""
     perfis = [
-        _botao("tr0", "RJ168943\nADVOGADO"),
-        _botao("tr1", "SP436159\nADVOGADO"),
+        _botao("tr0", "RJ000111\nADVOGADO"),
+        _botao("tr1", "SP000222\nADVOGADO"),
     ]
     monkeypatch.setattr("justica_mcp.portal._coletar", lambda p: ([], perfis))
     assert _ja_autenticado(object()) is True
@@ -2926,7 +2926,7 @@ def test_tela_de_selecao_de_perfil_prova_sessao_em_qualquer_sistema(monkeypatch)
     # `formulario` importa: no eproc os botoes de perfil vivem em
     # `frmEscolherUsuario`, e e por isso que `_perfis_disponiveis` os reconhece.
     botao = Campo(marcador="tr", tipo="", nome=None, identificador="tr0",
-                  rotulo=None, texto_visivel="RJ168943\nADVOGADO", e_senha=False,
+                  rotulo=None, texto_visivel="RJ000111\nADVOGADO", e_senha=False,
                   formulario="frmEscolherUsuario")
     _fingir_coletar(monkeypatch, tem_senha=False, perfis=[botao])
     assert _sessao_ja_aberta(_TelaDeSessao(), "pje") is True
@@ -7643,3 +7643,57 @@ def test_portal_nao_importa_a_linha_de_comando_no_topo():
     cabeca = fonte.split("def ")[0]
     assert "from .cli import" not in cabeca
     assert "import cli" not in cabeca
+
+
+# ==========================================================================
+# DADO PESSOAL NO REPOSITORIO PUBLICO
+# ==========================================================================
+
+
+def test_nenhuma_inscricao_real_da_ordem_no_repositorio():
+    """Guarda de fonte: inscricao na Ordem e dado pessoal, e este repositorio
+    e publico.
+
+    Em 22/10/2026 uma inscricao de seccional do Rio de Janeiro, pareada com
+    "ADVOGADO", estava em onze lugares: ajuda da linha de comando, dois
+    exemplos do README, o `.env.example` e fixtures de teste. Havia uma
+    segunda, de Sao Paulo, em tres fixtures. A ironia estava no proprio
+    `.env.example`, que quatro linhas abaixo explica que numero de processo nao
+    vai para codigo versionado porque "nao se apaga do historico". A inscricao
+    foi, pela mesma porta.
+
+    Os numeros nao sao reproduzidos aqui, e essa omissao nao e estilo: esta
+    guarda pegou a primeira versao deste proprio texto, em que eu os tinha
+    escrito por extenso para explicar o que proibia.
+
+    Os ficticios ficaram com os digitos 000111 e 000222, que nenhuma seccional
+    emite, e sao distinguiveis entre si de proposito: `000000` nos dois casaria
+    com os dois perfis e faria o teste do "trecho basta" passar por
+    ambiguidade, provando outra coisa que nao a escrita nele.
+
+    Esta guarda nao apaga o historico do git, e nada apaga: ela so impede a
+    proxima vez."""
+    import pathlib
+    import re
+
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    # Forma de inscricao na Ordem: duas letras de unidade da federacao seguidas
+    # de cinco ou seis digitos. Os ficticios deste repositorio sao a excecao.
+    padrao = re.compile(r"\b([A-Z]{2})(\d{5,6})\b")
+    # Os ficticios ja em uso. Digito repetido ou sequencia de zeros, que
+    # nenhuma seccional emite. Acrescentar aqui exige olhar o numero primeiro.
+    permitidos = {"000000", "000111", "000222", "999999"}
+    achados = []
+    arquivos = (list(raiz.glob("src/**/*.py")) + list(raiz.glob("tests/**/*.py"))
+                + list(raiz.glob("docs/**/*.md"))
+                + [raiz / ".env.example", raiz / "README.md"])
+    for arquivo in arquivos:
+        if not arquivo.exists():
+            continue
+        for numero_da_linha, linha in enumerate(
+                arquivo.read_text(encoding="utf-8").splitlines(), 1):
+            for sigla, digitos in padrao.findall(linha):
+                if digitos in permitidos:
+                    continue
+                achados.append(f"{arquivo.name}:{numero_da_linha} {sigla}{digitos}")
+    assert achados == [], achados

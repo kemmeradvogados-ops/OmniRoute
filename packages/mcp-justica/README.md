@@ -424,7 +424,7 @@ conta própria daria visão incompleta sem nenhum aviso, então sem indicação 
 comando lista as opções e para:
 
 ```powershell
-justica-portal autenticar --url "..." --tribunal TRF2 --sistema eproc --perfil RJ168943 --confirmo-tentativa-unica
+justica-portal autenticar --url "..." --tribunal TRF2 --sistema eproc --perfil RJ000111 --confirmo-tentativa-unica
 ```
 
 O casamento é por trecho do rótulo, sem distinguir caixa. Perfil que não
@@ -462,7 +462,7 @@ está de fato na tela.
 ### Consulta autenticada de processo
 
 ```powershell
-justica-portal consultar --url "..." --tribunal TRF2 --sistema eproc --perfil RJ168943 --processo "5001234-54.2023.4.02.5101" --confirmo-tentativa-unica
+justica-portal consultar --url "..." --tribunal TRF2 --sistema eproc --perfil RJ000111 --processo "5001234-54.2023.4.02.5101" --confirmo-tentativa-unica
 ```
 
 Autentica e consulta pela barra de busca rápida que o eproc mantém em **todas**

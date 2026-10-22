@@ -27,9 +27,9 @@ def test_endereco_do_portal_vem_do_ambiente(monkeypatch):
     """O agente nao deve precisar saber o endereco do portal, nem ter como
     apontar a autenticacao para outro lugar."""
     monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/x")
-    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ168943")
+    monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_PERFIL", "RJ000111")
     c = config_portal("trf2", "eproc")
-    assert (c.tribunal, c.sistema, c.perfil) == ("TRF2", "eproc", "RJ168943")
+    assert (c.tribunal, c.sistema, c.perfil) == ("TRF2", "eproc", "RJ000111")
 
 
 def test_portal_sem_endereco_ensina_a_configurar(monkeypatch):

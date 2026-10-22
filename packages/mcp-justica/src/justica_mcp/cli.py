@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
                         "nem preenche nada em nenhuma delas")
     a.add_argument("--perfil", default=None,
                    help="inscricao a usar quando houver mais de um perfil, "
-                        "por exemplo RJ168943")
+                        "por exemplo RJ000111")
     a.add_argument("--oculto", action="store_true")
     a.add_argument("--segundos", type=int, default=45)
     a.add_argument("--espera-humana", type=int, default=portal.ESPERA_HUMANA_PADRAO, dest="espera_humana",
@@ -223,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--botao-validar", default=None)
     cp.add_argument("--perfil", default=None,
                     help="qual perfil usar quando o portal pergunta: a inscricao "
-                         "no eproc (RJ168943) ou o tipo de usuario no DCP "
+                         "no eproc (RJ000111) ou o tipo de usuario no DCP "
                          "(Advogado)")
     cp.add_argument("--segundos-download", type=int, default=None,
                     dest="segundos_download",
