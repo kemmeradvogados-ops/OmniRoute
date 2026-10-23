@@ -203,3 +203,45 @@ def test_o_instalador_nao_cria_ambiente_virtual_no_drive():
     texto = _INSTALADOR.read_text(encoding="utf-8")
     assert "$env:LOCALAPPDATA" in texto
     assert "POR QUE LOCAL" in texto
+
+
+# --------------------------------------------------------------------------
+# O repasse dos canais entre o aplicativo e o Python
+# --------------------------------------------------------------------------
+
+_LANCADOR = _RAIZ / "conector" / "server" / "lancador.mjs"
+
+
+def test_o_lancador_liga_os_canos_em_vez_de_herdar():
+    """Guarda de fonte: `stdio: "inherit"` fazia o servidor sumir em silencio.
+
+    Com `inherit`, o filho recebe os MESMOS descritores do pai, e quem le a
+    entrada padrao vira disputa. No Windows, em 23/10/2026, o Python subia,
+    nao recebia o `initialize` que o aplicativo tinha escrito, via a entrada
+    acabar e encerrava com codigo zero. O log registrava apenas "process
+    exiting early", sem erro nenhum, porque erro nao houve.
+    """
+    texto = _LANCADOR.read_text(encoding="utf-8")
+    assert 'stdio: ["pipe", "pipe", "inherit"]' in texto
+    assert "process.stdin.pipe(filho.stdin)" in texto
+    assert "filho.stdout.pipe(process.stdout)" in texto
+
+
+def test_o_erro_padrao_continua_herdado():
+    """E por ele que um rastro de pilha do Python chega ao log do aplicativo."""
+    texto = _LANCADOR.read_text(encoding="utf-8")
+    assert '"inherit"]' in texto
+
+
+def test_o_lancador_diz_no_log_quando_o_servidor_encerra():
+    """Antes o servidor sumia sem deixar linha nenhuma."""
+    texto = _LANCADOR.read_text(encoding="utf-8")
+    assert "o servidor encerrou (codigo" in texto
+    assert "process.stderr.write" in texto
+
+
+def test_o_cano_quebrado_nao_derruba_o_lancador():
+    """O cano quebra quando o outro lado morre primeiro, e isso e a ordem de
+    encerramento, nao defeito. Sem o ouvinte, o Node cai com EPIPE."""
+    texto = _LANCADOR.read_text(encoding="utf-8")
+    assert 'canal.on("error"' in texto

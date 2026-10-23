@@ -17,8 +17,24 @@
  * `command: "python"` dependeria de o Python estar no caminho do sistema.
  *
  * Este arquivo nao fala o protocolo. Ele confere a configuracao, entrega a
- * execucao ao Python do ambiente virtual com `stdio: "inherit"`, e sai de
- * cena: a entrada e a saida padrao passam direto, sem intermediario.
+ * execucao ao Python do ambiente virtual e repassa os canais.
+ *
+ * POR QUE NAO `stdio: "inherit"`, que era como estava ate 23/10/2026.
+ *
+ * Com `inherit`, o filho recebe os MESMOS descritores do pai, e quem le a
+ * entrada padrao passa a ser uma disputa entre os dois. No Windows, o
+ * resultado observado foi o pior possivel: o Python subia, nao recebia o
+ * `initialize` que o aplicativo tinha escrito, via a entrada acabar e
+ * encerrava em silencio, com codigo zero. O log do aplicativo registrava
+ * apenas "process exiting early", sem erro nenhum, porque erro nao houve: um
+ * servidor que fala pela entrada padrao encerra mesmo quando ela acaba.
+ *
+ * O mesmo Python, chamado a mao na mesma maquina, respondia ao `initialize`
+ * em um segundo, com saida limpa. Isso isolou a causa no repasse.
+ *
+ * Agora os canais sao CANOS explicitos, e este arquivo os liga ponta a ponta.
+ * O erro padrao continua herdado, de proposito: e por ele que um rastro de
+ * pilha do Python chega ao log do aplicativo.
  */
 
 import { spawn } from "node:child_process";
@@ -81,8 +97,18 @@ delete ambiente.JUSTICA_PACOTE;
 const filho = spawn(python, ["-m", "justica_mcp.server"], {
   cwd: pacote,
   env: ambiente,
-  stdio: "inherit",
+  // entrada e saida por cano, erro herdado para o log do aplicativo.
+  stdio: ["pipe", "pipe", "inherit"],
 });
+
+// O cano quebra quando o outro lado morre primeiro, e isso nao e defeito que
+// mereca rastro de pilha: e a ordem de encerramento. Sem estes ouvintes, o
+// Node derruba o processo com EPIPE e o log fica pior do que estava.
+for (const canal of [process.stdin, process.stdout, filho.stdin, filho.stdout]) {
+  if (canal) canal.on("error", () => { /* o outro lado fechou */ });
+}
+process.stdin.pipe(filho.stdin);
+filho.stdout.pipe(process.stdout);
 
 filho.on("error", (erro) => {
   desistir("Nao foi possivel iniciar o servidor.", [
@@ -94,6 +120,12 @@ filho.on("error", (erro) => {
   ]);
 });
 filho.on("exit", (codigo, sinal) => {
+  // Dito em voz alta, no erro padrao, que e o que vai para o log do
+  // aplicativo. Antes o servidor sumia sem deixar linha nenhuma, e descobrir
+  // por que custou uma noite.
+  process.stderr.write(
+    `[conector justica] o servidor encerrou (codigo ${codigo}, sinal ${sinal}).\n`
+  );
   process.exit(sinal ? 1 : (codigo === null ? 1 : codigo));
 });
 
