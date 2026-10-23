@@ -223,18 +223,92 @@ def test_o_faro_desligado_para_de_anotar():
     assert contexto.ouvintes["response"] == []
 
 
-def test_o_faro_nao_le_o_corpo_da_resposta():
-    """Guarda de fonte: ler o corpo aqui gastaria a resposta do navegador."""
+def test_o_faro_nao_le_o_corpo_dentro_do_tratador():
+    """Guarda de fonte: o corpo se le FORA do ouvinte, nunca dentro.
+
+    No Playwright sincrono, chamada bloqueante dentro de um tratador de evento
+    trava o proprio laco que a serviria. Guardar a resposta e barato; ler o
+    corpo dela e o que precisa esperar a vez.
+    """
     import ast
     import inspect
+    import textwrap
 
-    fonte = inspect.getsource(navegador.FarejadorDeArquivos)
+    fonte = textwrap.dedent(
+        inspect.getsource(navegador.FarejadorDeArquivos._anotar_resposta))
     chamadas = {
         no.func.attr for no in ast.walk(ast.parse(fonte))
         if isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
     }
     assert "body" not in chamadas
     assert "text" not in chamadas
+
+
+def test_o_faro_entrega_o_corpo_que_o_navegador_ja_recebeu():
+    """Pedir de novo um endereco assinado volta 403; o corpo nao depende disso."""
+
+    class _RespostaComCorpo(_RespostaFalsa):
+        def body(self):
+            return b"%PDF-1.4 conteudo"
+
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    contexto.emitir("response", _RespostaComCorpo(
+        "https://x.jus.br/a.pdf", {"content-type": "application/pdf"}))
+    assert faro.corpo(faro.achados[0]) == b"%PDF-1.4 conteudo"
+
+
+def test_o_corpo_que_o_navegador_ja_descartou_volta_vazio():
+    class _RespostaMorta(_RespostaFalsa):
+        def body(self):
+            raise RuntimeError("ja foi")
+
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    contexto.emitir("response", _RespostaMorta(
+        "https://x.jus.br/a.pdf", {"content-type": "application/pdf"}))
+    assert faro.corpo(faro.achados[0]) is None
+    assert faro.corpo({}) is None
+
+
+def test_o_marco_separa_o_que_ja_estava_do_que_o_pedido_trouxe():
+    """Sem ele, o documento que o leitor da tela carrega vira 'os autos'."""
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    contexto.emitir("response", _RespostaFalsa(
+        "https://x.jus.br/antes.pdf", {"content-type": "application/pdf"}))
+    marco = faro.marco()
+    contexto.emitir("response", _RespostaFalsa(
+        "https://x.jus.br/depois.pdf", {"content-type": "application/pdf"}))
+    assert faro.enderecos(marco) == ["https://x.jus.br/depois.pdf"]
+    assert len(faro.enderecos()) == 2
+
+
+def test_o_relato_do_faro_respeita_o_marco(capsys):
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    contexto.emitir("response", _RespostaFalsa(
+        "https://x.jus.br/antes.pdf", {"content-type": "application/pdf"}))
+    faro.relatar(desde=faro.marco())
+    assert "nenhum" in capsys.readouterr().out.lower()
+
+
+def test_resumo_do_endereco_apaga_a_numeracao_unica_formatada():
+    """Mascarar corrida de digito nao basta: o maior pedaco dela tem sete.
+
+    Em 23/10/2026 o relato saiu com `-85.2022.8.19.0209` legivel no endereco
+    do arquivo gerado, porque so a primeira parte foi apagada.
+    """
+    resumo = navegador.resumo_do_endereco(
+        "https://docs.x.jus.br/2026/0809090-88.2023.8.19.0001-84943-processo.pdf")
+    assert "0809090" not in resumo
+    assert "2023" not in resumo
+    assert "8.19.0001" not in resumo
+    assert resumo.endswith("-84943-processo.pdf")
 
 
 def test_o_faro_relata_sem_soltar_o_endereco_inteiro(capsys):

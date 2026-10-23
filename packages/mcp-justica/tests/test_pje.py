@@ -1415,9 +1415,12 @@ def test_o_resgate_do_pje_reaproveita_as_tres_redeas():
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    espera = inspect.getsource(portal._esperar_o_arquivo_do_pje)
     assert "expect_download" in fonte
-    assert "resgatar_descarga" in fonte
-    assert "AreaDeDownload" in fonte
+    assert "AreaDeDownload" in portal.CAMINHO_DA_AREA_DE_DOWNLOAD
+    assert "_relatar_area_de_download" in fonte
+    # A pasta do navegador continua sendo olhada: mudou de lugar, nao sumiu.
+    assert "resgatar_descarga" in espera
 
 
 def test_a_permissao_de_download_e_desligada_sempre():
@@ -1574,18 +1577,50 @@ class _AbaDeMentira:
 
 
 class _FaroDeMentira:
-    def __init__(self, enderecos):
-        self._enderecos = list(enderecos)
+    """Faro de mentira com a forma nova: achados, marco e corpo."""
+
+    def __init__(self, enderecos, corpos=None):
+        self.achados = [{"url": e, "origem": "resposta", "tipo": "application/pdf"}
+                        for e in enderecos]
+        self._corpos = corpos or {}
         self.relatou = False
 
-    def enderecos(self):
-        return list(self._enderecos)
+    def novos(self, desde=0):
+        return self.achados[max(0, int(desde or 0)):]
 
-    def relatar(self, recuo="    "):
+    def enderecos(self, desde=0):
+        return [a["url"] for a in self.novos(desde)]
+
+    def marco(self):
+        return len(self.achados)
+
+    def corpo(self, achado):
+        return self._corpos.get((achado or {}).get("url"))
+
+    def relatar(self, recuo="    ", desde=0):
         self.relatou = True
 
 
-def test_o_resgate_pelo_faro_pede_de_novo_o_que_passou(monkeypatch, tmp_path):
+def test_o_resgate_grava_o_corpo_sem_pedir_de_novo(monkeypatch, tmp_path):
+    """O deposito de objetos devolve 403 a pedido repetido de endereco
+    assinado. O corpo ja esta na maquina e nao depende de assinatura."""
+    from justica_mcp import portal
+
+    pedidos = []
+    monkeypatch.setattr("justica_mcp.dcp.baixar_pelo_endereco",
+                        lambda *a, **k: pedidos.append(a[1]))
+    endereco = "https://docs.tjrj.jus.br/a/autos.pdf"
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira([endereco], corpos={endereco: b"%PDF-1.4 inteiro"}),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero)
+    assert pedidos == []
+    assert trazido is not None and trazido.read_bytes() == b"%PDF-1.4 inteiro"
+    assert trazido.name == f"autos-{'1' * 20}.pdf"
+
+
+def test_o_resgate_pede_de_novo_quando_o_corpo_ja_se_foi(monkeypatch, tmp_path):
     from justica_mcp import portal
 
     pedidos = []
@@ -1724,8 +1759,13 @@ def test_o_download_dos_autos_usa_o_prazo_de_arquivo_e_nao_o_de_tela():
 
     fonte = inspect.getsource(portal._baixar_autos_do_pje)
     assert "espera_do_arquivo(" in fonte
-    assert "expect_download(timeout=prazo * 1000)" in fonte
-    assert "espera=prazo" in fonte
+    # O EVENTO tem prazo curto, porque no PJe ele nao vem: o portal abre o PDF
+    # no leitor. Quem recebe o prazo longo e a espera pelo ARQUIVO.
+    assert "ESPERA_DO_EVENTO_DE_DOWNLOAD * 1000" in fonte
+    assert "_esperar_o_arquivo_do_pje(" in fonte
+    assert portal.ESPERA_DO_EVENTO_DE_DOWNLOAD < 300
+    espera = inspect.getsource(portal._esperar_o_arquivo_do_pje)
+    assert "max(1, prazo)" in espera
     # A tela continua com o prazo de tela: a Area de Download que nao monta em
     # 45s esta quebrada, e esperar 300s por ela so adiaria o relato.
     assert "_relatar_area_de_download(aba, guarda, segundos)" in fonte
@@ -1747,3 +1787,102 @@ def test_o_prazo_de_arquivo_nunca_fica_abaixo_do_teto_proprio():
     assert espera_do_arquivo(45) == TETO_DO_DOWNLOAD
     assert espera_do_arquivo(None) == TETO_DO_DOWNLOAD
     assert espera_do_arquivo(900) == 900
+
+
+# --------------------------------------------------------------------------
+# UM documento nao e OS autos
+# --------------------------------------------------------------------------
+
+
+def test_documento_avulso_e_reconhecido_pela_faixa_do_proprio_processo():
+    """O leitor da tela dos autos carrega UM documento, e o endereco dele passa.
+
+    Em 23/10/2026 o resgate pegou esse documento e o gravou como `autos-...`:
+    catorze folhas no lugar do processo. O identificador dele estava dentro da
+    faixa que a linha do tempo acabara de devolver, e e esse o teste.
+    """
+    from justica_mcp.portal import e_documento_avulso
+
+    alvo = ("https://tjrj.pje.jus.br/1g/seam/resource/rest/pje-legacy/"
+            "documento/download/311787477")
+    assert e_documento_avulso(alvo, 18752483, 311787484)
+    # Fora da faixa, nao e documento DESTE processo.
+    assert not e_documento_avulso(alvo, 1, 100)
+
+
+def test_o_arquivo_gerado_nao_e_confundido_com_documento_avulso():
+    from justica_mcp.portal import e_documento_avulso
+
+    gerado = ("https://minio-docs.tjrj.jus.br/2026/"
+              "0809090-88.2023.8.19.0001-84943-processo.pdf")
+    assert not e_documento_avulso(gerado, 18752483, 311787484)
+
+
+def test_a_faixa_invertida_nao_engana_o_teste():
+    from justica_mcp.portal import e_documento_avulso
+
+    assert e_documento_avulso("https://x.jus.br/doc/500", 900, 100)
+
+
+def test_endereco_sem_numero_no_fim_nao_e_documento_avulso():
+    from justica_mcp.portal import e_documento_avulso
+
+    assert not e_documento_avulso("https://x.jus.br/autos.pdf", 1, 10**9)
+    assert not e_documento_avulso("", 1, 10**9)
+
+
+def test_os_candidatos_descartam_o_avulso_e_o_de_fora():
+    from justica_mcp.portal import candidatos_do_faro
+
+    faro = _FaroDeMentira([
+        "https://tjrj.pje.jus.br/1g/seam/.../documento/download/200",
+        "https://cdn.exemplo.com/autos.pdf",
+        "https://minio-docs.tjrj.jus.br/x/processo.pdf",
+    ])
+    uteis = candidatos_do_faro(
+        faro, _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"), 0, 100, 300)
+    assert [a["url"] for a in uteis] == [
+        "https://minio-docs.tjrj.jus.br/x/processo.pdf"]
+
+
+def test_so_com_avulso_o_resgate_nao_grava_nada(capsys, tmp_path):
+    """Gravar meio processo achando que e inteiro e pior do que nao gravar."""
+    from justica_mcp import portal
+
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    endereco = "https://tjrj.pje.jus.br/1g/seam/.../documento/download/200"
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira([endereco], corpos={endereco: b"%PDF-1.4 uma peca"}),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero, de=100, ate=300)
+    assert trazido is None
+    assert list(tmp_path.iterdir()) == []
+    assert "nao os autos" in capsys.readouterr().out
+
+
+def test_o_pedido_tira_o_marco_antes_de_clicar():
+    """Guarda de fonte: marco depois do clique nao separa nada."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert fonte.index("marco = farejador.marco()") < fonte.index(
+        "pedir_o_download_dos_autos(aba, guarda")
+    # E o marco e a faixa viajam em TODAS as consultas ao faro.
+    assert fonte.count("desde=marco, de=de, ate=ate") == 2
+
+
+def test_a_espera_do_arquivo_pede_o_tempo_ao_navegador():
+    """Guarda de fonte: `sleep` puro deixa o faro surdo no Playwright sincrono.
+
+    Os ouvintes so correm quando se chama o navegador. Dormir aqui seria ficar
+    surdo justamente durante a espera, que e quando o arquivo passa.
+    """
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._esperar_o_arquivo_do_pje)
+    assert "aba.wait_for_timeout(" in fonte
+    assert "_tempo.sleep(" not in fonte

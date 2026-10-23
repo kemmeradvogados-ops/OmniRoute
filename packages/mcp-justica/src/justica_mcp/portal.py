@@ -5737,17 +5737,100 @@ def _relatar_area_de_download(aba, guarda, segundos: int) -> None:
     print("    inventado, e nada foi clicado aqui.")
 
 
+# Quanto esperar pelo EVENTO de download antes de admitir que ele nao vem.
+# O PJe nao entrega os autos gerados como download: ele ABRE o PDF no leitor
+# do navegador. Esperar o evento por quinze minutos, como se fez em
+# 23/10/2026, e esperar por algo que nunca vai chegar, e enquanto se espera o
+# endereco assinado do arquivo expira. Um minuto basta para o caso em que o
+# portal de fato baixa.
+ESPERA_DO_EVENTO_DE_DOWNLOAD = 60
+
+# De quanto em quanto tempo se olha de novo, enquanto o portal gera o arquivo.
+INTERVALO_DA_ESPERA_DO_ARQUIVO = 3
+
+
+def e_documento_avulso(url: str, de: int, ate: int) -> bool:
+    """O endereco e de UM documento deste processo, e nao dos autos inteiros?
+
+    A tela dos autos traz um leitor de PDF com um documento dentro, e o
+    endereco dele passa pela rede sozinho. Em 23/10/2026 o resgate pegou esse
+    documento e o gravou como `autos-...pdf`: catorze folhas no lugar do
+    processo, sem nada no arquivo dizendo isso. Gravar meio processo achando
+    que e inteiro e pior do que nao gravar.
+
+    O teste nao adivinha: o ultimo pedaco do caminho e o identificador do
+    documento, e a faixa `de`..`ate` acabou de ser lida da linha do tempo
+    DESTE processo. Caindo dentro dela, e um documento dele, nao o conjunto.
+    """
+    caminho = (url or "").split("?")[0].split("#")[0].rstrip("/")
+    ultimo = caminho.rsplit("/", 1)[-1]
+    if not ultimo.isdigit():
+        return False
+    try:
+        identificador = int(ultimo)
+    except ValueError:
+        return False
+    menor, maior = (de, ate) if de <= ate else (ate, de)
+    return menor <= identificador <= maior
+
+
+def candidatos_do_faro(farejador, aba, desde: int, de: int, ate: int) -> list:
+    """Os achados que podem ser os autos: do tribunal e nao avulsos."""
+    if farejador is None:
+        return []
+    try:
+        daqui = aba.url
+    except Exception:
+        daqui = ""
+    uteis = []
+    for achado in farejador.novos(desde):
+        endereco = achado.get("url") or ""
+        if not do_mesmo_tribunal(daqui, endereco):
+            continue
+        if e_documento_avulso(endereco, de, ate):
+            continue
+        uteis.append(achado)
+    return uteis
+
+
+def _gravar_o_corpo(corpo: bytes, pasta, nome: str, recuo: str):
+    """Grava o que o navegador ja recebeu, sem pedir nada de novo."""
+    from pathlib import Path as _P
+
+    alvo = _P(pasta)
+    alvo.mkdir(parents=True, exist_ok=True)
+    arquivo = alvo / nome
+    try:
+        arquivo.write_bytes(corpo)
+    except OSError as exc:
+        print(f"{recuo}  O arquivo veio do navegador e a gravacao falhou: "
+              f"{type(exc).__name__}.")
+        return None
+    print(f"{recuo}  Arquivo tirado do proprio navegador ({len(corpo)} "
+          "byte(s)), sem pedir de novo.")
+    return arquivo
+
+
 def _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
-                        recuo: str = "    "):
-    """Tenta trazer o arquivo pelos enderecos que o navegador ja viu passar.
+                        recuo: str = "    ", desde: int = 0,
+                        de: int = 0, ate: int = 0):
+    """Traz o arquivo que o navegador ja viu, pelo corpo ou pelo endereco.
 
-    Nao clica e nao adivinha endereco nenhum: pede de novo, pela sessao, so o
-    que REALMENTE passou pela rede ou ficou na barra de uma aba. E pede so do
-    MESMO tribunal: um endereco de arquivo que apareca vindo de fora da
-    Justica nao e dos autos, e esta funcao nao e porta para buscar arquivo em
-    servidor qualquer.
+    DUAS ordens importam aqui, e errar qualquer uma delas custou uma corrida.
 
-    Devolve o caminho do arquivo gravado, ou `None`.
+    A primeira e o que se considera: SO o que passou depois do marco. A tela
+    dos autos ja traz um leitor com um documento dentro, e sem o marco o
+    resgate gravava aquele documento como se fosse o processo inteiro.
+
+    A segunda e por onde se busca: primeiro o CORPO da resposta que o
+    navegador ja recebeu, e so depois o pedido novo pelo endereco. O deposito
+    de objetos do tribunal responde 403 a pedido repetido de endereco
+    assinado, que e o que se viu em 23/10/2026, e o corpo nao depende de
+    assinatura nenhuma porque o arquivo ja esta na maquina.
+
+    Nao clica e nao navega. E so do MESMO tribunal: endereco de arquivo vindo
+    de fora da Justica nao e dos autos, e esta funcao nao e porta para buscar
+    arquivo em servidor qualquer.
     """
     from pathlib import Path as _P
 
@@ -5756,21 +5839,24 @@ def _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
 
     if farejador is None:
         return None
-    enderecos = farejador.enderecos()
-    if not enderecos:
-        print(f"{recuo}O navegador nao viu endereco de arquivo nenhum passar.")
+    vistos = farejador.novos(desde)
+    if not vistos:
+        print(f"{recuo}O navegador nao viu endereco de arquivo nenhum passar "
+              "depois do pedido.")
         return None
 
-    farejador.relatar(recuo)
-    try:
-        daqui = aba.url
-    except Exception:
-        daqui = ""
-    for endereco in enderecos:
-        if not do_mesmo_tribunal(daqui, endereco):
-            print(f"{recuo}  Fora do tribunal, nao vou pedir: "
-                  f"{resumo_do_endereco(endereco)}")
-            continue
+    farejador.relatar(recuo, desde=desde)
+    achados = candidatos_do_faro(farejador, aba, desde, de, ate)
+    if not achados:
+        print(f"{recuo}Nenhum dos enderecos serve: ou e de fora do tribunal, "
+              "ou e UM documento")
+        print(f"{recuo}deste processo e nao os autos. Nada foi gravado, "
+              "deliberadamente.")
+        return None
+
+    nome = f"autos-{numero.apenas_digitos}.pdf"
+    for achado in achados:
+        endereco = achado.get("url") or ""
         guarda.permissoes.append(Permissao(
             padrao_url=f"^{re.escape(endereco)}$",
             descricao="arquivo que o proprio navegador trouxe, so leitura",
@@ -5779,14 +5865,68 @@ def _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
         try:
             guarda.pode_executar(Acao.NAVEGAR, endereco, url=endereco)
         except Exception as exc:
-            print(f"{recuo}  A guarda recusou o endereco ({type(exc).__name__}).")
+            print(f"{recuo}  A guarda recusou o endereco "
+                  f"({type(exc).__name__}).")
             continue
-        print(f"{recuo}  Pedindo de novo: {resumo_do_endereco(endereco)}")
+        print(f"{recuo}  Do navegador: {resumo_do_endereco(endereco)}")
+        corpo = farejador.corpo(achado)
+        if corpo:
+            gravado = _gravar_o_corpo(corpo, pasta, nome, recuo)
+            if gravado:
+                return gravado
+        print(f"{recuo}  O corpo nao estava mais com o navegador. Pedindo de "
+              "novo pelo endereco.")
         trazido = baixar_pelo_endereco(
             aba.context, endereco, pasta, "autos",
             sugerido=f"{numero.apenas_digitos}.pdf", recuo=f"{recuo}  ")
         if trazido:
             return _P(trazido)
+    return None
+
+
+def _esperar_o_arquivo_do_pje(farejador, aba, guarda, pasta, numero, marco,
+                              prazo: int, descargas, antes, de: int, ate: int):
+    """Espera o arquivo APARECER, olhando os dois lugares onde ele pode cair.
+
+    O evento de download nao vem porque o PJe nao baixa o arquivo: ele o abre
+    no leitor do navegador. Quem avisa que ele chegou, entao, e o faro. A pasta
+    do navegador continua sendo olhada porque outro portal, ou outro ajuste do
+    navegador, pode fazer a transferencia de verdade.
+
+    O laco e curto de proposito. Pedir o endereco de novo so funciona enquanto
+    ele vale, e endereco de deposito de objetos vem assinado e vence: esperar
+    quinze minutos para so entao tentar foi o que devolveu 403 em 23/10/2026.
+    """
+    import time as _tempo
+    from pathlib import Path as _P
+
+    from .dcp import resgatar_descarga
+
+    limite = _tempo.monotonic() + max(1, prazo)
+    avisou = False
+    while _tempo.monotonic() < limite:
+        if candidatos_do_faro(farejador, aba, marco, de, ate):
+            return _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
+                                       desde=marco, de=de, ate=ate)
+        resgatado = resgatar_descarga(
+            descargas, antes, pasta, f"autos-{numero.apenas_digitos}",
+            espera=1, recuo="    ")
+        if resgatado:
+            return _P(resgatado)
+        if not avisou:
+            print("    Esperando o portal gerar o arquivo. Isso pode levar "
+                  "minutos e nao")
+            print("    imprime nada enquanto corre.")
+            avisou = True
+        # A espera e PEDIDA AO NAVEGADOR, e nao dormida aqui. No Playwright
+        # sincrono os ouvintes so correm quando se chama o navegador: um
+        # `sleep` deixaria o faro surdo justamente durante a espera, que e
+        # quando o arquivo passa.
+        try:
+            aba.wait_for_timeout(INTERVALO_DA_ESPERA_DO_ARQUIVO * 1000)
+        except Exception:
+            break
+    print(f"    O arquivo nao apareceu em {prazo}s por caminho nenhum.")
     return None
 
 
@@ -5828,9 +5968,7 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         REPETIDA_IGUAL, REPETIDA_NO_TEXTO, REPETIDA_SUSPEITA, carregar_indice,
         garantir_pasta,
     )
-    from .dcp import (
-        espera_do_arquivo, instantaneo_da_pasta, resgatar_descarga,
-    )
+    from .dcp import espera_do_arquivo, instantaneo_da_pasta
     from .navegador import FarejadorDeArquivos, pasta_de_descargas
     from .pje import DownloadDoPJeIndisponivel, pedir_o_download_dos_autos
 
@@ -5851,11 +5989,16 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
     # vez.
     farejador = FarejadorDeArquivos(aba.context)
     farejador.ligar()
+    # O marco separa o que ja estava na tela do que o PEDIDO trouxe. Ver
+    # `FarejadorDeArquivos.marco`: sem ele, o documento que o leitor de PDF da
+    # propria tela carrega e gravado no lugar dos autos.
+    marco = farejador.marco()
     guarda.permitir_download = True
     baixado = None
     try:
         try:
-            with aba.expect_download(timeout=prazo * 1000) as aviso:
+            with aba.expect_download(
+                    timeout=ESPERA_DO_EVENTO_DE_DOWNLOAD * 1000) as aviso:
                 pedir_o_download_dos_autos(aba, guarda, de=de, ate=ate,
                                            segundos=segundos)
             arquivo = pasta / f"autos-{numero.apenas_digitos}.pdf"
@@ -5868,14 +6011,18 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
             farejador.desligar()
             return
         except Exception as exc:
-            # O evento nao veio. Nao e conclusao de que falhou: o Chromium
-            # escreve na pasta dele, e a geracao do PJe pode demorar.
-            print(f"    O evento de download nao veio em {prazo}s "
-                  f"({type(exc).__name__}). Procurando na pasta do navegador.")
-            resgatado = resgatar_descarga(
-                descargas, antes, pasta, f"autos-{numero.apenas_digitos}",
-                espera=prazo, recuo="    ")
-            baixado = _P(resgatado) if resgatado else None
+            # O evento nao veio, e no PJe ele nao vem mesmo: o portal ABRE o
+            # PDF gerado no leitor do navegador em vez de baixa-lo. Continuar
+            # esperando o evento seria esperar o que nao existe, enquanto o
+            # endereco assinado do arquivo vence.
+            print(f"    O evento de download nao veio em "
+                  f"{ESPERA_DO_EVENTO_DE_DOWNLOAD}s ({type(exc).__name__}). "
+                  "No PJe isso e o esperado:")
+            print("    ele ABRE o PDF no leitor do navegador em vez de "
+                  "baixa-lo.")
+            baixado = _esperar_o_arquivo_do_pje(
+                farejador, aba, guarda, pasta, numero, marco, prazo,
+                descargas, antes, de, ate)
     finally:
         guarda.permitir_download = False
 
@@ -5886,14 +6033,16 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         print("    Antes de desistir: perguntando ao faro se algum endereco "
               "de")
         print("    arquivo passou pela rede ou ficou na barra de alguma aba.")
-        baixado = _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero)
+        baixado = _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
+                                      desde=marco, de=de, ate=ate)
 
     if baixado is None:
-        print("    O PJe gera o arquivo e o deixa na AREA DE DOWNLOAD, que e "
-              "uma")
-        print("    tela propria do portal. Indo ate la, com o faro ligado.")
+        print("    O PJe tambem deixa o arquivo na AREA DE DOWNLOAD, que e "
+              "uma tela")
+        print("    propria do portal. Indo ate la, com o faro ligado.")
         _relatar_area_de_download(aba, guarda, segundos)
-        baixado = _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero)
+        baixado = _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
+                                      desde=marco, de=de, ate=ate)
 
     farejador.desligar()
 

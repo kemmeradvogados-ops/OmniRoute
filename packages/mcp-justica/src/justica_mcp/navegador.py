@@ -608,6 +608,15 @@ def parece_arquivo(url: str, cabecalhos: dict) -> bool:
     return caminho.endswith(FINAIS_DE_ARQUIVO)
 
 
+# A numeracao unica do Conselho Nacional de Justica, com ou sem os separadores:
+# sete digitos, dois, quatro, um, dois e quatro. Escrita aqui porque mascarar
+# corrida de digito nao a alcanca: o maior pedaco seguido dela tem sete.
+import re as _re_modulo
+
+FORMA_DA_NUMERACAO_UNICA = _re_modulo.compile(
+    r"\d{7}[-.]?\d{2}[-.]?\d{4}[-.]?\d[-.]?\d{2}[-.]?\d{4}")
+
+
 def resumo_do_endereco(url: str) -> str:
     """O endereco sem os numeros longos, para poder ser dito em voz alta.
 
@@ -616,6 +625,13 @@ def resumo_do_endereco(url: str) -> str:
     e a FORMA do endereco, nao o endereco: o servidor, o caminho, e no lugar de
     cada corrida de sete ou mais digitos, reticencias. O endereco inteiro fica
     na memoria, que e onde ele serve.
+
+    Mascarar so corrida longa de digito NAO BASTA, e isso custou um vazamento
+    em 23/10/2026: o endereco do arquivo gerado trazia o numero no formato da
+    numeracao unica, cujo maior pedaco seguido tem sete digitos mas cujos
+    outros tem dois, quatro, um, dois e quatro. A mascara passou por cima do
+    primeiro e deixou o resto legivel no relato. Agora a FORMA inteira da
+    numeracao unica e apagada antes, e so depois se olha para digito solto.
     """
     import re as _re
     from urllib.parse import urlparse
@@ -626,7 +642,8 @@ def resumo_do_endereco(url: str) -> str:
         return "(endereco ilegivel)"
     if not partes.netloc:
         return "(endereco sem servidor)"
-    caminho = _re.sub(r"\d{7,}", "...", partes.path or "/")
+    caminho = FORMA_DA_NUMERACAO_UNICA.sub("...", partes.path or "/")
+    caminho = _re.sub(r"\d{7,}", "...", caminho)
     busca = " ?..." if partes.query else ""
     return f"{partes.scheme}://{partes.netloc}{caminho}{busca}"
 
@@ -680,13 +697,15 @@ class FarejadorDeArquivos:
 
     # ---- o que se anota ---------------------------------------------------
 
-    def _guardar(self, url: str, origem: str, tipo: str = "") -> None:
+    def _guardar(self, url: str, origem: str, tipo: str = "",
+                 resposta: Any = None) -> None:
         if not url or url in self._vistos:
             return
         if url.lower().startswith(("about:", "chrome:", "data:")):
             return
         self._vistos.add(url)
-        self.achados.append({"url": url, "origem": origem, "tipo": tipo})
+        self.achados.append({"url": url, "origem": origem, "tipo": tipo,
+                             "resposta": resposta})
 
     def _anotar_resposta(self, resposta: Any) -> None:
         try:
@@ -700,7 +719,13 @@ class FarejadorDeArquivos:
         except Exception:
             return
         tipo = (cabecalhos.get("content-type") or "").split(";")[0].strip()
-        self._guardar(url, "resposta", tipo)
+        # A resposta e guardada junto, e nao so o endereco. Ler o corpo DELA
+        # nao faz pedido novo: o navegador ja recebeu o arquivo, e pedi-lo de
+        # novo e que pode voltar 403, porque endereco de deposito de objetos
+        # costuma vir assinado e com validade curta. Foi o que aconteceu em
+        # 23/10/2026. Aqui so se GUARDA; ler e para fora do tratador, que no
+        # Playwright sincrono nao aceita chamada bloqueante dentro dele.
+        self._guardar(url, "resposta", tipo, resposta=resposta)
 
     def _anotar_pagina(self, pagina: Any) -> None:
         self._paginas.append(pagina)
@@ -724,13 +749,39 @@ class FarejadorDeArquivos:
 
     # ---- o que se colhe ---------------------------------------------------
 
-    def enderecos(self) -> list[str]:
-        self._colher_das_abas()
-        return [achado["url"] for achado in self.achados]
+    def marco(self) -> int:
+        """Quantos achados ja havia. Serve para separar o depois do antes.
 
-    def relatar(self, recuo: str = "    ") -> None:
+        A tela dos autos do PJe ja traz um leitor de PDF com UM documento
+        dentro, e o endereco dele passa pela rede antes de qualquer pedido. Sem
+        este marco, o resgate pegava aquele documento e o gravava como se fosse
+        o processo inteiro: em 23/10/2026 gravou catorze folhas no lugar dos
+        autos, sem nada no arquivo dizendo isso. Quem pede o download tira o
+        marco ANTES de clicar e so considera o que vier depois.
+        """
         self._colher_das_abas()
-        achados = self.achados
+        return len(self.achados)
+
+    def novos(self, desde: int = 0) -> list[dict]:
+        self._colher_das_abas()
+        return self.achados[max(0, int(desde or 0)):]
+
+    def corpo(self, achado: dict) -> Optional[bytes]:
+        """O conteudo que o navegador JA recebeu, sem pedir de novo."""
+        resposta = (achado or {}).get("resposta")
+        if resposta is None:
+            return None
+        try:
+            corpo = resposta.body()
+        except Exception:
+            return None
+        return corpo or None
+
+    def enderecos(self, desde: int = 0) -> list[str]:
+        return [achado["url"] for achado in self.novos(desde)]
+
+    def relatar(self, recuo: str = "    ", desde: int = 0) -> None:
+        achados = self.novos(desde)
         if not achados:
             print(f"{recuo}O navegador nao viu endereco de arquivo nenhum "
                   "passar.")
