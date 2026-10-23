@@ -5774,8 +5774,25 @@ def e_documento_avulso(url: str, de: int, ate: int) -> bool:
     return menor <= identificador <= maior
 
 
+# O leitor de PDF embutido do navegador serve o arquivo por um endereco
+# proprio, de extensao. Ler o CORPO dele nao sai da maquina: nenhum pedido vai
+# para servidor nenhum, o conteudo ja esta aqui. Por isso ele entra como
+# candidato a LEITURA, nunca a pedido novo.
+ESQUEMA_DO_LEITOR = "chrome-extension:"
+
+
+def so_para_ler(endereco: str) -> bool:
+    return (endereco or "").lower().startswith(ESQUEMA_DO_LEITOR)
+
+
 def candidatos_do_faro(farejador, aba, desde: int, de: int, ate: int) -> list:
-    """Os achados que podem ser os autos: do tribunal e nao avulsos."""
+    """Os achados que podem ser os autos.
+
+    Ficam de fora: o que e de fora do tribunal (exceto o fluxo do leitor, que
+    nao e pedido a ninguem), o documento avulso que o leitor da propria tela
+    carrega, e o endereco `blob:`, que e esse mesmo documento visto por outro
+    nome e que nao da para pedir de novo.
+    """
     if farejador is None:
         return []
     try:
@@ -5785,18 +5802,33 @@ def candidatos_do_faro(farejador, aba, desde: int, de: int, ate: int) -> list:
     uteis = []
     for achado in farejador.novos(desde):
         endereco = achado.get("url") or ""
-        if not do_mesmo_tribunal(daqui, endereco):
+        if endereco.lower().startswith("blob:"):
             continue
         if e_documento_avulso(endereco, de, ate):
+            continue
+        if not (do_mesmo_tribunal(daqui, endereco) or so_para_ler(endereco)):
             continue
         uteis.append(achado)
     return uteis
 
 
 def _gravar_o_corpo(corpo: bytes, pasta, nome: str, recuo: str):
-    """Grava o que o navegador ja recebeu, sem pedir nada de novo."""
+    """Grava o que o navegador ja recebeu, DEPOIS de conferir que e PDF.
+
+    A conferencia nao e zelo excessivo: em 23/10/2026 o corpo que veio tinha
+    536 bytes e comecava em `<!doc`, uma pagina, e foi gravado e indexado como
+    se fossem os autos. Arquivo errado no acervo e pior que acervo vazio,
+    porque o erro so aparece quando alguem for ler.
+    """
     from pathlib import Path as _P
 
+    from .navegador import parece_pdf, primeiros_bytes
+
+    if not parece_pdf(corpo):
+        print(f"{recuo}  O que veio NAO e PDF: {len(corpo or b'')} byte(s), "
+              f"comecando em '{primeiros_bytes(corpo)}'.")
+        print(f"{recuo}  Nao gravei. Seguindo para o proximo endereco.")
+        return None
     alvo = _P(pasta)
     alvo.mkdir(parents=True, exist_ok=True)
     arquivo = alvo / nome
@@ -5836,6 +5868,7 @@ def _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
 
     from .core.guarda_navegacao import Acao, Permissao
     from .dcp import baixar_pelo_endereco
+    from .navegador import parece_pdf, primeiros_bytes
 
     if farejador is None:
         return None
@@ -5874,14 +5907,45 @@ def _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
             gravado = _gravar_o_corpo(corpo, pasta, nome, recuo)
             if gravado:
                 return gravado
-        print(f"{recuo}  O corpo nao estava mais com o navegador. Pedindo de "
-              "novo pelo endereco.")
+        else:
+            print(f"{recuo}  O corpo nao estava mais com o navegador.")
+        if so_para_ler(endereco):
+            # Fluxo do leitor: nao se pede de novo. Nao ha a quem pedir.
+            continue
+        print(f"{recuo}  Pedindo de novo pelo endereco.")
         trazido = baixar_pelo_endereco(
             aba.context, endereco, pasta, "autos",
             sugerido=f"{numero.apenas_digitos}.pdf", recuo=f"{recuo}  ")
-        if trazido:
-            return _P(trazido)
+        if not trazido:
+            continue
+        # O pedido novo tambem passa pela conferencia: um 403 do deposito de
+        # objetos chega como pagina, com estado 200 e corpo de erro.
+        caminho = _P(trazido)
+        try:
+            conteudo = caminho.read_bytes()
+        except OSError:
+            conteudo = b""
+        if parece_pdf(conteudo):
+            return caminho
+        print(f"{recuo}  O que veio pelo endereco NAO e PDF: "
+              f"{len(conteudo)} byte(s), comecando em "
+              f"'{primeiros_bytes(conteudo)}'. Apaguei.")
+        try:
+            caminho.unlink()
+        except OSError:
+            pass
     return None
+
+
+def _arquivo_e_pdf(caminho) -> bool:
+    """O arquivo em disco comeca com a marca do PDF?"""
+    from .navegador import FOLGA_DA_MARCA_DO_PDF, parece_pdf
+
+    try:
+        with open(caminho, "rb") as arquivo:
+            return parece_pdf(arquivo.read(FOLGA_DA_MARCA_DO_PDF))
+    except OSError:
+        return False
 
 
 def _esperar_o_arquivo_do_pje(farejador, aba, guarda, pasta, numero, marco,
@@ -5904,10 +5968,18 @@ def _esperar_o_arquivo_do_pje(farejador, aba, guarda, pasta, numero, marco,
 
     limite = _tempo.monotonic() + max(1, prazo)
     avisou = False
+    # Avanca conforme os candidatos vao sendo tentados e recusados. Um
+    # candidato que nao era PDF nao pode fazer o laco desistir: o arquivo de
+    # verdade pode estar a caminho, e olhar de novo os mesmos so repetiria o
+    # relato ate o prazo acabar.
+    atual = marco
     while _tempo.monotonic() < limite:
-        if candidatos_do_faro(farejador, aba, marco, de, ate):
-            return _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
-                                       desde=marco, de=de, ate=ate)
+        if candidatos_do_faro(farejador, aba, atual, de, ate):
+            trazido = _resgatar_pelo_faro(farejador, aba, guarda, pasta,
+                                          numero, desde=atual, de=de, ate=ate)
+            if trazido:
+                return trazido
+            atual = farejador.marco()
         resgatado = resgatar_descarga(
             descargas, antes, pasta, f"autos-{numero.apenas_digitos}",
             espera=1, recuo="    ")
@@ -6030,13 +6102,6 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         print("    Nenhum arquivo chegou pelo navegador. O PEDIDO FOI FEITO: o")
         print("    painel abriu, a faixa entrou conferida e o botao foi "
               "clicado.")
-        print("    Antes de desistir: perguntando ao faro se algum endereco "
-              "de")
-        print("    arquivo passou pela rede ou ficou na barra de alguma aba.")
-        baixado = _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
-                                      desde=marco, de=de, ate=ate)
-
-    if baixado is None:
         print("    O PJe tambem deixa o arquivo na AREA DE DOWNLOAD, que e "
               "uma tela")
         print("    propria do portal. Indo ate la, com o faro ligado.")
@@ -6051,6 +6116,21 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
             acao="download_dos_autos_do_pje", tribunal=identidade.tribunal,
             sistema=identidade.sistema, numero=numero.formatado,
             resultado="pedido feito, arquivo na area de download",
+        )
+        return
+
+    # Ultima conferencia, e ela vale para TODOS os caminhos, inclusive o
+    # evento de download e a pasta do navegador. O acervo e o que o escritorio
+    # vai ler depois: entrar nele arquivo que nao e PDF, com nome de autos, e
+    # pior do que nao entrar nada.
+    if not _arquivo_e_pdf(baixado):
+        print(f"    O arquivo que chegou NAO e PDF. NAO indexei, e ele ficou "
+              f"em {baixado.name}")
+        print("    para voce conferir o que o portal mandou.")
+        estado_local.registrar(
+            acao="download_dos_autos_do_pje", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado,
+            resultado="chegou arquivo que nao e pdf, nao indexado",
         )
         return
 

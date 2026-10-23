@@ -177,14 +177,58 @@ def test_o_faro_anota_a_resposta_com_cara_de_arquivo():
     assert faro.enderecos() == ["https://x.jus.br/a.pdf"]
 
 
-def test_o_faro_nao_anota_o_mesmo_endereco_duas_vezes():
+def test_o_mesmo_endereco_respondendo_de_novo_e_anotado_de_novo():
+    """Duas respostas no mesmo endereco podem trazer conteudos diferentes.
+
+    Em 23/10/2026 a primeira veio como pagina de erro de 536 bytes e o arquivo
+    de verdade foi servido depois. Guardar so a primeira jogava fora o que se
+    queria.
+    """
     contexto = _ContextoFalso()
     faro = navegador.FarejadorDeArquivos(contexto)
     faro.ligar()
     for _ in range(3):
         contexto.emitir("response", _RespostaFalsa(
             "https://x.jus.br/a.pdf", {"content-type": "application/pdf"}))
-    assert len(faro.enderecos()) == 1
+    assert len(faro.enderecos()) == 3
+
+
+def test_a_mesma_aba_nao_e_anotada_duas_vezes():
+    """Aba, sim, se deduplica: ali o endereco e o proprio identificador."""
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    aba = _PaginaFalsa("https://x.jus.br/gerado/autos.pdf")
+    contexto.emitir("page", aba)
+    contexto.emitir("page", aba)
+    assert faro.enderecos() == ["https://x.jus.br/gerado/autos.pdf"]
+
+
+def test_o_faro_para_de_anotar_no_teto():
+    """Tela que dispara centenas de respostas nao pode encher a memoria."""
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    for i in range(navegador.TETO_DE_ACHADOS + 25):
+        contexto.emitir("response", _RespostaFalsa(
+            f"https://x.jus.br/{i}.pdf", {"content-type": "application/pdf"}))
+    assert len(faro.enderecos()) == navegador.TETO_DE_ACHADOS
+
+
+def test_parece_pdf_so_aceita_o_que_tem_a_marca():
+    assert navegador.parece_pdf(b"%PDF-1.7 ...")
+    assert navegador.parece_pdf(b"lixo antes\n%PDF-1.4")
+    assert not navegador.parece_pdf(b"<!doctype html><html>erro</html>")
+    assert not navegador.parece_pdf(b"")
+    assert not navegador.parece_pdf(None)
+    # A marca tarde demais nao conta: nenhum leitor abre.
+    assert not navegador.parece_pdf(b"x" * 2000 + b"%PDF-1.4")
+
+
+def test_primeiros_bytes_dizem_o_que_veio_sem_sujar_a_saida():
+    assert navegador.primeiros_bytes(b"<!doctype html>") == "<!doctype html>"
+    assert navegador.primeiros_bytes(b"\x00\x01abc", 5) == "..abc"
+    assert navegador.primeiros_bytes(b"") == "(vazio)"
 
 
 def test_o_faro_colhe_o_endereco_da_aba_parada_num_pdf():

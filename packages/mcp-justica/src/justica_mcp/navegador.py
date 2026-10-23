@@ -580,6 +580,10 @@ def janela_de(pagina: Any) -> dict:
 # sessao, que e o caminho que o Portal de Servicos ja usa desde outubro.
 # --------------------------------------------------------------------------
 
+# Teto de achados, para que uma tela que dispare centenas de respostas nao
+# encha a memoria com objetos de resposta do navegador.
+TETO_DE_ACHADOS = 60
+
 TIPOS_DE_ARQUIVO = (
     "application/pdf",
     "application/octet-stream",
@@ -648,6 +652,37 @@ def resumo_do_endereco(url: str) -> str:
     return f"{partes.scheme}://{partes.netloc}{caminho}{busca}"
 
 
+# Quantos bytes do comeco podem vir antes da marca do PDF. A norma admite
+# lixo antes de `%PDF-`, e leitor nenhum reclama enquanto a marca aparecer
+# cedo. Mais do que isto, o arquivo nao e PDF.
+FOLGA_DA_MARCA_DO_PDF = 1024
+
+MARCA_DO_PDF = b"%PDF-"
+
+
+def parece_pdf(corpo: Optional[bytes]) -> bool:
+    """O conteudo e mesmo um PDF, ou e outra coisa com nome de PDF?
+
+    Em 23/10/2026 o programa gravou 536 bytes comecando em `<!doc` dentro de
+    um arquivo chamado `autos-....pdf`, e o indexou. Uma pagina de erro com
+    nome de autos e pior que arquivo nenhum: ela entra no acervo, conta como
+    integra baixada, e so aparece quando alguem for ler.
+    """
+    if not corpo:
+        return False
+    return MARCA_DO_PDF in corpo[:FOLGA_DA_MARCA_DO_PDF]
+
+
+def primeiros_bytes(corpo: Optional[bytes], quantos: int = 24) -> str:
+    """O comeco do conteudo, legivel, para DIZER o que veio no lugar do PDF."""
+    if not corpo:
+        return "(vazio)"
+    pedaco = corpo[:quantos]
+    legivel = "".join(
+        chr(b) if 32 <= b < 127 else "." for b in pedaco)
+    return legivel
+
+
 class FarejadorDeArquivos:
     """Anota os enderecos de arquivo que o navegador viu passar.
 
@@ -699,11 +734,20 @@ class FarejadorDeArquivos:
 
     def _guardar(self, url: str, origem: str, tipo: str = "",
                  resposta: Any = None) -> None:
-        if not url or url in self._vistos:
+        if not url or len(self.achados) >= TETO_DE_ACHADOS:
             return
-        if url.lower().startswith(("about:", "chrome:", "data:")):
+        if url.lower().startswith(("about:", "chrome://", "data:")):
             return
-        self._vistos.add(url)
+        # RESPOSTA nao se deduplica por endereco. O mesmo endereco pode
+        # responder duas vezes com conteudos diferentes, e em 23/10/2026 o
+        # primeiro veio como pagina de erro de 536 bytes enquanto o arquivo
+        # de verdade era servido logo depois: guardar so o primeiro jogava
+        # fora justamente o que se queria. Aba aberta, sim, se deduplica: ali
+        # o endereco e o proprio identificador.
+        if origem != "resposta":
+            if url in self._vistos:
+                return
+            self._vistos.add(url)
         self.achados.append({"url": url, "origem": origem, "tipo": tipo,
                              "resposta": resposta})
 

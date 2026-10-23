@@ -1723,10 +1723,12 @@ def test_o_faro_e_consultado_antes_e_depois_da_area_de_download():
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal._baixar_autos_do_pje)
-    assert fonte.count("_resgatar_pelo_faro") == 2
-    primeiro = fonte.index("_resgatar_pelo_faro")
-    area = fonte.index("_relatar_area_de_download")
-    assert primeiro < area < fonte.rindex("_resgatar_pelo_faro")
+    espera = inspect.getsource(portal._esperar_o_arquivo_do_pje)
+    # A primeira colheita acontece dentro da espera, em laco, enquanto o
+    # portal gera. A segunda, depois da Area de Download.
+    assert "_resgatar_pelo_faro" in espera
+    assert fonte.index("_relatar_area_de_download") < fonte.index(
+        "_resgatar_pelo_faro")
 
 
 def test_o_resgate_pelo_faro_nao_clica_em_nada():
@@ -1869,8 +1871,9 @@ def test_o_pedido_tira_o_marco_antes_de_clicar():
     fonte = inspect.getsource(portal._baixar_autos_do_pje)
     assert fonte.index("marco = farejador.marco()") < fonte.index(
         "pedir_o_download_dos_autos(aba, guarda")
-    # E o marco e a faixa viajam em TODAS as consultas ao faro.
-    assert fonte.count("desde=marco, de=de, ate=ate") == 2
+    # E o marco e a faixa viajam junto em toda consulta ao faro.
+    assert "desde=marco, de=de, ate=ate" in fonte
+    assert "marco, prazo" in fonte
 
 
 def test_a_espera_do_arquivo_pede_o_tempo_ao_navegador():
@@ -1886,3 +1889,140 @@ def test_a_espera_do_arquivo_pede_o_tempo_ao_navegador():
     fonte = inspect.getsource(portal._esperar_o_arquivo_do_pje)
     assert "aba.wait_for_timeout(" in fonte
     assert "_tempo.sleep(" not in fonte
+
+
+# --------------------------------------------------------------------------
+# Pagina de erro com nome de autos nao entra no acervo
+# --------------------------------------------------------------------------
+
+
+def test_o_resgate_recusa_o_corpo_que_nao_e_pdf(capsys, tmp_path):
+    """536 bytes comecando em '<!doc' foram gravados e indexados como autos
+    em 23/10/2026. Arquivo errado no acervo so aparece quando alguem for ler."""
+    from justica_mcp import portal
+
+    endereco = "https://minio-docs.tjrj.jus.br/x/processo.pdf"
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira([endereco],
+                       corpos={endereco: b"<!doctype html><html>erro</html>"}),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero, de=1, ate=9)
+    assert trazido is None
+    assert list(tmp_path.iterdir()) == []
+    saida = capsys.readouterr().out
+    assert "NAO e PDF" in saida
+    assert "<!doctype html>" in saida
+
+
+def test_o_candidato_ruim_nao_impede_o_bom(tmp_path):
+    """Parar no primeiro que grava jogaria fora o arquivo de verdade."""
+    from justica_mcp import portal
+
+    ruim = "https://minio-docs.tjrj.jus.br/x/erro.pdf"
+    bom = "https://minio-docs.tjrj.jus.br/x/processo.pdf"
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira([ruim, bom],
+                       corpos={ruim: b"<!doctype html>",
+                               bom: b"%PDF-1.4 inteiro"}),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero, de=1, ate=9)
+    assert trazido is not None
+    assert trazido.read_bytes() == b"%PDF-1.4 inteiro"
+
+
+def test_o_fluxo_do_leitor_entra_para_ler_e_nunca_para_pedir(monkeypatch,
+                                                              tmp_path):
+    """Ler o corpo do leitor embutido nao sai da maquina. Pedir, nao ha a quem."""
+    from justica_mcp import portal
+
+    pedidos = []
+    monkeypatch.setattr("justica_mcp.dcp.baixar_pelo_endereco",
+                        lambda *a, **k: pedidos.append(a[1]))
+    leitor = "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/b1b0-43b3"
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira([leitor], corpos={leitor: b"%PDF-1.4 do leitor"}),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero, de=1, ate=9)
+    assert trazido is not None and trazido.read_bytes() == b"%PDF-1.4 do leitor"
+    assert pedidos == []
+
+
+def test_o_leitor_sem_corpo_nao_vira_pedido_de_rede(monkeypatch, tmp_path):
+    from justica_mcp import portal
+
+    pedidos = []
+    monkeypatch.setattr("justica_mcp.dcp.baixar_pelo_endereco",
+                        lambda *a, **k: pedidos.append(a[1]))
+    leitor = "chrome-extension://abc/def"
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    assert portal._resgatar_pelo_faro(
+        _FaroDeMentira([leitor]),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero, de=1, ate=9) is None
+    assert pedidos == []
+
+
+def test_o_blob_do_leitor_da_tela_nao_e_candidato():
+    """`blob:` e o documento avulso visto por outro nome, e nao da para pedir."""
+    from justica_mcp.portal import candidatos_do_faro
+
+    faro = _FaroDeMentira(["blob:https://tjrj.pje.jus.br/901814a9-2367"])
+    assert candidatos_do_faro(
+        faro, _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        0, 1, 9) == []
+
+
+def test_o_pedido_novo_que_volta_pagina_e_apagado(monkeypatch, tmp_path):
+    """Um 403 do deposito de objetos chega como pagina, nao como erro."""
+    from justica_mcp import portal
+
+    def _falso(contexto, url, destino, nome, sugerido=None, recuo="      "):
+        alvo = tmp_path / f"{nome}-{sugerido}"
+        alvo.write_bytes(b"<!doctype html>AccessDenied")
+        return str(alvo)
+
+    monkeypatch.setattr("justica_mcp.dcp.baixar_pelo_endereco", _falso)
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    assert portal._resgatar_pelo_faro(
+        _FaroDeMentira(["https://minio-docs.tjrj.jus.br/x/processo.pdf"]),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero, de=1, ate=9) is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_o_acervo_nao_indexa_arquivo_que_nao_e_pdf():
+    """Guarda de fonte: a conferencia final vale para TODOS os caminhos."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert "_arquivo_e_pdf(baixado)" in fonte
+    assert fonte.index("_arquivo_e_pdf(baixado)") < fonte.index(
+        "indice.avaliar_repeticao(baixado)")
+
+
+def test_arquivo_e_pdf_le_o_comeco_do_arquivo(tmp_path):
+    from justica_mcp.portal import _arquivo_e_pdf
+
+    bom = tmp_path / "bom.pdf"
+    bom.write_bytes(b"%PDF-1.4" + b"x" * 5000)
+    ruim = tmp_path / "ruim.pdf"
+    ruim.write_bytes(b"<!doctype html>")
+    assert _arquivo_e_pdf(bom)
+    assert not _arquivo_e_pdf(ruim)
+    assert not _arquivo_e_pdf(tmp_path / "nao-existe.pdf")
+
+
+def test_a_espera_nao_desiste_por_causa_de_um_candidato_ruim():
+    """Guarda de fonte: o laco avanca o marco em vez de devolver vazio."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._esperar_o_arquivo_do_pje)
+    assert "atual = farejador.marco()" in fonte
+    assert "if trazido:" in fonte
