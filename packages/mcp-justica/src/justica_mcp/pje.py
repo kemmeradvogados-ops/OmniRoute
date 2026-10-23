@@ -780,3 +780,207 @@ def faixa_de_identificadores(eventos: list) -> tuple:
     if not numeros:
         return (None, None)
     return (min(numeros), max(numeros))
+
+
+# ==========================================================================
+# O DOWNLOAD DOS AUTOS
+#
+# PROVENIENCIA: o advogado descreveu o procedimento em 23/10/2026, com
+# capturas, e os identificadores vem da mesma tela real dos autos:
+#
+#   1. clicar no icone de seta para baixo, no alto a direita, ao lado do
+#      icone de expedientes (uma carta). O relato da tela o traz como botao
+#      com rotulo acessivel 'Download autos do processo';
+#   2. o painel abre a direita, com 'Tipo de documento', 'ID a partir de',
+#      'Ate', 'Periodo de', 'Ate', 'Cronologia', 'Incluir expediente' e
+#      'Incluir movimentos';
+#   3. escolher cronologia CRESCENTE e informar a faixa de identificadores;
+#   4. clicar em DOWNLOAD.
+#
+#   #navbar:cbTipoDocumento   #navbar:idDe   #navbar:idAte
+#   #navbar:dtInicioInputDate #navbar:dtFimInputDate
+#   #navbar:cbCronologia      #navbar:cbExpediente   #navbar:cbMovimentos
+#   #navbar:botoesDownload    (conteiner dos botoes de enviar)
+#
+# O BOTAO DE ENVIAR nao entra por identificador: a tela o trouxe como
+# `input#navbar:j_id246`, e `j_id` e gerado pelo JavaServer Faces, muda a cada
+# versao do portal e aparecia OCULTO antes de o painel abrir. Ele e achado
+# pelo texto, dentro do conteiner, que tem nome estavel.
+# ==========================================================================
+
+ABRIR_O_PAINEL_DE_DOWNLOAD = '[aria-label="Download autos do processo"]'
+CONTEINER_DOS_BOTOES_DE_DOWNLOAD = 'div[id="navbar:botoesDownload"]'
+CAMPO_IDENTIFICADOR_INICIAL = 'input[id="navbar:idDe"]'
+CAMPO_IDENTIFICADOR_FINAL = 'input[id="navbar:idAte"]'
+ESCOLHA_DA_CRONOLOGIA = 'select[id="navbar:cbCronologia"]'
+ESCOLHA_DO_EXPEDIENTE = 'select[id="navbar:cbExpediente"]'
+ESCOLHA_DOS_MOVIMENTOS = 'select[id="navbar:cbMovimentos"]'
+
+CRESCENTE = "crescente"
+
+
+class DownloadDoPJeIndisponivel(RuntimeError):
+    """O painel de download nao apareceu como esperado. Nada foi pedido."""
+
+
+def escolher_por_rotulo(pagina: Any, seletor: str, procurado: str) -> Optional[str]:
+    """Escolhe a opcao cujo TEXTO contem `procurado`. Devolve o valor usado.
+
+    Pelo texto, e nao pelo valor: o valor de uma lista do JavaServer Faces e
+    um indice interno, e escrever `value="1"` aqui seria apostar que
+    'Crescente' e a segunda opcao para sempre. O texto e o que o portal mostra
+    e o que o advogado leu na tela.
+    """
+    lista = pagina.query_selector(seletor)
+    if lista is None:
+        return None
+    alvo = sem_acento_simples(procurado)
+    opcoes: list = []
+    for opcao in lista.query_selector_all("option"):
+        try:
+            opcoes.append((sem_acento_simples(opcao.inner_text() or ""),
+                           opcao.get_attribute("value")))
+        except Exception:
+            continue
+
+    # IGUALDADE primeiro, e isso nao e preciosismo: um teste pegou que
+    # "decrescente" CONTEM "crescente". Procurar por conteudo escolheria a
+    # ordem invertida justamente ao pedir a crescente, que e o erro que esta
+    # funcao existe para evitar. O rotulo da tela e exatamente "Crescente".
+    for texto, valor in opcoes:
+        if texto == alvo:
+            lista.select_option(value=valor)
+            return valor
+    # Depois, palavra inteira. `\b` nao casa dentro de "decrescente", porque
+    # ali nao ha fronteira de palavra antes de "crescente".
+    padrao = re.compile(r"\b" + re.escape(alvo) + r"\b")
+    for texto, valor in opcoes:
+        if padrao.search(texto):
+            lista.select_option(value=valor)
+            return valor
+    return None
+
+
+def sem_acento_simples(texto: str) -> str:
+    """Minusculas e sem acento, para comparar rotulo de tela com constante."""
+    import unicodedata
+
+    cru = unicodedata.normalize("NFD", (texto or "").strip().lower())
+    return "".join(c for c in cru if unicodedata.category(c) != "Mn")
+
+
+def achar_botao_de_enviar_o_download(pagina: Any) -> Optional[Any]:
+    """O botao DOWNLOAD do painel, achado pelo texto dentro do conteiner.
+
+    Nao por identificador: a tela o trouxe como `input#navbar:j_id246`, que o
+    JavaServer Faces gera e renumera a cada versao do portal. E ele aparecia
+    OCULTO no relato, porque o painel estava fechado: procura-lo antes de abrir
+    o painel nao acharia nada.
+    """
+    conteiner = pagina.query_selector(CONTEINER_DOS_BOTOES_DE_DOWNLOAD)
+    onde = conteiner or pagina
+    for candidato in onde.query_selector_all(TIPOS_DE_BOTAO):
+        try:
+            rotulo = sem_acento_simples(
+                candidato.get_attribute("value") or candidato.inner_text() or "")
+        except Exception:
+            continue
+        if rotulo.startswith("download"):
+            return candidato
+    return None
+
+
+def pedir_o_download_dos_autos(
+    pagina: Any, guarda: Any, *, de: int, ate: int,
+    incluir_movimentos: bool = False, segundos: int = 120,
+) -> dict:
+    """Abre o painel, preenche a faixa e pede o download. Devolve o que fez.
+
+    NAO decide a faixa: ela vem de quem chama, e sai da linha do tempo. Decidir
+    aqui seria o programa escolher o que o advogado baixa.
+
+    A cronologia e CRESCENTE, como o advogado descreveu: do documento mais
+    antigo para o mais novo. Isso importa alem do gosto, porque o acervo numera
+    as folhas na ordem em que elas entram, e ordem invertida produziria um
+    indice em que "fls. 1" e a ultima peca.
+
+    Cada passo confere o proprio efeito antes do seguinte. Painel que nao abre,
+    campo que nao aceita o numero e lista sem a opcao pedida param o
+    procedimento ANTES do clique final: pedir um download com a faixa errada
+    gera um arquivo errado, e descobrir isso custa a espera inteira da geracao.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import permissao_efemera
+
+    feito: dict = {"faixa": [de, ate], "cronologia": CRESCENTE}
+
+    abridor = pagina.query_selector(ABRIR_O_PAINEL_DE_DOWNLOAD)
+    if abridor is None:
+        raise DownloadDoPJeIndisponivel(
+            "O botao que abre o painel de download nao esta na tela "
+            f"({ABRIR_O_PAINEL_DE_DOWNLOAD}). Nada foi pedido.")
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="painel de download dos autos do PJe, somente leitura",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(ABRIR_O_PAINEL_DE_DOWNLOAD,),
+        seletores_preenchiveis=(CAMPO_IDENTIFICADOR_INICIAL,
+                                CAMPO_IDENTIFICADOR_FINAL),
+    ))
+    guarda.pode_executar(Acao.CLICAR, ABRIR_O_PAINEL_DE_DOWNLOAD, url=pagina.url)
+    abridor.click()
+    try:
+        pagina.wait_for_selector(CAMPO_IDENTIFICADOR_INICIAL,
+                                 timeout=segundos * 1000)
+    except Exception:
+        raise DownloadDoPJeIndisponivel(
+            "O painel abriu sem o campo 'ID a partir de'. Nada foi pedido."
+        ) from None
+
+    for seletor, valor, nome in (
+            (CAMPO_IDENTIFICADOR_INICIAL, str(de), "ID a partir de"),
+            (CAMPO_IDENTIFICADOR_FINAL, str(ate), "Ate")):
+        campo = pagina.query_selector(seletor)
+        if campo is None:
+            raise DownloadDoPJeIndisponivel(
+                f"O campo {nome!r} sumiu do painel. Nada foi pedido.")
+        guarda.pode_executar(Acao.PREENCHER, seletor, url=pagina.url)
+        campo.fill(valor)
+        # Conferir o que entrou, e nao supor que entrou. Campo com mascara
+        # rejeita o formato EM SILENCIO, e o download sairia com faixa vazia.
+        escrito = campo.evaluate("e => (e.value || '').replace(/\\D/g, '')")
+        if escrito != valor:
+            raise DownloadDoPJeIndisponivel(
+                f"O campo {nome!r} ficou com {escrito!r} e nao com {valor!r}. "
+                "Nada foi pedido.")
+
+    cronologia = escolher_por_rotulo(pagina, ESCOLHA_DA_CRONOLOGIA, CRESCENTE)
+    if cronologia is None:
+        raise DownloadDoPJeIndisponivel(
+            "A lista 'Cronologia' nao tem a opcao 'Crescente'. Nada foi "
+            "pedido: ordem invertida produz um indice em que 'fls. 1' e a "
+            "ultima peca.")
+    feito["valor_da_cronologia"] = cronologia
+
+    if incluir_movimentos:
+        feito["movimentos"] = escolher_por_rotulo(
+            pagina, ESCOLHA_DOS_MOVIMENTOS, "sim")
+
+    botao = achar_botao_de_enviar_o_download(pagina)
+    if botao is None:
+        raise DownloadDoPJeIndisponivel(
+            "O botao DOWNLOAD nao foi achado no painel. A faixa ficou "
+            "preenchida na tela e nada foi enviado.")
+    seletor_do_envio = seletor_do_elemento(botao, "download")
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="pedir o download dos autos, faixa confirmada",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(seletor_do_envio,),
+    ))
+    guarda.pode_executar(Acao.CLICAR, seletor_do_envio, url=pagina.url)
+    feito["enviado"] = True
+    feito["botao"] = seletor_do_envio
+    botao.click()
+    return feito

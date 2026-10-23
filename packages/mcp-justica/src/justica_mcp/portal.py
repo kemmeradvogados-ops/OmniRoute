@@ -6283,14 +6283,60 @@ def consultar_processo(
                 tribunal=identidade.tribunal, sistema=identidade.sistema,
                 numero=numero.formatado, resultado="autos abertos",
             )
-            # A leitura da linha do tempo do PJe ainda NAO esta escrita: a
-            # estrutura dela nao foi lida de tela real. O que sai aqui e a forma
-            # da pagina, sem conteudo, que e o que permite escreve-la depois.
+            # A tela e SEMPRE gravada aqui, mesmo quando a leitura abaixo
+            # acerta: a linha do tempo foi escrita contra o que a tela de
+            # 23/10/2026 declarou, e nao contra a arvore de nos dela, que nao
+            # existia no disco porque `--gravar-telas` nao gravava fora do
+            # Portal de Servicos. Enquanto a leitura nao for conferida em mais
+            # de um processo, a tela gravada e o que permite consertar sem
+            # gastar outra autenticacao do advogado.
             _relatar_tela(aba, "AUTOS DO PROCESSO (ABA NOVA)")
-            _relatar_estrutura_de_dados(aba)
-            print("\n  A extracao da linha do tempo do PJe ainda nao foi escrita.")
-            print("  O relato acima e a forma da pagina, sem conteudo, e e dele que")
-            print("  ela sera escrita. Nada foi inventado.")
+
+            from .pje import faixa_de_identificadores, ler_a_linha_do_tempo
+
+            linha = ler_a_linha_do_tempo(aba)
+            if linha["aviso"]:
+                print(f"\n  LINHA DO TEMPO: {linha['aviso']}")
+                _relatar_estrutura_de_dados(aba)
+            else:
+                eventos = linha["eventos"]
+                # `pecas_da_linha`, e NAO `documentos`: `documentos` e
+                # parametro de `consultar_processo`, o da opcao do mesmo nome.
+                # Usa-lo aqui o tornaria local de `depois` na funcao inteira, e
+                # a leitura dele no ramo do Portal de Servicos viraria
+                # UnboundLocalError em tempo de execucao. Uma guarda pegou.
+                pecas_da_linha = [e for e in eventos if e["e_documento"]]
+                print(f"\n  LINHA DO TEMPO: {len(eventos)} evento(s), "
+                      f"{len(pecas_da_linha)} documento(s).")
+                if linha["paginas"] and linha["paginas"] > 1:
+                    # Dito alto, porque e a diferenca entre "o processo tem
+                    # isto" e "esta pagina tem isto". Concluir pela primeira
+                    # pagina seria concluir por um pedaco.
+                    print(f"  ATENCAO: pagina {linha['pagina']} de "
+                          f"{linha['paginas']}. O que esta acima e SO esta "
+                          f"pagina; o resto nao foi lido.")
+                primeiro, ultimo = faixa_de_identificadores(eventos)
+                if primeiro is not None:
+                    print(f"  Identificadores de {primeiro} a {ultimo}.")
+                dados_da_linha = {
+                    "numero": numero.formatado,
+                    "sistema": "pje",
+                    "pagina": linha["pagina"],
+                    "paginas": linha["paginas"],
+                    "eventos": eventos,
+                    "faixa_de_identificadores": [primeiro, ultimo],
+                }
+                arquivo = _gravar_consulta(dados_da_linha, numero.apenas_digitos)
+                print(f"\n  Conteudo completo em: {arquivo}")
+                print("  O arquivo contem dado de cliente. Nao o cole em "
+                      "conversa nenhuma.")
+                estado_local.registrar(
+                    acao="linha_do_tempo_do_pje", tribunal=identidade.tribunal,
+                    sistema=identidade.sistema, numero=numero.formatado,
+                    resultado=f"{len(eventos)} evento(s)",
+                )
+            print("\n  O DOWNLOAD DOS AUTOS ainda nao esta escrito. O painel do")
+            print("  portal pede a faixa de identificadores, que esta acima.")
             try:
                 aba.close()
             except Exception:

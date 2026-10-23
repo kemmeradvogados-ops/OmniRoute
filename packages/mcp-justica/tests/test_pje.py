@@ -973,3 +973,245 @@ def test_o_texto_lido_e_o_PROPRIO_do_no():
     assert "nodeType === 3" in JS_DA_LINHA_DO_TEMPO
     assert "innerText" not in JS_DA_LINHA_DO_TEMPO
     assert "textContent" not in JS_DA_LINHA_DO_TEMPO
+
+
+# ==========================================================================
+# O DOWNLOAD DOS AUTOS
+#
+# Procedimento descrito pelo advogado em 23/10/2026, com capturas: abrir o
+# painel pelo icone de seta para baixo, escolher cronologia CRESCENTE,
+# informar a faixa de identificadores e clicar em DOWNLOAD.
+# ==========================================================================
+
+
+class _Opcao:
+    def __init__(self, texto, valor):
+        self.texto, self.valor = texto, valor
+
+    def inner_text(self):
+        return self.texto
+
+    def get_attribute(self, nome):
+        return self.valor if nome == "value" else None
+
+
+class _Lista:
+    def __init__(self, opcoes):
+        self.opcoes = opcoes
+        self.escolhido = None
+
+    def query_selector_all(self, _seletor):
+        return self.opcoes
+
+    def select_option(self, value=None):
+        self.escolhido = value
+
+
+class _CampoDoPainel:
+    def __init__(self, mascara_engole=False):
+        self.valor = ""
+        self.mascara_engole = mascara_engole
+
+    def fill(self, valor):
+        self.valor = "" if self.mascara_engole else valor
+
+    def evaluate(self, _js):
+        return "".join(c for c in self.valor if c.isdigit())
+
+
+class _PaginaDoDownload:
+    def __init__(self, *, abridor=True, campos_engolem=False,
+                 tem_crescente=True, tem_botao=True):
+        self.url = "https://tjrj.pje.jus.br/1g/Processo/ConsultaProcesso/Detalhe/x.seam"
+        self.cliques = []
+        self.de = _CampoDoPainel(campos_engolem)
+        self.ate = _CampoDoPainel(campos_engolem)
+        opcoes = [_Opcao("Decrescente", "0")]
+        if tem_crescente:
+            opcoes.append(_Opcao("Crescente", "1"))
+        self.cronologia = _Lista(opcoes)
+        self.abridor = _BotaoDeMentira(valor="") if abridor else None
+        if self.abridor is not None:
+            self.abridor.click = lambda: self.cliques.append("abrir")
+        self.botao = _BotaoDeMentira(valor="DOWNLOAD",
+                                     identificador="navbar:j_id246") if tem_botao else None
+        if self.botao is not None:
+            self.botao.click = lambda: self.cliques.append("download")
+
+    def query_selector(self, seletor):
+        from justica_mcp.pje import (ABRIR_O_PAINEL_DE_DOWNLOAD,
+                                     CAMPO_IDENTIFICADOR_FINAL,
+                                     CAMPO_IDENTIFICADOR_INICIAL,
+                                     CONTEINER_DOS_BOTOES_DE_DOWNLOAD,
+                                     ESCOLHA_DA_CRONOLOGIA)
+        return {
+            ABRIR_O_PAINEL_DE_DOWNLOAD: self.abridor,
+            CAMPO_IDENTIFICADOR_INICIAL: self.de,
+            CAMPO_IDENTIFICADOR_FINAL: self.ate,
+            ESCOLHA_DA_CRONOLOGIA: self.cronologia,
+            CONTEINER_DOS_BOTOES_DE_DOWNLOAD: None,
+        }.get(seletor)
+
+    def query_selector_all(self, _seletor):
+        return [self.botao] if self.botao else []
+
+    def wait_for_selector(self, *a, **kw):
+        pass
+
+
+class _GuardaDeMentira:
+    def __init__(self):
+        self.permissoes = []
+        self.autorizados = []
+
+    def pode_executar(self, acao, alvo, url=None):
+        self.autorizados.append((str(acao), alvo))
+        return True
+
+
+def test_pede_o_download_na_faixa_que_recebeu():
+    from justica_mcp.pje import pedir_o_download_dos_autos
+
+    pagina, guarda = _PaginaDoDownload(), _GuardaDeMentira()
+    feito = pedir_o_download_dos_autos(pagina, guarda, de=128507266, ate=130640678)
+    assert pagina.de.valor == "128507266"
+    assert pagina.ate.valor == "130640678"
+    assert pagina.cliques == ["abrir", "download"]
+    assert feito["enviado"] is True
+    assert feito["faixa"] == [128507266, 130640678]
+
+
+def test_a_cronologia_escolhida_e_crescente_pelo_TEXTO():
+    """Pelo texto, e nao pelo valor: o valor de uma lista do JavaServer Faces
+    e um indice interno, e fixar `value="1"` seria apostar que 'Crescente' e a
+    segunda opcao para sempre."""
+    from justica_mcp.pje import pedir_o_download_dos_autos
+
+    pagina = _PaginaDoDownload()
+    pedir_o_download_dos_autos(pagina, _GuardaDeMentira(), de=1, ate=2)
+    assert pagina.cronologia.escolhido == "1"
+
+
+def test_sem_a_opcao_crescente_nada_e_pedido():
+    """Ordem invertida produz um indice em que 'fls. 1' e a ultima peca."""
+    import pytest
+
+    from justica_mcp.pje import (DownloadDoPJeIndisponivel,
+                                 pedir_o_download_dos_autos)
+
+    pagina = _PaginaDoDownload(tem_crescente=False)
+    with pytest.raises(DownloadDoPJeIndisponivel) as erro:
+        pedir_o_download_dos_autos(pagina, _GuardaDeMentira(), de=1, ate=2)
+    assert "Crescente" in str(erro.value)
+    assert "download" not in pagina.cliques
+
+
+def test_campo_com_mascara_que_engole_para_antes_do_clique():
+    """Campo com mascara rejeita o formato EM SILENCIO, e o download sairia
+    com faixa vazia. Descobrir isso depois custa a espera inteira da geracao."""
+    import pytest
+
+    from justica_mcp.pje import (DownloadDoPJeIndisponivel,
+                                 pedir_o_download_dos_autos)
+
+    pagina = _PaginaDoDownload(campos_engolem=True)
+    with pytest.raises(DownloadDoPJeIndisponivel):
+        pedir_o_download_dos_autos(pagina, _GuardaDeMentira(), de=1, ate=2)
+    assert "download" not in pagina.cliques
+
+
+def test_sem_o_botao_de_abrir_o_painel_nada_acontece():
+    import pytest
+
+    from justica_mcp.pje import (DownloadDoPJeIndisponivel,
+                                 pedir_o_download_dos_autos)
+
+    pagina = _PaginaDoDownload(abridor=False)
+    with pytest.raises(DownloadDoPJeIndisponivel):
+        pedir_o_download_dos_autos(pagina, _GuardaDeMentira(), de=1, ate=2)
+    assert pagina.cliques == []
+
+
+def test_sem_o_botao_de_enviar_a_faixa_fica_mas_nada_e_enviado():
+    import pytest
+
+    from justica_mcp.pje import (DownloadDoPJeIndisponivel,
+                                 pedir_o_download_dos_autos)
+
+    pagina = _PaginaDoDownload(tem_botao=False)
+    with pytest.raises(DownloadDoPJeIndisponivel) as erro:
+        pedir_o_download_dos_autos(pagina, _GuardaDeMentira(), de=1, ate=2)
+    assert "nada foi enviado" in str(erro.value)
+    assert pagina.cliques == ["abrir"]
+
+
+def test_a_trava_autoriza_antes_de_cada_acao():
+    """O clique de enviar so e autorizado DEPOIS de a faixa estar conferida."""
+    from justica_mcp.pje import pedir_o_download_dos_autos
+
+    guarda = _GuardaDeMentira()
+    pedir_o_download_dos_autos(_PaginaDoDownload(), guarda, de=1, ate=2)
+    alvos = [alvo for _, alvo in guarda.autorizados]
+    assert 'input[id="navbar:idDe"]' in alvos
+    assert 'input[id="navbar:idAte"]' in alvos
+    assert alvos[-1].startswith("input[id=")
+
+
+def test_o_botao_de_enviar_nao_e_procurado_por_identificador_do_jsf():
+    """Guarda de fonte: a tela o trouxe como `input#navbar:j_id246`, que o
+    JavaServer Faces renumera a cada versao, e OCULTO antes de o painel abrir."""
+    import ast
+    import inspect
+    import textwrap
+
+    from justica_mcp import pje
+
+    # O corpo, SEM a explicacao: o texto que explica por que nao se usa `j_id`
+    # precisa citar `j_id`, e a guarda nao pode tropecar na propria razao de
+    # existir. Erro que ja cometi tres vezes neste projeto.
+    arvore = ast.parse(textwrap.dedent(
+        inspect.getsource(pje.achar_botao_de_enviar_o_download)))
+    funcao = arvore.body[0]
+    corpo = funcao.body[1:] if (
+        isinstance(funcao.body[0], ast.Expr)
+        and isinstance(funcao.body[0].value, ast.Constant)) else funcao.body
+    codigo = "\n".join(ast.unparse(no) for no in corpo)
+    assert "j_id" not in codigo
+
+
+def test_decrescente_nao_e_escolhida_quando_se_pede_crescente():
+    """O defeito que um teste pegou em 23/10/2026: "decrescente" CONTEM
+    "crescente". Procurar por conteudo escolheria a ordem invertida justamente
+    ao pedir a crescente, e o acervo numera as folhas na ordem em que elas
+    entram: 'fls. 1' viraria a ultima peca."""
+    from justica_mcp.pje import escolher_por_rotulo
+
+    class _So:
+        def __init__(self, lista):
+            self.lista = lista
+
+        def query_selector(self, _s):
+            return self.lista
+
+    # A ordem das opcoes e a da tela real: Decrescente vem primeiro.
+    lista = _Lista([_Opcao("Decrescente", "0"), _Opcao("Crescente", "1")])
+    assert escolher_por_rotulo(_So(lista), "qualquer", "crescente") == "1"
+    assert lista.escolhido == "1"
+
+
+def test_a_escolha_por_palavra_inteira_tolera_rotulo_mais_longo():
+    """Igualdade exata resolve a tela de hoje. Se o portal passar a escrever
+    'Ordem crescente', a palavra inteira ainda casa, e 'decrescente' nao,
+    porque ali nao ha fronteira de palavra antes de 'crescente'."""
+    from justica_mcp.pje import escolher_por_rotulo
+
+    class _So:
+        def __init__(self, lista):
+            self.lista = lista
+
+        def query_selector(self, _s):
+            return self.lista
+
+    lista = _Lista([_Opcao("Ordem decrescente", "0"),
+                    _Opcao("Ordem crescente", "1")])
+    assert escolher_por_rotulo(_So(lista), "qualquer", "crescente") == "1"
