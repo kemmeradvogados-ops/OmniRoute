@@ -170,11 +170,18 @@ def test_todo_comando_do_manual_existe_de_verdade():
             assert "--tribunal" in linha and "--sistema" in linha, linha
 
 
-def test_o_manual_nao_promete_download_pelo_conector():
-    """Nenhuma das 14 ferramentas baixa arquivo, em portal nenhum."""
+def test_o_manual_diz_as_duas_condicoes_do_download():
+    """O download existe no conector desde 23/10/2026, mas nao e magico.
+
+    Duas condicoes precisam estar escritas, porque sem elas o advogado pede e
+    nao entende por que parou: o desafio do eproc exige uma pessoa na frente
+    da tela, e o aviso de responsabilidade do PJe e aceite do advogado.
+    """
     texto = _MANUAL.read_text(encoding="utf-8")
     assert "Baixar os autos" in texto
-    assert "pela linha de comando" in texto
+    assert "uma pessoa na frente da tela" in texto
+    assert "aceite é ato do advogado" in texto
+    assert "resolução nº. 121" in texto
 
 
 def test_o_manual_diz_que_esaj_e_pje_sao_recusados_pela_ferramenta():

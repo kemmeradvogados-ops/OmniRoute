@@ -92,6 +92,26 @@ class PublicacoesOabInput(BaseModel):
     solicitante: Optional[str] = None
 
 
+class BaixarAutosInput(NumeroInput):
+    documentos: str = Field(
+        default="integra",
+        description=("'integra' (padrao) para os autos num arquivo so; 'auto' "
+                     "para um download por documento; 'um-a-um' para processo "
+                     "grande do Portal de Servicos do Rio de Janeiro."),
+    )
+    aceito_o_termo: bool = Field(
+        default=False,
+        description=("Aceita o aviso de responsabilidade que o PJe levanta ao "
+                     "abrir os autos (resolucao nº. 121 do Conselho Nacional "
+                     "de Justica). O aceite e ato do advogado: so marque "
+                     "quando ele disser isso em palavras."),
+    )
+    segundos_download: Optional[int] = Field(
+        default=None, ge=60, le=7200,
+        description="Quanto esperar pelo ARQUIVO. Minimo e padrao do programa: 300.",
+    )
+
+
 # ----------------------------- registro -----------------------------
 
 # Sistemas que a ferramenta autenticada sabe percorrer. O eproc entra pela
@@ -536,6 +556,144 @@ def registrar(mcp: Any) -> None:
                            "existe para o acesso do advogado nao ser bloqueado pelo "
                            "portal apos tentativas seguidas."),
         })
+
+    @mcp.tool(
+        name="justica_baixar_autos",
+        annotations=ToolAnnotations(
+            title="Baixar os autos do processo",
+            # Nao e leitura: grava arquivos na pasta de copias da banca.
+            read_only_hint=False,
+            # Nao destroi nada. O acervo confere repeticao antes de indexar, e
+            # arquivo que nao e PDF nem chega a ser gravado.
+            destructive_hint=False,
+            # Cada chamada consome uma tentativa de autenticacao no tribunal.
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+    )
+    async def justica_baixar_autos(params: BaixarAutosInput) -> str:
+        """Pede a copia integral dos autos e VOLTA NA HORA, sem esperar o fim.
+
+        O trabalho corre num processo separado, porque ele leva de minutos a
+        horas: o portal GERA o arquivo quando se pede, e no eproc da Justica
+        Federal da 2a Regiao a geracao e assincrona, podendo levar horas ate o
+        tribunal avisar que ficou pronta.
+
+        A resposta traz o identificador do trabalho. Acompanhe com
+        `justica_situacao_do_download` e, quando terminar, use
+        `justica_pecas_do_processo` para ver o que foi gravado.
+
+        CUSTO REAL: autentica de verdade no tribunal e consome uma tentativa.
+        Tentativas seguidas bloqueiam o acesso. **Diante de erro, nao repita a
+        chamada**: relate ao advogado e espere instrucao.
+
+        PRESENCA HUMANA: o eproc levanta o desafio "Confirme que e humano", e
+        ele exige uma pessoa na frente da tela. Sem ela, o trabalho espera e
+        termina sem arquivo, dizendo isso. Avise o advogado antes de comecar.
+
+        O AVISO DE RESPONSABILIDADE do PJe (resolucao nº. 121 do Conselho
+        Nacional de Justica) so e aceito quando `aceito_o_termo` vier
+        verdadeiro, e esse aceite e ato do advogado: peca a ele em palavras
+        antes de marcar, nunca decida sozinho.
+        """
+        from .core.acesso import config_portal
+        from .trabalhos import MURAL
+
+        if not autenticado_habilitado():
+            return _erro(
+                "Acesso autenticado desligado neste servidor.", "acesso_desligado",
+                "Ligar permite disparar autenticacao real no tribunal com a "
+                "credencial do advogado, e e decisao do operador.",
+            )
+        try:
+            numero = parse_numero(params.numero)
+            tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
+            sistema = (await resolver_sistema(numero, _estado)).sistema
+            config_portal(tribunal.codigo, sistema)
+        except NumeroCNJInvalido as exc:
+            return _erro(str(exc), "numero_invalido")
+        except TribunalForaDoEscopo as exc:
+            return _erro(str(exc), "tribunal_fora_do_escopo")
+        except PortalNaoConfigurado as exc:
+            return _erro(str(exc), "portal_nao_configurado",
+                         "O endereco do portal mora no arquivo de configuracao "
+                         "da banca, e nao em parametro de ferramenta.")
+
+        # Um trabalho por processo. Dois ao mesmo tempo gastariam duas
+        # tentativas, abririam dois navegadores e escreveriam na mesma pasta.
+        emCurso = MURAL.em_curso_para(numero.formatado)
+        if emCurso is not None:
+            return _erro(
+                f"Ja ha um download em curso para {numero.formatado}.",
+                "trabalho_em_curso",
+                f"Acompanhe com justica_situacao_do_download, trabalho "
+                f"{emCurso.identificador}. Comecar outro gastaria mais uma "
+                "tentativa de autenticacao sem trazer nada novo.",
+            )
+        try:
+            LimiteTentativas.do_ambiente(_estado).exigir_folga()
+        except TetoDeTentativasAtingido as exc:
+            return _erro(str(exc), "teto_de_tentativas")
+
+        argumentos = [
+            "consultar",
+            "--tribunal", tribunal.codigo,
+            "--sistema", sistema,
+            "--processo", numero.formatado,
+            "--documentos", params.documentos,
+            "--confirmo-tentativa-unica",
+        ]
+        if params.aceito_o_termo:
+            argumentos.append("--aceito-o-termo")
+        if params.segundos_download:
+            argumentos += ["--segundos-download", str(params.segundos_download)]
+
+        trabalho = MURAL.comecar("download dos autos", numero.formatado, argumentos)
+        _estado.registrar(
+            acao="baixar_autos_pedido", tribunal=tribunal.codigo, sistema=sistema,
+            numero=numero.formatado, resultado=trabalho.identificador,
+            solicitante=params.solicitante,
+        )
+        return _json({
+            "trabalho": trabalho.identificador,
+            "processo": numero.formatado,
+            "tribunal": tribunal.codigo,
+            "sistema": sistema,
+            "estado": trabalho.estado,
+            "aviso": (
+                "O pedido comecou. Isso leva de minutos a horas conforme o "
+                "portal e o tamanho do processo. NAO chame esta ferramenta de "
+                "novo para o mesmo processo: use justica_situacao_do_download."
+            ),
+        })
+
+    @mcp.tool(name="justica_situacao_do_download",
+              annotations=somente_leitura("Situacao do download"))
+    async def justica_situacao_do_download(trabalho: Optional[str] = None,
+                                           ultimas_linhas: int = 12) -> str:
+        """Em que pe esta um download pedido com `justica_baixar_autos`.
+
+        Sem o identificador, lista os ultimos trabalhos desta execucao. O
+        relato vem do proprio comando, linha a linha, e nada nele e inferido.
+
+        `estado` vale "em curso", "concluido" ou "falhou". Concluido NAO quer
+        dizer que veio arquivo: pode ter vindo a resposta de que o portal
+        aceitou o pedido e esta montando, que e o caso normal do eproc. As
+        ultimas linhas do relato dizem qual dos dois.
+        """
+        from .trabalhos import MURAL
+
+        if not trabalho:
+            return _json({"trabalhos": MURAL.listar()})
+        achado = MURAL.ver(trabalho)
+        if achado is None:
+            return _erro(
+                f"Nao ha trabalho {trabalho!r} nesta execucao.", "trabalho_desconhecido",
+                "O mural vive enquanto o servidor vive: reiniciar o Claude "
+                "apaga a lista, mas nao desfaz o que ja foi gravado em disco. "
+                "Use justica_pecas_do_processo para ver o que ha na pasta.",
+            )
+        return _json(achado.resumo(ultimas=max(1, min(ultimas_linhas, 60))))
 
     @mcp.tool(name="justica_auditoria_recente", annotations=somente_leitura("Auditoria recente"))
     async def justica_auditoria_recente(limite: int = 50) -> str:

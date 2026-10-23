@@ -74,48 +74,62 @@ ferramentas**.
 
 ---
 
-## 4. Configurar o que é seu
+## 4. Configuração e credenciais
 
-Duas coisas são pessoais e não se compartilham: a sua credencial e a sua
-inscrição na Ordem.
+A configuração e as credenciais de portal são **compartilhadas pelo
+escritório**, por decisão da banca. Você não precisa montar nada: o
+instalador já copia o arquivo de configuração da pasta compartilhada na
+primeira execução.
 
-Abra o arquivo de configuração:
+### O que já vem pronto
 
-```powershell
-notepad "$env:LOCALAPPDATA\justica-mcp\.env"
-```
-
-Peça ao responsável os valores das chaves de portal, que são iguais para todo
-o escritório, e preencha também:
-
-- `JUSTICA_OAB_NUMERO` e `JUSTICA_OAB_UF`, os seus;
-- `JUSTICA_PASTA_COPIAS`, a pasta de cópias no Google Drive, a mesma para todos.
-
-Para gravar a sua credencial de portal, que fica no cofre do Windows e nunca
-no arquivo. Uma linha por portal, trocando os dois nomes do final:
+O arquivo `.env`, com os endereços dos portais, a chave da base nacional e a
+pasta de cópias no Google Drive. Para conferir que ele foi lido, sem que
+nenhum valor apareça na tela:
 
 ```powershell
-& "$env:LOCALAPPDATA\justica-mcp\.venv\Scripts\python.exe" -m justica_mcp.credenciais guardar --tribunal TJRJ --sistema pje
+& "$env:LOCALAPPDATA\justica-mcp\.venv\Scripts\python.exe" -m justica_mcp.portal ambiente
 ```
 
-Ele pergunta o usuário, a senha e, quando houver, a semente do segundo fator,
-sem imprimir nada na tela. Os pares que o escritório usa:
+Ele lista os nomes das chaves e os portais que o programa enxerga, nunca os
+valores.
 
-| `--tribunal` | `--sistema` | Portal |
-| --- | --- | --- |
-| `TJRJ` | `dcp` | Portal de Serviços do Rio de Janeiro |
-| `TJRJ` | `pje` | PJe do Rio de Janeiro |
-| `TJSP` | `esaj` | e-SAJ de São Paulo |
-| `TRF2` | `eproc` | eproc do Tribunal Regional Federal da 2ª Região |
-| `JFRJ` | `eproc` | eproc da Seção Judiciária do Rio de Janeiro |
+### Carregar as credenciais
 
-Para conferir o que ficou guardado, sem ver nenhum segredo:
+As credenciais vêm da planilha da banca, que o responsável indica. Uma única
+linha de comando leva os valores da planilha direto para o cofre do Windows,
+sem copiar e colar senha e sem deixar arquivo intermediário:
+
+```powershell
+& "$env:LOCALAPPDATA\justica-mcp\.venv\Scripts\python.exe" -m justica_mcp.credenciais importar --planilha "CAMINHO_DA_PLANILHA"
+```
+
+Troque `CAMINHO_DA_PLANILHA`, entre aspas, pelo caminho do arquivo que o
+responsável indicou. Antes de valer, dá para ensaiar: acrescente `--simular`
+ao final e ele mostra o que faria sem gravar nada.
+
+Confira depois, sem ver nenhum segredo:
 
 ```powershell
 & "$env:LOCALAPPDATA\justica-mcp\.venv\Scripts\python.exe" -m justica_mcp.credenciais listar
 ```
 
----
+### Três cuidados que a equipe precisa observar
+
+**Não deixe a planilha na sua máquina.** Depois de importar, o cofre passa a
+ser a fonte. Manter senha e semente de segundo fator juntas num arquivo anula
+a proteção do segundo fator.
+
+**O teto de tentativas é da conta, não da pessoa.** Como a credencial é a
+mesma para todos, as tentativas de autenticação de cada um somam no mesmo
+limite do tribunal. Duas pessoas consultando o mesmo portal ao mesmo tempo
+gastam o dobro, e tentativas seguidas bloqueiam o acesso de **todo o
+escritório**, não só de quem tentou.
+
+**O registro de quem fez o quê é local.** Cada máquina guarda a própria
+auditoria. Com credencial compartilhada, o portal do tribunal não distingue
+quem consultou. Se for preciso saber quem fez determinado acesso, a resposta
+está na máquina de quem fez, pela ferramenta `justica_auditoria_recente`.
 
 ## 5. O que dá para pedir ao Claude
 
@@ -154,9 +168,31 @@ seu acesso. Há um teto por hora e o conector recusa quando ele é atingido.
 Repetir é o que bloqueia a conta.
 
 Funciona hoje para o **Portal de Serviços do Rio de Janeiro** e para o
-**eproc**. Para o **e-SAJ** e o **PJe** o conector recusa, de propósito: os
+**eproc**. Para o **e-SAJ** e o **PJe**, essa consulta recusa, de propósito: os
 caminhos dessas telas ainda não foram escritos dentro da ferramenta, e aceitar
-faria a chamada gastar uma autenticação para falhar na tela errada.
+faria a chamada gastar uma autenticação para falhar na tela errada. O
+**download**, esse sim, funciona nos quatro portais.
+
+### Baixar os autos
+
+- "Baixe os autos desse processo."
+
+O conector pede o download e **responde na hora**, com um número de trabalho.
+Ele não fica esperando, porque isso leva de minutos a horas: o portal gera o
+arquivo quando se pede, e no eproc a geração pode demorar.
+
+Para acompanhar:
+
+- "Como está o download que você pediu."
+
+Quando terminar, as peças estão na pasta de cópias e todo o escritório pode
+lê-las pelo conector, sem autenticar.
+
+**Duas condições.** O eproc levanta o desafio "Confirme que é humano", e isso
+exige **uma pessoa na frente da tela** da máquina onde o conector roda. E, no
+PJe, o aviso de responsabilidade da resolução nº. 121 do Conselho Nacional de
+Justiça só é aceito se você disser ao Claude, em palavras, que aceita: o
+aceite é ato do advogado, nunca do programa.
 
 ---
 
@@ -164,9 +200,8 @@ faria a chamada gastar uma autenticação para falhar na tela errada.
 
 | Não faz | Por quê |
 | --- | --- |
-| Baixar os autos | O download abre uma janela de verdade, pode exigir que uma pessoa marque a caixa de verificação e, no eproc, pode levar horas até o tribunal montar o arquivo. Isso é feito pela linha de comando, por quem tem o processo em mãos. |
 | Dar ciência de intimação | Ciência inicia prazo. É ato do advogado, nunca de um programa. |
-| Escrever em sistema de tribunal | Todas as 14 ferramentas são de leitura. |
+| Escrever em sistema de tribunal | Nenhuma das 16 ferramentas altera nada no tribunal. O download grava arquivos na sua pasta de cópias, e só. |
 | Mandar dado para fora | Tudo roda na sua máquina. O que sai são as consultas aos portais, com a sua credencial. |
 | Usar a credencial de outra pessoa | O cofre é da sua máquina e da sua conta do Windows. |
 

@@ -66,7 +66,7 @@ mesmo jeito. Repeti-la na configuração do Claude criaria uma segunda cópia qu
 envelhece sozinha, e o `.env` tem precedência menor que o ambiente, então a
 cópia velha é que venceria.
 
-Feche e reabra o Claude. O servidor deve aparecer com **14 ferramentas**.
+Feche e reabra o Claude. O servidor deve aparecer com **16 ferramentas**.
 
 ### Conferir antes de confiar
 
@@ -303,13 +303,21 @@ O e-SAJ e o PJe funcionam hoje **pela linha de comando**, inclusive com
 download, e é por ali que se usam enquanto os caminhos da ferramenta não são
 escritos.
 
-### O download é sempre pela linha de comando
+### O download, desde 23/10/2026, também é do conector
 
-Nenhuma ferramenta do conector baixa arquivo, em portal nenhum. O download
-abre uma janela de verdade, pode exigir presença humana no desafio de
-verificação e, no eproc, pode levar horas até o tribunal montar o arquivo.
-Depois que a corrida grava as peças, `justica_pecas_do_processo` e
-`justica_ler_peca` leem tudo do disco, sem autenticar e sem teto por hora.
+`justica_baixar_autos` pede a cópia integral e **volta na hora**, sem esperar
+o fim. O trabalho corre num processo separado, porque leva de minutos a horas:
+o portal gera o arquivo quando se pede, e no eproc a geração é assíncrona.
+`justica_situacao_do_download` diz em que pé está, com o relato linha a linha
+do próprio comando.
+
+Três coisas que continuam valendo:
+
+- o download abre uma janela de verdade e pode exigir presença humana no
+  desafio de verificação do eproc;
+- cada pedido consome uma tentativa de autenticação;
+- depois que as peças estão gravadas, `justica_pecas_do_processo` e
+  `justica_ler_peca` leem tudo do disco, sem autenticar e sem teto por hora.
 
 ### Serviço
 
@@ -322,19 +330,27 @@ Depois que a corrida grava as peças, `justica_pecas_do_processo` e
 
 ---
 
-## 4. O download continua fora do Claude
+## 4. O download, pelo conector e pela linha de comando
 
-Baixar os autos é feito pela linha de comando, não por ferramenta do conector,
-e isso é deliberado: a corrida abre uma janela de verdade, pede presença humana
-no desafio de verificação e pode levar horas. Não cabe dentro de uma chamada de
-ferramenta.
+Até 23/10/2026 o download existia só na linha de comando, porque não cabe
+dentro de uma chamada de ferramenta: a corrida abre uma janela de verdade,
+pode pedir presença humana no desafio de verificação e leva de minutos a
+horas.
+
+A solução não foi encurtar o download, foi tirá-lo de dentro da chamada.
+`justica_baixar_autos` dispara o mesmo comando num processo separado e
+responde na hora com um número de trabalho; `justica_situacao_do_download`
+devolve o relato linha a linha, do próprio comando, sem inferir progresso.
+
+Pela linha de comando continua igual, e é o caminho para quem quer acompanhar
+a janela:
 
 ```powershell
-justica-portal consultar --tribunal TJRJ --sistema dcp --processo <numero> --documentos auto
+.venv\Scripts\python -m justica_mcp.portal consultar --tribunal TJRJ --sistema dcp --documentos auto --processo 0000001-86.2013.8.19.0078
 ```
 
-Depois que ela roda, o conector enxerga o resultado por
-`justica_pecas_do_processo` e `justica_ler_peca`.
+De um jeito ou de outro, depois que as peças estão gravadas o conector as
+enxerga por `justica_pecas_do_processo` e `justica_ler_peca`.
 
 Para ver o que a pasta cobre e onde estão os buracos:
 

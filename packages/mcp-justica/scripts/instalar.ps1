@@ -143,14 +143,23 @@ Write-Host "    Navegador instalado."
 
 Passo 6 "Preparando o arquivo de configuracao"
 $arquivoEnv = Join-Path $destino ".env"
+$envDaBanca = Join-Path $origem ".env"
 $exemplo = Join-Path $destino ".env.example"
 if (Test-Path $arquivoEnv) {
+    # Nunca sobrescrever: a configuracao local pode ter ajustes que so valem
+    # nesta maquina, e perde-la ja custou uma recuperacao de backup.
     Write-Host "    JA EXISTE um .env nesta maquina. Nao toquei nele."
+} elseif (Test-Path $envDaBanca) {
+    # O arquivo da banca, na pasta compartilhada, e a fonte: enderecos dos
+    # portais, pasta de copias e chave da base nacional sao os mesmos para
+    # todos. Copiado so na PRIMEIRA instalacao.
+    Copy-Item $envDaBanca $arquivoEnv
+    Write-Host "    Copiado do arquivo da banca, na pasta compartilhada."
 } elseif (Test-Path $exemplo) {
     Copy-Item $exemplo $arquivoEnv
     Write-Host "    Criado a partir do exemplo. Falta preencher: ver o manual."
 } else {
-    Write-Host "    Nao achei .env.example. Peca a configuracao ao responsavel."
+    Write-Host "    Nao achei configuracao nenhuma. Peca o .env ao responsavel."
 }
 
 Passo 7 "Conferindo que o servidor sobe"
