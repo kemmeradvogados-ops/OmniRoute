@@ -556,3 +556,188 @@ def janela_de(pagina: Any) -> dict:
         if medida:
             return medida
     return _medida_perguntada(pagina) or dict(JANELA_SUPOSTA)
+
+
+# --------------------------------------------------------------------------
+# Faro de arquivos
+#
+# Por que isto existe. Em 23/10/2026 o pedido dos autos do PJe foi feito
+# inteiro: o painel abriu, a faixa de identificadores entrou conferida e o
+# botao DOWNLOAD foi clicado. Nenhum arquivo chegou pelo navegador, e a Area
+# de Download, que e a tela propria do portal para isso, voltou sem conteudo
+# depois de 45s de espera: um unico botao, nenhum campo, nenhuma tabela. O
+# arquivo EXISTE, e de 507 folhas, e foi visto aberto no leitor de PDF do
+# proprio navegador.
+#
+# O que falta, entao, nao e o arquivo: e o ENDERECO dele. Clicar no icone de
+# baixar do leitor de PDF resolveria para quem esta na frente da tela, mas
+# aquele leitor e um visualizador do navegador, com barra propria fora do
+# documento, e nao uma pagina que se possa ler e clicar por seletor.
+#
+# O faro nao clica em nada e nao navega. Ele apenas ANOTA o que o navegador ja
+# viu passar: toda resposta com cara de arquivo e toda aba que se abriu. Se o
+# endereco passou, ele fica anotado, e ai o arquivo se pede de novo pela
+# sessao, que e o caminho que o Portal de Servicos ja usa desde outubro.
+# --------------------------------------------------------------------------
+
+TIPOS_DE_ARQUIVO = (
+    "application/pdf",
+    "application/octet-stream",
+    "application/zip",
+    "application/x-zip",
+)
+
+FINAIS_DE_ARQUIVO = (".pdf", ".zip")
+
+
+def parece_arquivo(url: str, cabecalhos: dict) -> bool:
+    """A resposta tem cara de arquivo para guardar, e nao de pagina?
+
+    Tres sinais, e qualquer um basta. O tipo declarado, que e o mais confiavel
+    quando vem; a disposicao `attachment`, que e o portal dizendo "isto se
+    baixa"; e a terminacao do caminho, que e o unico sinal quando o servidor
+    nao declara tipo nenhum.
+    """
+    tipo = (cabecalhos.get("content-type") or "").split(";")[0].strip().lower()
+    if tipo in TIPOS_DE_ARQUIVO:
+        return True
+    disposicao = (cabecalhos.get("content-disposition") or "").lower()
+    if "attachment" in disposicao:
+        return True
+    caminho = (url or "").split("?")[0].split("#")[0].lower()
+    return caminho.endswith(FINAIS_DE_ARQUIVO)
+
+
+def resumo_do_endereco(url: str) -> str:
+    """O endereco sem os numeros longos, para poder ser dito em voz alta.
+
+    O numero do processo viaja no caminho e na busca de quase todo endereco de
+    portal, e o relato desta casa vai parar em conversa. Entao o que se imprime
+    e a FORMA do endereco, nao o endereco: o servidor, o caminho, e no lugar de
+    cada corrida de sete ou mais digitos, reticencias. O endereco inteiro fica
+    na memoria, que e onde ele serve.
+    """
+    import re as _re
+    from urllib.parse import urlparse
+
+    try:
+        partes = urlparse(url or "")
+    except Exception:
+        return "(endereco ilegivel)"
+    if not partes.netloc:
+        return "(endereco sem servidor)"
+    caminho = _re.sub(r"\d{7,}", "...", partes.path or "/")
+    busca = " ?..." if partes.query else ""
+    return f"{partes.scheme}://{partes.netloc}{caminho}{busca}"
+
+
+class FarejadorDeArquivos:
+    """Anota os enderecos de arquivo que o navegador viu passar.
+
+    Nao clica, nao navega, nao le corpo de resposta. Ler o corpo aqui seria
+    gastar a resposta que o navegador ainda vai usar; o que se anota e so o
+    endereco, e o arquivo se pede de novo depois, pela sessao.
+    """
+
+    def __init__(self, contexto: Any) -> None:
+        self.contexto = contexto
+        self.achados: list[dict] = []
+        self._vistos: set[str] = set()
+        self._paginas: list[Any] = []
+        self._ligado = False
+
+    # ---- ligar e desligar -------------------------------------------------
+
+    def ligar(self) -> bool:
+        if self._ligado or self.contexto is None:
+            return self._ligado
+        try:
+            self.contexto.on("response", self._anotar_resposta)
+            self.contexto.on("page", self._anotar_pagina)
+        except Exception:
+            return False
+        for pagina in self._abertas():
+            self._paginas.append(pagina)
+        self._ligado = True
+        return True
+
+    def desligar(self) -> None:
+        if not self._ligado:
+            return
+        for evento, tratador in (("response", self._anotar_resposta),
+                                 ("page", self._anotar_pagina)):
+            try:
+                self.contexto.remove_listener(evento, tratador)
+            except Exception:
+                pass
+        self._ligado = False
+
+    def _abertas(self) -> list:
+        try:
+            return list(self.contexto.pages)
+        except Exception:
+            return []
+
+    # ---- o que se anota ---------------------------------------------------
+
+    def _guardar(self, url: str, origem: str, tipo: str = "") -> None:
+        if not url or url in self._vistos:
+            return
+        if url.lower().startswith(("about:", "chrome:", "data:")):
+            return
+        self._vistos.add(url)
+        self.achados.append({"url": url, "origem": origem, "tipo": tipo})
+
+    def _anotar_resposta(self, resposta: Any) -> None:
+        try:
+            url = resposta.url
+            cabecalhos = resposta.headers or {}
+        except Exception:
+            return
+        try:
+            if not parece_arquivo(url, cabecalhos):
+                return
+        except Exception:
+            return
+        tipo = (cabecalhos.get("content-type") or "").split(";")[0].strip()
+        self._guardar(url, "resposta", tipo)
+
+    def _anotar_pagina(self, pagina: Any) -> None:
+        self._paginas.append(pagina)
+
+    def _colher_das_abas(self) -> None:
+        """Uma aba parada num PDF tem o endereco dele na barra.
+
+        Quando o navegador abre o arquivo no leitor embutido em vez de baixar,
+        nao ha evento de download nenhum, mas a aba fica com o endereco do
+        arquivo. E so perguntar a ela, e por isso isto e perguntado tarde: no
+        instante em que a aba nasce o endereco dela ainda e `about:blank`.
+        """
+        for pagina in list(self._paginas) + self._abertas():
+            try:
+                url = pagina.url
+            except Exception:
+                continue
+            caminho = (url or "").split("?")[0].lower()
+            if caminho.endswith(FINAIS_DE_ARQUIVO):
+                self._guardar(url, "aba aberta")
+
+    # ---- o que se colhe ---------------------------------------------------
+
+    def enderecos(self) -> list[str]:
+        self._colher_das_abas()
+        return [achado["url"] for achado in self.achados]
+
+    def relatar(self, recuo: str = "    ") -> None:
+        self._colher_das_abas()
+        achados = self.achados
+        if not achados:
+            print(f"{recuo}O navegador nao viu endereco de arquivo nenhum "
+                  "passar.")
+            return
+        print(f"{recuo}Enderecos de arquivo que o navegador viu passar "
+              f"({len(achados)}):")
+        for achado in achados:
+            tipo = f" [{achado['tipo']}]" if achado.get("tipo") else ""
+            print(f"{recuo}  ({achado['origem']}){tipo} "
+                  f"{resumo_do_endereco(achado['url'])}")

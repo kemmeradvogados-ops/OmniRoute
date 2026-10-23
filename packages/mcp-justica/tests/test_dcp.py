@@ -5977,9 +5977,9 @@ ENDERECO_DO_QUADRO = "https://www3.tjrj.jus.br/consultaprocessual/#/consultaport
 
 
 class _NumeroFalso:
-    def __init__(self, digitos="00047245120138190078"):
+    def __init__(self, digitos="00000018620138190078"):
         self.apenas_digitos = digitos
-        self.formatado = "0004724-51.2013.8.19.0078"
+        self.formatado = "0000001-86.2013.8.19.0078"
 
 
 class _LinhaDeResultado:
@@ -6034,7 +6034,7 @@ def test_a_linha_que_confere_e_a_unica_escolhida():
     de outra pessoa, e isso nao se desfaz."""
     from justica_mcp.dcp import processos_na_lista
 
-    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    certa = _LinhaDeResultado("0000001-86.2013.8.19.0078")
     linhas = [
         _LinhaDeResultado("0011111-11.2015.8.19.0001"),
         certa,
@@ -6048,14 +6048,14 @@ def test_numero_que_e_pedaco_de_outro_nao_confere():
     """Comparacao exata, nunca por conter."""
     from justica_mcp.dcp import processos_na_lista
 
-    linhas = [_LinhaDeResultado("10004724-51.2013.8.19.00789")]
+    linhas = [_LinhaDeResultado("10000001-86.2013.8.19.00789")]
     assert processos_na_lista(_QuadroComLista(linhas), _NumeroFalso()) == []
 
 
 def test_linha_invisivel_nao_entra():
     from justica_mcp.dcp import processos_na_lista
 
-    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078", visivel=False)]
+    linhas = [_LinhaDeResultado("0000001-86.2013.8.19.0078", visivel=False)]
     assert processos_na_lista(_QuadroComLista(linhas), _NumeroFalso()) == []
 
 
@@ -6064,7 +6064,7 @@ def test_a_lista_e_ESPERADA_e_nao_olhada_uma_vez():
     classe de defeito ja apareceu seis vezes neste mesmo portal."""
     from justica_mcp.dcp import esperar_a_lista_de_resultado
 
-    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    certa = _LinhaDeResultado("0000001-86.2013.8.19.0078")
 
     class _QuadroQueDemora(_QuadroComLista):
         def __init__(self):
@@ -6095,7 +6095,7 @@ def test_sem_linha_nenhuma_a_busca_nao_levanta_erro():
 def test_abrir_o_processo_passa_pela_trava_antes_de_clicar():
     from justica_mcp.dcp import ALVO_DO_RESULTADO, abrir_o_processo_da_lista
 
-    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    certa = _LinhaDeResultado("0000001-86.2013.8.19.0078")
     guarda = _GuardaQueLibera()
     resposta = abrir_o_processo_da_lista(
         _QuadroComLista([certa]), guarda, _NumeroFalso(),
@@ -6111,8 +6111,8 @@ def test_mais_de_uma_linha_com_o_mesmo_numero_e_dita_em_voz_alta(capsys):
     Abre a primeira e avisa, para o advogado conferir se era a que queria."""
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
-    duas = [_LinhaDeResultado("0004724-51.2013.8.19.0078"),
-            _LinhaDeResultado("0004724-51.2013.8.19.0078")]
+    duas = [_LinhaDeResultado("0000001-86.2013.8.19.0078"),
+            _LinhaDeResultado("0000001-86.2013.8.19.0078")]
     resposta = abrir_o_processo_da_lista(
         _QuadroComLista(duas), _GuardaQueLibera(), _NumeroFalso(),
         ENDERECO_DA_PAGINA, segundos=1)
@@ -6125,7 +6125,7 @@ def test_mais_de_uma_linha_com_o_mesmo_numero_e_dita_em_voz_alta(capsys):
 def test_clique_que_falha_e_relatado_e_nao_derruba():
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
-    linha = _LinhaDeResultado("0004724-51.2013.8.19.0078", erro_ao_clicar=True)
+    linha = _LinhaDeResultado("0000001-86.2013.8.19.0078", erro_ao_clicar=True)
     resposta = abrir_o_processo_da_lista(
         _QuadroComLista([linha]), _GuardaQueLibera(), _NumeroFalso(),
         ENDERECO_DA_PAGINA, segundos=1)
@@ -6186,7 +6186,7 @@ def test_a_linha_e_achada_mesmo_sem_ser_botao_nem_ligacao():
     """Celula de `p-datatable` com tratador de clique nao e `button` nem `a`."""
     from justica_mcp.dcp import processos_na_lista
 
-    celula = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    celula = _LinhaDeResultado("0000001-86.2013.8.19.0078")
     quadro = _QuadroQueMarca(linhas=[], marcaveis=[celula])
     assert processos_na_lista(quadro, _NumeroFalso()) == [celula]
     assert quadro.marcou == 1
@@ -6195,7 +6195,7 @@ def test_a_linha_e_achada_mesmo_sem_ser_botao_nem_ligacao():
 def test_sem_marca_nenhuma_cai_no_caminho_de_reserva():
     from justica_mcp.dcp import processos_na_lista
 
-    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    certa = _LinhaDeResultado("0000001-86.2013.8.19.0078")
     quadro = _QuadroQueMarca(linhas=[certa], marcaveis=[])
     assert processos_na_lista(quadro, _NumeroFalso()) == [certa]
 
@@ -6203,7 +6203,7 @@ def test_sem_marca_nenhuma_cai_no_caminho_de_reserva():
 def test_script_barrado_nao_impede_o_caminho_de_reserva():
     from justica_mcp.dcp import processos_na_lista
 
-    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    certa = _LinhaDeResultado("0000001-86.2013.8.19.0078")
     quadro = _QuadroQueMarca(linhas=[certa], marcaveis=[], erro=True)
     assert processos_na_lista(quadro, _NumeroFalso()) == [certa]
 
@@ -6244,7 +6244,7 @@ TELA_DA_LISTA = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
   <tbody class="p-datatable-tbody">
     <tr><td class="ng-tns-c816854197-0">0011111-11.2015.8.19.0001</td>
         <td>Comarca A</td><td>Classe A</td></tr>
-    <tr><td class="ng-tns-c816854197-0">0004724-51.2013.8.19.0078</td>
+    <tr><td class="ng-tns-c816854197-0">0000001-86.2013.8.19.0078</td>
         <td>Comarca B</td><td>Classe B</td></tr>
     <tr><td class="ng-tns-c816854197-0">0022222-22.2016.8.19.0002</td>
         <td>Comarca C</td><td>Classe C</td></tr>
@@ -6286,7 +6286,7 @@ def test_na_tela_de_verdade_so_a_CELULA_do_numero_e_marcada():
     """Com `textContent`, `table`, `tbody`, `tr` e `td` casariam todos, e o
     clique iria parar na tabela inteira. Com texto proprio, so a celula."""
     quantas, etiquetas, _ = _marcar_em_navegador(
-        TELA_DA_LISTA, "00047245120138190078")
+        TELA_DA_LISTA, "00000018620138190078")
     assert quantas == 1
     assert etiquetas == ["td"]
 
@@ -6306,7 +6306,7 @@ def test_a_trava_e_consultada_com_o_endereco_da_PAGINA_e_nao_do_quadro():
     clique, com a lista na tela e a linha certa ja encontrada."""
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
-    certa = _LinhaDeResultado("0004724-51.2013.8.19.0078")
+    certa = _LinhaDeResultado("0000001-86.2013.8.19.0078")
     quadro = _QuadroComLista([certa])
     quadro.url = ENDERECO_DO_QUADRO
 
@@ -6938,9 +6938,9 @@ def test_a_recusa_diz_o_TIPO_do_endereco_e_nao_o_endereco():
 
     assert "nenhum" in recado_do_endereco([])
     recado = recado_do_endereco(
-        [{"url": "https://www3.tjrj.jus.br/visproc/pdf/0004724512013"}])
+        [{"url": "https://www3.tjrj.jus.br/visproc/pdf/0000001862013"}])
     assert "'https'" in recado
-    assert "0004724" not in recado
+    assert "0000001" not in recado
     assert "'blob'" in recado_do_endereco([{"url": "blob:https://x/abc"}])
 
 
@@ -7315,7 +7315,7 @@ class _QuadroQueDescreve(_QuadroComLista):
 def test_a_linha_escolhida_e_a_que_o_operador_pediu():
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
-    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078") for _ in range(5)]
+    linhas = [_LinhaDeResultado("0000001-86.2013.8.19.0078") for _ in range(5)]
     resposta = abrir_o_processo_da_lista(
         _QuadroQueDescreve(linhas), _GuardaQueLibera(), _NumeroFalso(),
         ENDERECO_DA_PAGINA, segundos=1, escolhida=3)
@@ -7330,7 +7330,7 @@ def test_linha_fora_da_faixa_nao_abre_nada_e_diz_quantas_ha():
     """Abrir outra por engano seria abrir o processo errado."""
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
-    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078") for _ in range(5)]
+    linhas = [_LinhaDeResultado("0000001-86.2013.8.19.0078") for _ in range(5)]
     resposta = abrir_o_processo_da_lista(
         _QuadroQueDescreve(linhas), _GuardaQueLibera(), _NumeroFalso(),
         ENDERECO_DA_PAGINA, segundos=1, escolhida=9)
@@ -7344,7 +7344,7 @@ def test_linha_fora_da_faixa_nao_abre_nada_e_diz_quantas_ha():
 def test_as_linhas_sao_DESCRITAS_quando_ha_mais_de_uma(capsys):
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
-    linhas = [_LinhaDeResultado("0004724-51.2013.8.19.0078") for _ in range(3)]
+    linhas = [_LinhaDeResultado("0000001-86.2013.8.19.0078") for _ in range(3)]
     descricoes = [["Comarca A", "1a Vara"], ["Comarca B", "2a Vara"],
                   ["Comarca C", "3a Vara"]]
     abrir_o_processo_da_lista(
@@ -7363,7 +7363,7 @@ def test_uma_linha_so_nao_vira_aviso(capsys):
     """Aviso que aparece sempre deixa de ser aviso."""
     from justica_mcp.dcp import abrir_o_processo_da_lista
 
-    uma = [_LinhaDeResultado("0004724-51.2013.8.19.0078")]
+    uma = [_LinhaDeResultado("0000001-86.2013.8.19.0078")]
     abrir_o_processo_da_lista(
         _QuadroQueDescreve(uma), _GuardaQueLibera(), _NumeroFalso(),
         ENDERECO_DA_PAGINA, segundos=1)
@@ -7465,8 +7465,8 @@ def test_o_relato_do_paginador_passa_pelo_filtro():
     from justica_mcp.dcp import relatar_o_paginador
 
     linha = relatar_o_paginador(
-        {"textoDoPaginador": "Processo 0004724-51.2013.8.19.0078"})
-    assert "0004724" not in linha
+        {"textoDoPaginador": "Processo 0000001-86.2013.8.19.0078"})
+    assert "0000001" not in linha
     assert "<numero de processo>" in linha
 
 
@@ -7887,12 +7887,12 @@ def test_o_endereco_da_aba_na_recusa_vai_sem_parametros():
     from justica_mcp.dcp import ConsultaIndisponivel, aba_do_portal_viva
 
     outra = _AbaQueMorre(
-        "https://www.tjrj.jus.br/inicio?numeroProcesso=00047245120138190078")
+        "https://www.tjrj.jus.br/inicio?numeroProcesso=00000018620138190078")
     morta = _AbaQueMorre("https://www3.tjrj.jus.br/portalservicos/#/consultar",
                          fechada=True, vizinhas=[outra])
     with pytest.raises(ConsultaIndisponivel) as erro:
         aba_do_portal_viva(morta, 1)
-    assert "00047245120138190078" not in str(erro.value)
+    assert "00000018620138190078" not in str(erro.value)
 
 
 def test_o_reabrir_procura_a_aba_do_portal_em_vez_de_reusar_a_capturada():
@@ -7928,10 +7928,10 @@ def test_o_endereco_do_objeto_sai_sem_parametros():
 
     class _Quadro:
         url = ("https://www3.tjrj.jus.br/portalservicos/#/consultar"
-               "?numeroProcesso=00047245120138190078")
+               "?numeroProcesso=00000018620138190078")
 
     texto = endereco_do_objeto(_Quadro())
-    assert "00047245120138190078" not in texto
+    assert "00000018620138190078" not in texto
     assert "portalservicos" in texto
 
 

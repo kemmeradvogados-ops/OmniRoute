@@ -38,7 +38,7 @@ TELA_COM_DADO = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 <form>
   <label for="numeroProcesso">Numero do processo</label>
   <input id="numeroProcesso" name="numeroProcesso" type="text"
-         value="0004724512013">
+         value="0000001862013">
   <input id="sufixo" type="text" value="0078">
   <input id="unica" name="tipoNumeracao" type="radio" checked>
   <label for="unica">Unica</label>
@@ -47,13 +47,13 @@ TELA_COM_DADO = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 </form>
 <table id="tabelaResultado">
   <tr><th>Processo</th><th>Autor</th><th>Reu</th></tr>
-  <tr><td>0004724-51.2013.8.19.0078</td><td>Fulano de Tal</td>
+  <tr><td>0000001-86.2013.8.19.0078</td><td>Fulano de Tal</td>
       <td>Banco Exemplo S/A</td></tr>
 </table>
 <ul><li>15/06/2019 - Sentenca publicada para Fulano de Tal</li></ul>
 <p>Comarca de Niteroi, 2a Vara Civel</p>
 <div class="p-datatable-emptymessage">Nenhum registro encontrado</div>
-<a href="/consultaprocessual/autos?numero=0004724-51.2013.8.19.0078">Ver autos</a>
+<a href="/consultaprocessual/autos?numero=0000001-86.2013.8.19.0078">Ver autos</a>
 <button aria-label="Baixar o processo atual em PDF">download</button>
 </body></html>"""
 
@@ -154,8 +154,8 @@ def test_a_tela_gravada_nao_leva_dado_de_cliente(gravacao):
     texto = json.dumps(texto, ensure_ascii=False)
 
     for proibido in ("Fulano", "Banco Exemplo", "Niteroi", "2a Vara",
-                     "Sentenca publicada", "0004724", "8.19.0078",
-                     "0004724512013"):
+                     "Sentenca publicada", "0000001", "8.19.0078",
+                     "0000001862013"):
         assert proibido not in texto, proibido
 
 
@@ -211,7 +211,7 @@ def test_a_impressao_por_parte_cabe_numa_conversa(gravacao, capsys):
     saida = capsys.readouterr().out
     assert "#numeroProcesso" in saida
     assert "preenchido com 13 caractere(s)" in saida
-    assert "0004724512013" not in saida
+    assert "0000001862013" not in saida
 
     assert mostrar_tela(caminho, "mensagens") == 0
     assert "Nenhum registro encontrado" in capsys.readouterr().out

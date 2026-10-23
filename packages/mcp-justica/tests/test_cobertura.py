@@ -57,15 +57,15 @@ def _indice_com(tmp_path, arquivos):
     """Monta a pasta e devolve um indice apontando para ela."""
     from justica_mcp.core.acervo import Indice
 
-    pasta = tmp_path / "00047245120138190078"
+    pasta = tmp_path / "00000018620138190078"
     pasta.mkdir(parents=True, exist_ok=True)
     for nome, folhas in arquivos.items():
         (pasta / nome).write_bytes(pdf_com_textos(["folha com texto aqui"] * folhas))
-    return Indice(numero="0004724-51.2013.8.19.0078", pasta=pasta)
+    return Indice(numero="0000001-86.2013.8.19.0078", pasta=pasta)
 
 
 def N(pagina):
-    return f"00047245120138190078-pagina{pagina}-doc.pdf"
+    return f"00000018620138190078-pagina{pagina}-doc.pdf"
 
 
 def test_a_pagina_do_processo_sai_do_nome_do_arquivo():

@@ -55,7 +55,7 @@ def _pasta_com(tmp_path, monkeypatch, arquivos):
     """Monta a pasta de copias do processo e aponta o acervo para ela."""
     from justica_mcp import pecas
 
-    pasta = tmp_path / "00047245120138190078"
+    pasta = tmp_path / "00000018620138190078"
     pasta.mkdir(parents=True, exist_ok=True)
     for nome, textos in arquivos.items():
         (pasta / nome).write_bytes(pdf_com_textos(textos))
@@ -63,8 +63,8 @@ def _pasta_com(tmp_path, monkeypatch, arquivos):
     return pasta
 
 
-DIGITOS = "00047245120138190078"
-FORMATADO = "0004724-51.2013.8.19.0078"
+DIGITOS = "00000018620138190078"
+FORMATADO = "0000001-86.2013.8.19.0078"
 
 
 def test_a_peca_sai_do_nome_do_arquivo():

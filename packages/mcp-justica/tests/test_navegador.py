@@ -97,3 +97,160 @@ def test_a_dependencia_corre_num_sentido_so():
         if isinstance(no, ast.ImportFrom) and (no.level or 0) > 0 and no.module
     })
     assert do_pacote == ["core.estado"], do_pacote
+
+
+# --------------------------------------------------------------------------
+# Faro de arquivos
+# --------------------------------------------------------------------------
+
+
+class _RespostaFalsa:
+    def __init__(self, url, cabecalhos=None):
+        self.url = url
+        self.headers = cabecalhos or {}
+
+
+class _PaginaFalsa:
+    def __init__(self, url):
+        self.url = url
+
+
+class _ContextoFalso:
+    """Um contexto que so sabe guardar ouvintes e devolver abas."""
+
+    def __init__(self, paginas=()):
+        self.pages = list(paginas)
+        self.ouvintes: dict = {}
+
+    def on(self, evento, tratador):
+        self.ouvintes.setdefault(evento, []).append(tratador)
+
+    def remove_listener(self, evento, tratador):
+        self.ouvintes.get(evento, []).remove(tratador)
+
+    def emitir(self, evento, carga):
+        for tratador in list(self.ouvintes.get(evento, [])):
+            tratador(carga)
+
+
+def test_parece_arquivo_pelo_tipo_declarado():
+    assert navegador.parece_arquivo(
+        "https://x.jus.br/a", {"content-type": "application/pdf;charset=utf-8"})
+
+
+def test_parece_arquivo_pela_disposicao():
+    assert navegador.parece_arquivo(
+        "https://x.jus.br/a", {"content-disposition": "attachment; file=1"})
+
+
+def test_parece_arquivo_pela_terminacao_mesmo_sem_tipo():
+    """Servidor que nao declara tipo nenhum ainda diz o que e pelo caminho."""
+    assert navegador.parece_arquivo("https://x.jus.br/autos.PDF?t=1", {})
+
+
+def test_pagina_de_portal_nao_parece_arquivo():
+    assert not navegador.parece_arquivo(
+        "https://x.jus.br/1g/listView.seam", {"content-type": "text/html"})
+
+
+def test_resumo_do_endereco_apaga_os_numeros_longos():
+    """O numero do processo viaja no caminho, e o relato vai parar em conversa."""
+    resumo = navegador.resumo_do_endereco(
+        "https://docs.x.jus.br/arquivo/08090908820238190001/autos.pdf?token=a")
+    assert "0809090" not in resumo
+    assert resumo.startswith("https://docs.x.jus.br/arquivo/.../autos.pdf")
+    assert "token" not in resumo
+
+
+def test_resumo_do_endereco_aguenta_lixo():
+    assert navegador.resumo_do_endereco("") == "(endereco sem servidor)"
+
+
+def test_o_faro_anota_a_resposta_com_cara_de_arquivo():
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    assert faro.ligar()
+    contexto.emitir("response", _RespostaFalsa(
+        "https://x.jus.br/a.pdf", {"content-type": "application/pdf"}))
+    contexto.emitir("response", _RespostaFalsa(
+        "https://x.jus.br/pagina", {"content-type": "text/html"}))
+    assert faro.enderecos() == ["https://x.jus.br/a.pdf"]
+
+
+def test_o_faro_nao_anota_o_mesmo_endereco_duas_vezes():
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    for _ in range(3):
+        contexto.emitir("response", _RespostaFalsa(
+            "https://x.jus.br/a.pdf", {"content-type": "application/pdf"}))
+    assert len(faro.enderecos()) == 1
+
+
+def test_o_faro_colhe_o_endereco_da_aba_parada_num_pdf():
+    """Quando o navegador ABRE o arquivo em vez de baixar, nao ha evento algum.
+
+    O que ha e uma aba com o endereco do arquivo na barra, e e ela que responde.
+    """
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    nova = _PaginaFalsa("about:blank")
+    contexto.emitir("page", nova)
+    # A aba nasce em branco e so depois recebe o endereco do arquivo.
+    nova.url = "https://x.jus.br/gerado/autos.pdf"
+    assert faro.enderecos() == ["https://x.jus.br/gerado/autos.pdf"]
+
+
+def test_o_faro_descarta_endereco_que_nao_se_pode_pedir():
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    for endereco in ("about:blank", "chrome://downloads", "data:application/pdf,x"):
+        contexto.emitir("response", _RespostaFalsa(
+            endereco, {"content-type": "application/pdf"}))
+    assert faro.enderecos() == []
+
+
+def test_o_faro_desligado_para_de_anotar():
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    faro.desligar()
+    contexto.emitir("response", _RespostaFalsa(
+        "https://x.jus.br/a.pdf", {"content-type": "application/pdf"}))
+    assert faro.enderecos() == []
+    assert contexto.ouvintes["response"] == []
+
+
+def test_o_faro_nao_le_o_corpo_da_resposta():
+    """Guarda de fonte: ler o corpo aqui gastaria a resposta do navegador."""
+    import ast
+    import inspect
+
+    fonte = inspect.getsource(navegador.FarejadorDeArquivos)
+    chamadas = {
+        no.func.attr for no in ast.walk(ast.parse(fonte))
+        if isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+    }
+    assert "body" not in chamadas
+    assert "text" not in chamadas
+
+
+def test_o_faro_relata_sem_soltar_o_endereco_inteiro(capsys):
+    contexto = _ContextoFalso()
+    faro = navegador.FarejadorDeArquivos(contexto)
+    faro.ligar()
+    contexto.emitir("response", _RespostaFalsa(
+        "https://x.jus.br/a/08090908820238190001/autos.pdf?t=segredo",
+        {"content-type": "application/pdf"}))
+    faro.relatar()
+    saida = capsys.readouterr().out
+    assert "0809090" not in saida
+    assert "segredo" not in saida
+    assert "autos.pdf" in saida
+
+
+def test_o_faro_diz_quando_nao_viu_nada(capsys):
+    navegador.FarejadorDeArquivos(_ContextoFalso()).relatar()
+    assert "nenhum" in capsys.readouterr().out.lower()

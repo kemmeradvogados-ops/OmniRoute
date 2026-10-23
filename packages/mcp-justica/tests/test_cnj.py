@@ -54,7 +54,7 @@ def test_origem_zerada_e_segunda_instancia():
 
 
 def test_origem_com_unidade_e_primeira_instancia():
-    n = parse_numero("1037850-62.2023.8.26.0100")
+    n = parse_numero("1000001-56.2023.8.26.0100")
     assert n.grau == 1
     assert n.grau_nome == "primeira instancia"
 

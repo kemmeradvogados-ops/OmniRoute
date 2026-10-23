@@ -2259,7 +2259,7 @@ def test_sistema_sem_consulta_e_recusado_sem_tocar_no_portal(capsys, monkeypatch
     # 30/09/2026, quando a consulta autenticada dele foi escrita a partir do
     # caminho que o operador fotografou.
     saida = consultar_processo("https://exemplo", "TJRJ", "projudi",
-                               "1037850-62.2023.8.26.0100")
+                               "1000001-56.2023.8.26.0100")
     assert saida == 1
     erro = capsys.readouterr().err
     assert "NAO IMPLEMENTADO" in erro
@@ -5019,8 +5019,8 @@ def test_numero_de_processo_nao_e_codigo():
     vinte digitos, e e a regra dos digitos que o pega."""
     from justica_mcp.portal import parece_codigo
 
-    assert parece_codigo("0854091-62.2024.8.19.0001") is False
-    assert parece_codigo("08540916220248190001") is False
+    assert parece_codigo("0809090-88.2023.8.19.0001") is False
+    assert parece_codigo("08090908820238190001") is False
 
 
 def test_cadastro_de_pessoa_nao_e_codigo():
@@ -5060,19 +5060,19 @@ def test_os_codigos_entram_e_o_resto_e_so_contado():
     from justica_mcp.portal import opcoes_de_escolha
 
     resumo = opcoes_de_escolha(_ListaDeEscolha(
-        ["DCP", "EPROC", "0854091-62.2024.8.19.0001", "Fulano de Tal"]))
+        ["DCP", "EPROC", "0809090-88.2023.8.19.0001", "Fulano de Tal"]))
     assert "DCP|EPROC" in resumo
     assert resumo.startswith("4:")
     assert "2 sem forma de codigo, nao impressa(s)" in resumo
-    assert "0854091" not in resumo and "Fulano" not in resumo
+    assert "0809090" not in resumo and "Fulano" not in resumo
 
 
 def test_lista_so_de_dados_nao_imprime_nenhum_valor():
     from justica_mcp.portal import opcoes_de_escolha
 
     resumo = opcoes_de_escolha(_ListaDeEscolha(
-        ["0854091-62.2024.8.19.0001", "0000001-11.2020.8.19.0002"]))
-    assert "0854091" not in resumo
+        ["0809090-88.2023.8.19.0001", "0000001-11.2020.8.19.0002"]))
+    assert "0809090" not in resumo
     assert "2 sem forma de codigo" in resumo
 
 
@@ -7249,8 +7249,8 @@ def _arquivo_de_consulta(tmp_path, estrutura=None, leitura=None):
     import json
 
     dados = {
-        "numero": "0004724-51.2013.8.19.0078",
-        "principais": {"Processo": "0004724-51.2013.8.19.0078",
+        "numero": "0000001-86.2013.8.19.0078",
+        "principais": {"Processo": "0000001-86.2013.8.19.0078",
                        "Comarca": "Niteroi"},
         "partes": [{"tipo": "Autor", "nome": "Fulano de Tal"},
                    {"tipo": "Reu", "nome": "Banco Exemplo S/A"}],
@@ -7304,7 +7304,7 @@ def test_estrutura_nao_imprime_dado_de_cliente(tmp_path, capsys):
 
     mostrar_estrutura(str(_arquivo_de_consulta(tmp_path)))
     saida = capsys.readouterr().out
-    for proibido in ("Fulano", "Banco Exemplo", "Niteroi", "0004724",
+    for proibido in ("Fulano", "Banco Exemplo", "Niteroi", "0000001",
                      "8.19.0078", "Juntada de peticao", "10/02/2014"):
         assert proibido not in saida, proibido
 
@@ -7318,9 +7318,9 @@ def test_estrutura_mascara_numero_que_veio_dentro_do_proprio_bloco(tmp_path, cap
         "tabelas": [],
         "familias": {},
         "rotulos_candidatos": [],
-        "secoes": [{"nivel": "h1", "titulo": "Processo 0004724-51.2013.8.19.0078"}],
+        "secoes": [{"nivel": "h1", "titulo": "Processo 0000001-86.2013.8.19.0078"}],
         "botoes": [{"texto": "Abrir", "quantas": 1,
-                    "rotulos": ["Autos de 0004724-51.2013.8.19.0078"]}],
+                    "rotulos": ["Autos de 0000001-86.2013.8.19.0078"]}],
         "rotulos_lidos": [],
         "diagnostico_dos_blocos": {},
         "caixas_de_movimentacao": [],
@@ -7328,7 +7328,7 @@ def test_estrutura_mascara_numero_que_veio_dentro_do_proprio_bloco(tmp_path, cap
     })
     mostrar_estrutura(str(alvo))
     saida = capsys.readouterr().out
-    assert "0004724" not in saida
+    assert "0000001" not in saida
     assert "<numero de processo>" in saida
 
 

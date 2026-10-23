@@ -14,7 +14,7 @@ from justica_mcp.esaj import (
     partes_do_numero, tela_para,
 )
 
-PRIMEIRA = "1037850-62.2023.8.26.0100"
+PRIMEIRA = "1000001-56.2023.8.26.0100"
 SEGUNDA = "2081722-17.2026.8.26.0000"
 
 
@@ -46,7 +46,7 @@ def test_as_duas_telas_tem_enderecos_diferentes():
 
 def test_treze_primeiros_sao_sequencial_digito_e_ano():
     treze, quatro = partes_do_numero(parse_numero(PRIMEIRA))
-    assert treze == "1037850-62.2023"
+    assert treze == "1000001-56.2023"
     assert len([c for c in treze if c.isdigit()]) == 13
 
 
@@ -138,7 +138,7 @@ def test_busca_abre_a_tela_do_grau_e_preenche_os_dois_campos():
     tela = buscar(pagina, _guarda(), parse_numero(PRIMEIRA), 10)
     assert tela is PRIMEIRO_GRAU
     assert pagina.navegou == [PRIMEIRO_GRAU.url]
-    assert pagina.campos["#numeroDigitoAnoUnificado"].valor == "1037850-62.2023"
+    assert pagina.campos["#numeroDigitoAnoUnificado"].valor == "1000001-56.2023"
     assert pagina.campos["#foroNumeroUnificado"].valor == "0100"
     assert pagina.campos["#botaoConsultarProcessos"].cliques == 1
 
@@ -256,12 +256,12 @@ def _linha(*celulas):
 
 def test_le_os_dados_principais_pelos_identificadores():
     p = _Pagina({
-        "#numeroProcesso": _El("1037850-62.2023.8.26.0100"),
+        "#numeroProcesso": _El("1000001-56.2023.8.26.0100"),
         "#classeProcesso": _El("Execução Fiscal"),
         "#varaProcesso": _El(" 1ª  Vara  "),
     })
     d = extrair_dados_principais(p)
-    assert d["numero"] == "1037850-62.2023.8.26.0100"
+    assert d["numero"] == "1000001-56.2023.8.26.0100"
     assert d["classe"] == "Execução Fiscal"
     assert d["vara"] == "1ª Vara"      # espacos colapsados
     assert d["juiz"] is None           # ausente nao vira erro nem string vazia
@@ -363,7 +363,7 @@ def test_sem_link_de_pasta_devolve_nada_em_vez_de_quebrar():
 
 def test_extracao_completa_traz_totais_e_sinalizacao():
     p = _Pagina({
-        "#numeroProcesso": _El("1037850-62.2023.8.26.0100"),
+        "#numeroProcesso": _El("1000001-56.2023.8.26.0100"),
         "#tableTodasPartes": _El(filhos={"tr": [_linha("Exeqte:", "FAZENDA")]}),
         "#containerMovimentacoes": _El(filhos={"tr": [_linha("01/01/2026", "Despacho")]}),
         "#btnExibirMovimentacoes": _El("Exibir mais"),

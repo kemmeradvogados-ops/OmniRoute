@@ -672,7 +672,7 @@ def test_o_relato_da_tela_traz_forma_e_nunca_conteudo():
 
     tela = _AutTela(campos=[])
     campo = _AutCampo(tela, "f:parte0", maxlength="7")
-    campo.valor = "0854091"
+    campo.valor = "0809090"
     tela.campos = [campo]
     assert campos_de_texto_a_vista(tela) == ["id=f:parte0 maxlength=7"]
 
@@ -1539,3 +1539,167 @@ def test_na_area_de_download_nada_e_clicado():
     fonte = inspect.getsource(portal._relatar_area_de_download)
     assert "Acao.NAVEGAR" in fonte
     assert "Acao.CLICAR" not in fonte
+
+
+# --------------------------------------------------------------------------
+# A quarta redea: pedir de novo pelo endereco que o navegador viu passar
+# --------------------------------------------------------------------------
+
+
+class _GuardaDoFaro:
+    def __init__(self, recusar=()):
+        self.permissoes: list = []
+        self.permitir_download = False
+        self.recusadas = set(recusar)
+
+    def pode_executar(self, acao, destino, url=None):
+        if (url or destino) in self.recusadas:
+            raise PermissionError("recusado")
+        return True
+
+
+class _ContextoDePedido:
+    def __init__(self):
+        self.pedidos: list = []
+
+    @property
+    def request(self):
+        return self
+
+
+class _AbaDeMentira:
+    def __init__(self, url, contexto=None):
+        self.url = url
+        self.context = contexto or _ContextoDePedido()
+
+
+class _FaroDeMentira:
+    def __init__(self, enderecos):
+        self._enderecos = list(enderecos)
+        self.relatou = False
+
+    def enderecos(self):
+        return list(self._enderecos)
+
+    def relatar(self, recuo="    "):
+        self.relatou = True
+
+
+def test_o_resgate_pelo_faro_pede_de_novo_o_que_passou(monkeypatch, tmp_path):
+    from justica_mcp import portal
+
+    pedidos = []
+
+    def _falso(contexto, url, destino, nome, sugerido=None, recuo="      "):
+        pedidos.append(url)
+        alvo = tmp_path / f"{nome}-{sugerido}"
+        alvo.write_bytes(b"%PDF-1.4")
+        return str(alvo)
+
+    monkeypatch.setattr("justica_mcp.dcp.baixar_pelo_endereco", _falso)
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira(["https://docs.tjrj.jus.br/a/autos.pdf"]),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero)
+    assert pedidos == ["https://docs.tjrj.jus.br/a/autos.pdf"]
+    assert trazido is not None and trazido.is_file()
+
+
+def test_o_resgate_pelo_faro_nao_pede_arquivo_de_fora_da_justica(monkeypatch,
+                                                                 tmp_path):
+    """Endereco que nao e do mesmo tribunal nao e dos autos, e esta funcao nao
+    e porta para buscar arquivo em servidor qualquer."""
+    from justica_mcp import portal
+
+    pedidos = []
+    monkeypatch.setattr(
+        "justica_mcp.dcp.baixar_pelo_endereco",
+        lambda *a, **k: pedidos.append(a[1]))
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira(["https://cdn.exemplo.com/autos.pdf"]),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero)
+    assert pedidos == []
+    assert trazido is None
+
+
+def test_o_resgate_pelo_faro_respeita_a_recusa_da_guarda(monkeypatch, tmp_path):
+    from justica_mcp import portal
+
+    pedidos = []
+    monkeypatch.setattr(
+        "justica_mcp.dcp.baixar_pelo_endereco",
+        lambda *a, **k: pedidos.append(a[1]))
+    endereco = "https://docs.tjrj.jus.br/a/autos.pdf"
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    trazido = portal._resgatar_pelo_faro(
+        _FaroDeMentira([endereco]),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(recusar=[endereco]), tmp_path, numero)
+    assert pedidos == []
+    assert trazido is None
+
+
+def test_o_resgate_pelo_faro_sem_endereco_nenhum_diz_isso(capsys, tmp_path):
+    from justica_mcp import portal
+
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    assert portal._resgatar_pelo_faro(
+        _FaroDeMentira([]), _AbaDeMentira("https://tjrj.pje.jus.br/x"),
+        _GuardaDoFaro(), tmp_path, numero) is None
+    assert "nao viu endereco" in capsys.readouterr().out
+
+
+def test_o_resgate_pelo_faro_nao_solta_o_endereco_inteiro(monkeypatch, capsys,
+                                                          tmp_path):
+    from justica_mcp import portal
+
+    monkeypatch.setattr("justica_mcp.dcp.baixar_pelo_endereco",
+                        lambda *a, **k: None)
+    numero = type("N", (), {"apenas_digitos": "1" * 20})()
+    portal._resgatar_pelo_faro(
+        _FaroDeMentira(
+            ["https://docs.tjrj.jus.br/a/08090908820238190001/autos.pdf?t=x"]),
+        _AbaDeMentira("https://tjrj.pje.jus.br/1g/x.seam"),
+        _GuardaDoFaro(), tmp_path, numero)
+    saida = capsys.readouterr().out
+    assert "0809090" not in saida
+    assert "autos.pdf" in saida
+
+
+def test_o_faro_e_ligado_antes_do_pedido_e_desligado_depois():
+    """Guarda de fonte: ligado DEPOIS do clique nao ve o endereco passar, e o
+    endereco passa uma vez so."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert fonte.index("farejador.ligar()") < fonte.index("expect_download")
+    assert "farejador.desligar()" in fonte
+
+
+def test_o_faro_e_consultado_antes_e_depois_da_area_de_download():
+    """Duas colheitas: a tela da Area de Download pode fazer o endereco passar."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert fonte.count("_resgatar_pelo_faro") == 2
+    primeiro = fonte.index("_resgatar_pelo_faro")
+    area = fonte.index("_relatar_area_de_download")
+    assert primeiro < area < fonte.rindex("_resgatar_pelo_faro")
+
+
+def test_o_resgate_pelo_faro_nao_clica_em_nada():
+    """Guarda de fonte: a quarta redea PEDE, nao clica."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._resgatar_pelo_faro)
+    assert ".click(" not in fonte
+    assert ".goto(" not in fonte

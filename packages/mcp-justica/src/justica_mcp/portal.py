@@ -125,10 +125,13 @@ from .navegador import (  # noqa: F401  (reexportacao deliberada)
     AREA_DA_CONSULTA,
     AREA_DO_VISUALIZADOR,
     ESCALA_PADRAO,
+    FINAIS_DE_ARQUIVO,
+    FarejadorDeArquivos,
     JANELA_LARGA,
     JANELA_SUPOSTA,
     JS_DA_MEDIDA_DO_CONTEUDO,
     ROLAGEM_ATE_O_ELEMENTO,
+    TIPOS_DE_ARQUIVO,
     VARIAVEL_PERFIL_EFEMERO,
     _medida_perguntada,
     _na_tela,
@@ -149,10 +152,12 @@ from .navegador import (  # noqa: F401  (reexportacao deliberada)
     na_tela_ou_rolar,
     nome_do_perfil,
     os_que_cabem_na_janela,
+    parece_arquivo,
     passou_da_borda,
     pasta_de_descargas,
     pasta_do_navegador,
     relatar_a_medida_do_conteudo,
+    resumo_do_endereco,
 )
 
 
@@ -314,7 +319,7 @@ def parece_codigo(valor: str) -> bool:
 
       - espaco ou pontuacao derrubam, e isso ja basta para nome de parte
         ("Fulano de Tal") e para numero de processo formatado
-        ("0854091-62.2024.8.19.0001");
+        ("0809090-88.2023.8.19.0001");
       - sequencia so de digitos com oito ou mais derruba tambem, e e esta
         linha que protege o que o tamanho nunca protegeu: numero de processo
         sem pontuacao tem vinte, cadastro de pessoa fisica tem onze, de pessoa
@@ -5732,6 +5737,59 @@ def _relatar_area_de_download(aba, guarda, segundos: int) -> None:
     print("    inventado, e nada foi clicado aqui.")
 
 
+def _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
+                        recuo: str = "    "):
+    """Tenta trazer o arquivo pelos enderecos que o navegador ja viu passar.
+
+    Nao clica e nao adivinha endereco nenhum: pede de novo, pela sessao, so o
+    que REALMENTE passou pela rede ou ficou na barra de uma aba. E pede so do
+    MESMO tribunal: um endereco de arquivo que apareca vindo de fora da
+    Justica nao e dos autos, e esta funcao nao e porta para buscar arquivo em
+    servidor qualquer.
+
+    Devolve o caminho do arquivo gravado, ou `None`.
+    """
+    from pathlib import Path as _P
+
+    from .core.guarda_navegacao import Acao, Permissao
+    from .dcp import baixar_pelo_endereco
+
+    if farejador is None:
+        return None
+    enderecos = farejador.enderecos()
+    if not enderecos:
+        print(f"{recuo}O navegador nao viu endereco de arquivo nenhum passar.")
+        return None
+
+    farejador.relatar(recuo)
+    try:
+        daqui = aba.url
+    except Exception:
+        daqui = ""
+    for endereco in enderecos:
+        if not do_mesmo_tribunal(daqui, endereco):
+            print(f"{recuo}  Fora do tribunal, nao vou pedir: "
+                  f"{resumo_do_endereco(endereco)}")
+            continue
+        guarda.permissoes.append(Permissao(
+            padrao_url=f"^{re.escape(endereco)}$",
+            descricao="arquivo que o proprio navegador trouxe, so leitura",
+            conferido_em="execucao atual",
+        ))
+        try:
+            guarda.pode_executar(Acao.NAVEGAR, endereco, url=endereco)
+        except Exception as exc:
+            print(f"{recuo}  A guarda recusou o endereco ({type(exc).__name__}).")
+            continue
+        print(f"{recuo}  Pedindo de novo: {resumo_do_endereco(endereco)}")
+        trazido = baixar_pelo_endereco(
+            aba.context, endereco, pasta, "autos",
+            sugerido=f"{numero.apenas_digitos}.pdf", recuo=f"{recuo}  ")
+        if trazido:
+            return _P(trazido)
+    return None
+
+
 def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
                          estado_local, identidade, segundos: int) -> None:
     """Pede os autos pelo painel do PJe e resgata o arquivo para o acervo.
@@ -5739,10 +5797,15 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
     A faixa vem da LINHA DO TEMPO ja percorrida ate o fim, e quem chama ja
     recusou pedir com leitura incompleta.
 
-    Tres redeas, as mesmas que o Portal de Servicos ensinou a duras penas:
-    ouvir o evento de download; se nada vier, procurar o arquivo novo na pasta
-    do navegador; e, se nem isso, dizer que o portal pode ter mandado o arquivo
-    para a Area de Download, que e uma tela PROPRIA do PJe e nao um erro.
+    Quatro redeas. As tres primeiras vieram do Portal de Servicos, a duras
+    penas: ouvir o evento de download; se nada vier, procurar o arquivo novo na
+    pasta do navegador; e, se nem isso, ir ate a Area de Download, que e uma
+    tela PROPRIA do PJe e nao um erro.
+
+    A quarta nasceu em 23/10/2026, quando as tres falharam juntas e o arquivo
+    existia assim mesmo, de 507 folhas, visto aberto no leitor de PDF do
+    navegador. Ela nao espera o arquivo CHEGAR: anota o endereco dele caso ele
+    apenas PASSE, e entao pede de novo pela sessao. Ver `FarejadorDeArquivos`.
 
     Nada e inventado sobre o terceiro caso: `/1g/AreaDeDownload/listView.seam`
     apareceu entre os caminhos de navegacao da tela dos autos em 23/10/2026.
@@ -5756,7 +5819,7 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         garantir_pasta,
     )
     from .dcp import instantaneo_da_pasta, resgatar_descarga
-    from .navegador import pasta_de_descargas
+    from .navegador import FarejadorDeArquivos, pasta_de_descargas
     from .pje import DownloadDoPJeIndisponivel, pedir_o_download_dos_autos
 
     indice = carregar_indice(numero.apenas_digitos, numero.formatado)
@@ -5766,6 +5829,12 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
 
     descargas = pasta_de_descargas()
     antes = instantaneo_da_pasta(descargas)
+    # A quarta redea. As tres primeiras esperam o arquivo CHEGAR; esta anota o
+    # endereco dele caso ele apenas PASSE, que foi o que aconteceu em
+    # 23/10/2026. Ela e ligada antes do pedido porque o endereco so passa uma
+    # vez.
+    farejador = FarejadorDeArquivos(aba.context)
+    farejador.ligar()
     guarda.permitir_download = True
     baixado = None
     try:
@@ -5780,6 +5849,7 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         except DownloadDoPJeIndisponivel as exc:
             print(f"    [PAROU] {exc}")
             _relatar_tela(aba, "PAINEL DE DOWNLOAD DO PJE")
+            farejador.desligar()
             return
         except Exception as exc:
             # O evento nao veio. Nao e conclusao de que falhou: o Chromium
@@ -5797,11 +5867,21 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         print("    Nenhum arquivo chegou pelo navegador. O PEDIDO FOI FEITO: o")
         print("    painel abriu, a faixa entrou conferida e o botao foi "
               "clicado.")
+        print("    Antes de desistir: perguntando ao faro se algum endereco "
+              "de")
+        print("    arquivo passou pela rede ou ficou na barra de alguma aba.")
+        baixado = _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero)
+
+    if baixado is None:
         print("    O PJe gera o arquivo e o deixa na AREA DE DOWNLOAD, que e "
               "uma")
-        print("    tela propria do portal. Indo ate la para relatar o que ha "
-              "nela.")
+        print("    tela propria do portal. Indo ate la, com o faro ligado.")
         _relatar_area_de_download(aba, guarda, segundos)
+        baixado = _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero)
+
+    farejador.desligar()
+
+    if baixado is None:
         estado_local.registrar(
             acao="download_dos_autos_do_pje", tribunal=identidade.tribunal,
             sistema=identidade.sistema, numero=numero.formatado,

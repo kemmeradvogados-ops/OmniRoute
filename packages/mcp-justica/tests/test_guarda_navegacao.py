@@ -285,7 +285,7 @@ def test_ler_a_pagina_do_processo_continua_permitido():
     guarda = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[])
     d = guarda.avaliar(
         Acao.LER, "table#tablePartesPrincipais",
-        url="https://esaj.tjsp.jus.br/cpopg/show.do?processo.numero=1037850-62.2023.8.26.0100",
+        url="https://esaj.tjsp.jus.br/cpopg/show.do?processo.numero=1000001-56.2023.8.26.0100",
     )
     assert d.permitido is True
 
