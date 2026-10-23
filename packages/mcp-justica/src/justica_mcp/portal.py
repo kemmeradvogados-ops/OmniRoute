@@ -4609,7 +4609,30 @@ def _relatar_tela(pagina, titulo: str) -> None:
     seletor dessa tela seria exatamente o erro que este projeto evita, entao o
     comando relata o que encontrou e para, para que o seletor real seja
     conferido em campo antes de virar codigo.
+
+    GRAVA a tela, alem de descreve-la, e isso foi acrescentado em 23/10/2026
+    depois de uma promessa que o programa nao cumpria. `--gravar-telas` anuncia
+    "Gravando a FORMA de cada tela", mas `gravar_a_tela` so era chamada em
+    `dcp.py` e num ponto de `portal.py`: o caminho do PJe nunca gravava nada.
+    O advogado rodou a consulta do PJe com a opcao ligada, os autos abriram,
+    e a tela que eu precisava para escrever o extrator nao estava no disco.
+    Descobrir isso custou a corrida inteira, que gasta uma autenticacao.
+
+    Relatar e gravar sao a MESMA ocasiao: o relato acontece exatamente onde a
+    tela interessa, porque e onde o programa para ou chega a algum lugar novo.
+    Separar as duas coisas era so o motivo de uma delas faltar.
+
+    A gravacao nunca derruba o relato: `gravar_a_tela` ja devolve `None` em vez
+    de levantar, e aqui ela entra protegida de qualquer jeito.
     """
+    try:
+        from .telas import gravar_a_tela
+
+        gravar_a_tela(pagina, sem_acento(titulo).lower().replace(" ", "-")[:60])
+    except Exception:
+        # Gravar e conveniencia de diagnostico. Falhar aqui nao pode tirar do
+        # operador o relato, que e o que ele esta esperando ver.
+        pass
     print(f"\n    ----- {titulo} -----")
     print(f"    Endereco: {endereco_sem_dado(pagina.url)}")
     try:

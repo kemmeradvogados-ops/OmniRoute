@@ -27,6 +27,7 @@ PROVENIENCIA DOS SELETORES, que nesta casa vale mais que o codigo:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 
@@ -575,3 +576,207 @@ def abrir_processo(pagina: Any, guarda: Any, numero: Any, *, aceitar_termo: bool
     except Exception:
         pass
     return aba, avisos
+
+
+# ==========================================================================
+# A LINHA DO TEMPO DOS AUTOS
+#
+# PROVENIENCIA, que nesta casa vale mais que o codigo. Tudo abaixo vem da tela
+# real dos autos do PJe do Rio de Janeiro, aberta em 23/10/2026 no endereco
+# `/1g/Processo/ConsultaProcesso/Detalhe/listProcessoCompletoAdvogado.seam`.
+#
+# O QUE A TELA DECLAROU, e e o que esta escrito aqui:
+#
+#   form#divTimeLine                        o formulario da linha do tempo
+#   div#divTimeLine:divEventosTimeLine      o conteiner dos eventos
+#   div#divTimeLine:eventosTimeLineElement
+#   input#totalPaginas  input#paginaAtual   a paginacao
+#   input#divTimeLine:chkExibirDocumentos   mostrar documentos
+#   input#divTimeLine:chkExibirMovimentos   mostrar movimentos
+#   a#divTimeLine:btnPesquisar  a#divTimeLine:btnAtualizar
+#
+# O QUE NAO ENTRA AQUI, de proposito: os identificadores dos ITENS, que a tela
+# traz na forma `divTimeLine:j_id410:0:j_id412:1:j_id423`. Esses `j_id` sao
+# gerados pelo JavaServer Faces e mudam a cada versao do portal. Escrever
+# contra eles e escrever contra areia: funcionaria hoje e falharia na proxima
+# atualizacao, em silencio, devolvendo zero eventos como se o processo nao
+# tivesse nenhum.
+#
+# Entao a leitura e ESTRUTURAL: parte do conteiner, que tem nome estavel, e
+# desce pelos filhos.
+# ==========================================================================
+
+CONTEINER_DA_LINHA_DO_TEMPO = 'div[id="divTimeLine:divEventosTimeLine"]'
+TOTAL_DE_PAGINAS = 'input[id="totalPaginas"]'
+PAGINA_ATUAL = 'input[id="paginaAtual"]'
+
+# O identificador do documento, como aparece no inicio do rotulo de cada item:
+# "128507266 - Peticao Inicial", "312678280 - Notificacao". E por ele que o
+# painel de download pede a faixa, entao e o dado que mais importa extrair.
+_IDENTIFICADOR_DO_DOCUMENTO = re.compile(r"^\s*(\d{6,})\s*-\s*(.+?)\s*$")
+
+# A data que encabeca cada grupo, na forma que a tela usa: "15 out 2026".
+_DATA_DO_GRUPO = re.compile(
+    r"^\s*(\d{1,2})\s+(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\s+(\d{4})\s*$",
+    re.IGNORECASE)
+
+_MESES = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+          "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12}
+
+
+def data_do_grupo(texto: str) -> Optional[str]:
+    """`15 out 2026` vira `2026-10-15`. Texto que nao for data devolve None."""
+    casou = _DATA_DO_GRUPO.match(texto or "")
+    if not casou:
+        return None
+    dia, mes, ano = casou.groups()
+    numero_do_mes = _MESES.get(mes[:3].lower())
+    if not numero_do_mes:
+        return None
+    return f"{ano}-{numero_do_mes:02d}-{int(dia):02d}"
+
+
+def partir_o_rotulo(texto: str) -> tuple:
+    """Devolve (identificador, descricao) de um item da linha do tempo.
+
+    Item de DOCUMENTO comeca pelo identificador: "128507266 - Peticao Inicial".
+    Item de MOVIMENTO nao tem identificador, so o texto do movimento, e sai
+    como (None, texto). Distinguir os dois importa: so documento entra na faixa
+    do download, e pedir o download de um movimento devolveria nada.
+    """
+    limpo = " ".join((texto or "").split())
+    casou = _IDENTIFICADOR_DO_DOCUMENTO.match(limpo)
+    if casou:
+        return casou.group(1), casou.group(2)
+    return None, limpo
+
+
+# O JavaScript que LE a linha do tempo. Roda no navegador porque a travessia
+# elemento a elemento pelo canal do Playwright custa uma viagem por no, e esta
+# tela tem centenas: a corrida de 23/10/2026 contou 472 elementos com
+# identificador so na pagina, antes de abrir grupo nenhum.
+#
+# Ele devolve a FORMA, nao o conteudo dos autos: rotulo de item e data de
+# grupo. Rotulo de documento no PJe e tipo de peca ("Peticao Inicial",
+# "Notificacao"), nao o texto dela.
+JS_DA_LINHA_DO_TEMPO = r"""() => {
+  const conteiner = document.querySelector(
+    'div[id="divTimeLine:divEventosTimeLine"]');
+  if (!conteiner) return null;
+
+  // O texto PROPRIO do no: o dos filhos nao entra. Sem isto o primeiro no
+  // devolveria a linha do tempo inteira numa string so, que foi exatamente o
+  // defeito que o indice do Visualizador teve em 21/10/2026.
+  const textoProprio = (no) => {
+    let saida = '';
+    for (const filho of no.childNodes) {
+      if (filho.nodeType === 3) saida += filho.nodeValue;
+    }
+    return saida.trim();
+  };
+
+  const itens = [];
+  // Ancoras sao documentos e movimentos clicaveis; divs sem ancora dentro
+  // costumam ser movimentos puros. Os dois entram, marcados.
+  for (const no of conteiner.querySelectorAll('a, div, span')) {
+    const proprio = textoProprio(no);
+    if (!proprio) continue;
+    // Um no cujo texto proprio repete o de um ancestral ja recolhido seria
+    // item duplicado; a profundidade separa pai de filho na hora de montar.
+    let profundidade = 0;
+    for (let p = no.parentElement; p && p !== conteiner; p = p.parentElement) {
+      profundidade += 1;
+    }
+    itens.push({
+      etiqueta: no.tagName.toLowerCase(),
+      texto: proprio.slice(0, 300),
+      clicavel: no.tagName.toLowerCase() === 'a',
+      endereco: (no.getAttribute && no.getAttribute('href')) || '',
+      profundidade: profundidade,
+    });
+  }
+
+  const numero = (seletor) => {
+    const campo = document.querySelector(seletor);
+    const bruto = campo ? (campo.value || '') : '';
+    const lido = parseInt(bruto, 10);
+    return Number.isNaN(lido) ? null : lido;
+  };
+
+  return {
+    itens: itens,
+    total_de_paginas: numero('input[id="totalPaginas"]'),
+    pagina_atual: numero('input[id="paginaAtual"]'),
+  };
+}"""
+
+
+def ler_a_linha_do_tempo(pagina: Any) -> dict:
+    """A linha do tempo dos autos: eventos, documentos e a paginacao.
+
+    Devolve `{"eventos": [...], "paginas": n, "pagina": n, "aviso": str}`.
+    Cada evento traz `data`, `identificador` (do documento, ou None quando for
+    movimento), `descricao` e `endereco`.
+
+    NAO devolve conteudo de peca. O rotulo do PJe e o TIPO do documento, e e
+    isso que vai no indice; o texto da peca sai do PDF, depois do download.
+
+    Quando o conteiner nao existe, devolve o aviso em vez de lista vazia:
+    "nenhum evento" e "nao achei a linha do tempo" sao conclusoes diferentes, e
+    confundi-las faria o advogado achar que o processo nao tem movimento.
+    """
+    try:
+        lido = pagina.evaluate(JS_DA_LINHA_DO_TEMPO)
+    except Exception as erro:
+        return {"eventos": [], "paginas": None, "pagina": None,
+                "aviso": f"A leitura da linha do tempo falhou ({type(erro).__name__})."}
+    if not isinstance(lido, dict):
+        return {"eventos": [], "paginas": None, "pagina": None,
+                "aviso": ("A linha do tempo nao foi encontrada nesta tela "
+                          "(div[id=\"divTimeLine:divEventosTimeLine\"]). Isso NAO "
+                          "quer dizer que o processo nao tem movimento.")}
+
+    eventos: list = []
+    data_corrente: Optional[str] = None
+    vistos: set = set()
+    for item in lido.get("itens") or []:
+        texto = (item.get("texto") or "").strip()
+        if not texto:
+            continue
+        virada = data_do_grupo(texto)
+        if virada:
+            data_corrente = virada
+            continue
+        identificador, descricao = partir_o_rotulo(texto)
+        chave = (identificador, descricao)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        eventos.append({
+            "data": data_corrente,
+            "identificador": identificador,
+            "descricao": descricao,
+            "e_documento": identificador is not None,
+            "endereco": item.get("endereco") or "",
+        })
+    return {
+        "eventos": eventos,
+        "paginas": lido.get("total_de_paginas"),
+        "pagina": lido.get("pagina_atual"),
+        "aviso": "",
+    }
+
+
+def faixa_de_identificadores(eventos: list) -> tuple:
+    """O menor e o maior identificador de documento, para o painel de download.
+
+    O painel pede "ID a partir de" e "Ate", e o advogado explicou em
+    23/10/2026 como ele e usado: cronologia crescente, do documento mais antigo
+    ao mais novo. O menor identificador e o mais antigo porque o PJe os emite
+    em ordem; `(None, None)` quando nao ha documento nenhum na lista.
+    """
+    numeros = [int(e["identificador"]) for e in eventos
+               if e.get("identificador") and str(e["identificador"]).isdigit()]
+    if not numeros:
+        return (None, None)
+    return (min(numeros), max(numeros))

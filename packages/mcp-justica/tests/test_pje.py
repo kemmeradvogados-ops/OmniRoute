@@ -830,3 +830,146 @@ def test_botao_sem_rotulo_nenhum_nao_e_escolhido():
     pagina = _PaginaDeMentira([_BotaoDeMentira(valor="LIMPAR"),
                                _BotaoDeMentira(valor=None, texto="")])
     assert achar_botao_pesquisar(pagina) is None
+
+
+# ==========================================================================
+# A LINHA DO TEMPO DOS AUTOS
+#
+# Escrita contra a tela real de 23/10/2026, a primeira em que os autos do PJe
+# do Rio de Janeiro abriram. Os identificadores de conteiner e de paginacao
+# saem dali; os dos ITENS, nao: a tela os traz como
+# `divTimeLine:j_id410:0:j_id412:1:j_id423`, e `j_id` e gerado pelo JavaServer
+# Faces e muda a cada versao do portal. Ler por eles funcionaria hoje e
+# falharia na proxima atualizacao devolvendo ZERO eventos, como se o processo
+# nao tivesse nenhum.
+# ==========================================================================
+
+
+class _PaginaComLinhaDoTempo:
+    def __init__(self, resposta):
+        self.resposta = resposta
+        self.url = "https://tjrj.pje.jus.br/1g/Processo/ConsultaProcesso/Detalhe/x.seam"
+
+    def evaluate(self, _js):
+        if isinstance(self.resposta, Exception):
+            raise self.resposta
+        return self.resposta
+
+
+def test_a_data_do_grupo_vira_data_de_verdade():
+    from justica_mcp.pje import data_do_grupo
+
+    assert data_do_grupo("15 out 2026") == "2026-10-15"
+    assert data_do_grupo("  3 jan 2025 ") == "2025-01-03"
+    assert data_do_grupo("outubro") is None
+    assert data_do_grupo("312678280 - Notificacao") is None
+
+
+def test_o_rotulo_separa_documento_de_movimento():
+    """So documento entra na faixa do download. Pedir o download de um
+    movimento devolveria nada."""
+    from justica_mcp.pje import partir_o_rotulo
+
+    assert partir_o_rotulo("128507266 - Petição Inicial") == ("128507266", "Petição Inicial")
+    assert partir_o_rotulo("312678280 - Notificação") == ("312678280", "Notificação")
+    identificador, descricao = partir_o_rotulo(
+        "MIGRADA A TRAMITAÇÃO DO PROCESSO DO SISTEMA ELETRÔNICO")
+    assert identificador is None
+    assert descricao.startswith("MIGRADA")
+
+
+def test_le_eventos_com_data_herdada_do_grupo():
+    from justica_mcp.pje import ler_a_linha_do_tempo
+
+    pagina = _PaginaComLinhaDoTempo({
+        "itens": [
+            {"etiqueta": "div", "texto": "15 out 2026", "profundidade": 1},
+            {"etiqueta": "a", "texto": "312678280 - Notificação",
+             "endereco": "/1g/doc/312678280", "profundidade": 3},
+            {"etiqueta": "div", "texto": "EXPEDIÇÃO DE OUTROS DOCUMENTOS.",
+             "profundidade": 2},
+            {"etiqueta": "div", "texto": "24 jun 2024", "profundidade": 1},
+            {"etiqueta": "a", "texto": "128507266 - Petição Inicial",
+             "endereco": "/1g/doc/128507266", "profundidade": 3},
+        ],
+        "total_de_paginas": 3, "pagina_atual": 1,
+    })
+    lido = ler_a_linha_do_tempo(pagina)
+    assert lido["paginas"] == 3 and lido["pagina"] == 1
+    assert [e["data"] for e in lido["eventos"]] == [
+        "2026-10-15", "2026-10-15", "2024-06-24"]
+    assert [e["identificador"] for e in lido["eventos"]] == [
+        "312678280", None, "128507266"]
+    assert [e["e_documento"] for e in lido["eventos"]] == [True, False, True]
+
+
+def test_conteiner_ausente_nao_vira_processo_sem_movimento():
+    """"Nenhum evento" e "nao achei a linha do tempo" sao conclusoes
+    diferentes, e confundi-las faria o advogado achar que o processo nao tem
+    movimento."""
+    from justica_mcp.pje import ler_a_linha_do_tempo
+
+    lido = ler_a_linha_do_tempo(_PaginaComLinhaDoTempo(None))
+    assert lido["eventos"] == []
+    assert "NAO quer dizer" in lido["aviso"]
+
+
+def test_falha_na_leitura_sai_como_aviso_e_nao_como_pilha():
+    from justica_mcp.pje import ler_a_linha_do_tempo
+
+    lido = ler_a_linha_do_tempo(_PaginaComLinhaDoTempo(RuntimeError("caiu")))
+    assert lido["eventos"] == []
+    assert "falhou" in lido["aviso"]
+
+
+def test_item_repetido_entra_uma_vez_so():
+    """A tela repete o rotulo em niveis diferentes da arvore: o mesmo
+    documento aparece no card e na lista de anexos."""
+    from justica_mcp.pje import ler_a_linha_do_tempo
+
+    pagina = _PaginaComLinhaDoTempo({
+        "itens": [
+            {"etiqueta": "div", "texto": "15 out 2026", "profundidade": 1},
+            {"etiqueta": "a", "texto": "312678280 - Notificação", "profundidade": 3},
+            {"etiqueta": "span", "texto": "312678280 - Notificação", "profundidade": 5},
+        ],
+        "total_de_paginas": 1, "pagina_atual": 1,
+    })
+    assert len(ler_a_linha_do_tempo(pagina)["eventos"]) == 1
+
+
+def test_a_faixa_para_o_download_sai_dos_documentos():
+    """O painel pede 'ID a partir de' e 'Ate'. Movimento nao tem identificador
+    e nao pode entrar na conta."""
+    from justica_mcp.pje import faixa_de_identificadores
+
+    eventos = [
+        {"identificador": "128507266"},
+        {"identificador": None},
+        {"identificador": "312678280"},
+        {"identificador": "130640678"},
+    ]
+    assert faixa_de_identificadores(eventos) == (128507266, 312678280)
+    assert faixa_de_identificadores([{"identificador": None}]) == (None, None)
+    assert faixa_de_identificadores([]) == (None, None)
+
+
+def test_a_leitura_nao_usa_identificador_gerado_pelo_jsf():
+    """Guarda de fonte. `j_id410`, `j_id412`, `j_id423` sao gerados pelo
+    JavaServer Faces e mudam a cada versao do portal. Ler por eles funcionaria
+    hoje e falharia depois devolvendo ZERO eventos, em silencio."""
+    from justica_mcp.pje import JS_DA_LINHA_DO_TEMPO
+
+    assert "j_id" not in JS_DA_LINHA_DO_TEMPO
+    assert "divEventosTimeLine" in JS_DA_LINHA_DO_TEMPO
+
+
+def test_o_texto_lido_e_o_PROPRIO_do_no():
+    """Guarda de fonte, e ela protege um defeito ja vivido: em 21/10/2026 o
+    indice do Visualizador devolveu a arvore inteira numa string so, porque
+    lia o texto do no COM o dos filhos."""
+    from justica_mcp.pje import JS_DA_LINHA_DO_TEMPO
+
+    assert "nodeType === 3" in JS_DA_LINHA_DO_TEMPO
+    assert "innerText" not in JS_DA_LINHA_DO_TEMPO
+    assert "textContent" not in JS_DA_LINHA_DO_TEMPO
