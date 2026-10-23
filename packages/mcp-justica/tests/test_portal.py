@@ -7969,3 +7969,74 @@ def test_o_descarte_aponta_o_caractere_invisivel_no_nome(tmp_path, monkeypatch):
     descartadas = linhas_descartadas(env)
     assert len(descartadas) == 1
     assert "invisivel" in descartadas[0][2]
+
+
+# ==========================================================================
+# MARCADOR DE TEXTO EM LINHA DE COMANDO
+#
+# O mesmo erro aconteceu TRES vezes com o mesmo advogado, e as tres foram
+# minhas: a instrucao trazia um marcador para ele substituir
+# (`C:\caminho\para`, depois `AAAAMMDD`, depois `<nome>`) e ele colou o
+# marcador. Na terceira o Windows respondeu "Operador '<' reservado para uso
+# futuro", que nao tem relacao visivel com o que ele estava fazendo.
+#
+# Marcador em linha de comando e erro a espera: a linha PARECE pronta. A
+# correcao nao e escrever o aviso maior; e o comando saber se virar.
+# ==========================================================================
+
+
+def test_a_tela_mais_recente_se_pede_por_ultima(tmp_path, monkeypatch):
+    from justica_mcp import telas as telas_mod
+
+    pasta = tmp_path / "telas"
+    pasta.mkdir()
+    for nome in ("20261022T100000Z-a.json", "20261023T030000Z-b.json"):
+        (pasta / nome).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(telas_mod, "pasta_das_telas", lambda: pasta)
+    assert telas_mod.resolver_a_tela("ultima").name == "20261023T030000Z-b.json"
+    assert telas_mod.resolver_a_tela("  ULTIMA  ").name == "20261023T030000Z-b.json"
+
+
+def test_o_nome_solto_e_procurado_na_pasta_das_telas(tmp_path, monkeypatch):
+    from justica_mcp import telas as telas_mod
+
+    pasta = tmp_path / "telas"
+    pasta.mkdir()
+    (pasta / "20261023T030000Z-autos.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(telas_mod, "pasta_das_telas", lambda: pasta)
+    achado = telas_mod.resolver_a_tela("20261023T030000Z-autos.json")
+    assert achado.is_file()
+    assert achado.parent == pasta
+
+
+def test_o_caminho_inteiro_continua_valendo(tmp_path, monkeypatch):
+    from justica_mcp import telas as telas_mod
+
+    pasta = tmp_path / "outra"
+    pasta.mkdir()
+    arquivo = pasta / "tela.json"
+    arquivo.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(telas_mod, "pasta_das_telas", lambda: tmp_path / "telas")
+    assert telas_mod.resolver_a_tela(str(arquivo)) == arquivo
+
+
+def test_aspas_coladas_junto_do_caminho_nao_quebram(tmp_path, monkeypatch):
+    """Copiar de uma listagem traz aspas junto com frequencia."""
+    from justica_mcp import telas as telas_mod
+
+    pasta = tmp_path / "telas"
+    pasta.mkdir()
+    (pasta / "tela.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(telas_mod, "pasta_das_telas", lambda: pasta)
+    assert telas_mod.resolver_a_tela('"tela.json"').is_file()
+
+
+def test_sem_tela_gravada_ultima_nao_levanta(tmp_path, monkeypatch):
+    """Recusar com recado e o certo; levantar aqui seria rastro de pilha em
+    cima de quem so queria olhar uma tela."""
+    from justica_mcp import telas as telas_mod
+
+    pasta = tmp_path / "telas"
+    pasta.mkdir()
+    monkeypatch.setattr(telas_mod, "pasta_das_telas", lambda: pasta)
+    assert not telas_mod.resolver_a_tela("ultima").is_file()

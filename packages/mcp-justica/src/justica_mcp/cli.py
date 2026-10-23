@@ -135,7 +135,8 @@ def main(argv: list[str] | None = None) -> int:
         help="imprime UMA FATIA de uma tela gravada, sem valor de campo, para "
              "poder ser colada numa conversa")
     tv.add_argument("--arquivo", required=True,
-                    help="o arquivo .json da tela (ver `justica-portal telas`)")
+                    help="'ultima' para a tela mais recente, o nome do arquivo "
+                         "solto, ou o caminho inteiro (ver `justica-portal telas`)")
     tv.add_argument("--parte", default="resumo",
                     help="resumo (padrao), botoes, campos, mensagens, tabelas "
                          "ou nos")

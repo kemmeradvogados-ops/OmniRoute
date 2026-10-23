@@ -444,6 +444,41 @@ def _cabecalho(tela: dict, titulo: str) -> list[str]:
     ]
 
 
+def resolver_a_tela(caminho: str):
+    """Aceita `ultima`, o nome solto do arquivo, ou o caminho inteiro.
+
+    Escrito em 23/10/2026 porque o mesmo erro aconteceu TRES vezes com o mesmo
+    advogado, e as tres foram minhas: a instrucao trazia um marcador de texto
+    para ele substituir (`<nome>`), e ele colou o marcador. O Windows respondeu
+    "Operador '<' reservado para uso futuro", que nao tem relacao visivel com o
+    que ele estava fazendo.
+
+    Marcador em linha de comando e erro a espera: a linha PARECE pronta. A
+    correcao nao e escrever o aviso maior; e o comando saber se virar.
+
+    `ultima` escolhe a tela mais recente pelo nome, que comeca com a marca de
+    tempo em UTC e por isso ordena sozinho. Nome solto e procurado na pasta das
+    telas. Caminho inteiro continua valendo.
+    """
+    import pathlib
+
+    bruto = (caminho or "").strip().strip('"').strip("'")
+    if bruto.lower() in ("ultima", "última", "last"):
+        gravadas = sorted(pasta_das_telas().glob("*.json"))
+        if gravadas:
+            return gravadas[-1]
+        return pasta_das_telas() / "nenhuma-tela-gravada.json"
+    alvo = pathlib.Path(bruto).expanduser()
+    if alvo.is_file():
+        return alvo
+    # Nome solto, sem pasta: procurar onde as telas moram.
+    if alvo.parent in (pathlib.Path("."), pathlib.Path("")):
+        vizinho = pasta_das_telas() / alvo.name
+        if vizinho.is_file():
+            return vizinho
+    return alvo
+
+
 def mostrar_tela(caminho: str, parte: str = "resumo", contem: str = "",
                  teto: int = 60, rotulos: bool = False) -> int:
     """Imprime uma fatia de uma tela gravada. Nunca abre navegador."""
@@ -451,7 +486,7 @@ def mostrar_tela(caminho: str, parte: str = "resumo", contem: str = "",
     import pathlib
     import sys
 
-    alvo = pathlib.Path(caminho).expanduser()
+    alvo = resolver_a_tela(caminho)
     try:
         dados = json.loads(alvo.read_text(encoding="utf-8"))
     except FileNotFoundError:
