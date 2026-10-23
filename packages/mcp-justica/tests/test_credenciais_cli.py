@@ -153,3 +153,26 @@ def test_o_aviso_de_semente_repetida_nao_acusa_defeito():
     assert "ATENCAO" not in sem_comentario
     assert "NORMAL" in sem_comentario
     assert "DEFEITO" in sem_comentario
+
+
+def test_a_senha_diz_QUAL_senha_antes_de_pedir():
+    """Guarda de fonte. Em 22/10/2026 o advogado colou a semente no lugar da
+    senha, e o motivo estava na tela: o trecho da semente explicava o que era
+    ("o codigo longo do QR Code, com 32 caracteres, e nao o codigo de 6
+    digitos") e o da senha nao dizia nada. Silencio de um lado, ao lado da
+    explicacao do outro, sugere que os dois sao a mesma coisa.
+
+    O engano custa caro: senha errada so se descobre TENTANDO o login, que
+    gasta tentativa do teto, e tentativas erradas seguidas bloqueiam a conta.
+    """
+    import inspect
+
+    from justica_mcp import credenciais
+
+    fonte = inspect.getsource(credenciais)
+    trecho = fonte.split('pedir_segredo("Senha do portal"')[0][-1200:]
+    sem_comentario = "\n".join(
+        linha for linha in trecho.splitlines()
+        if not linha.strip().startswith("#"))
+    assert "NAO e a semente" in sem_comentario
+    assert "6 digitos" in sem_comentario

@@ -247,6 +247,18 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
                 print("  Login gravado.")
         if not pedir_senha:
             return 0
+        # QUAL senha, dito antes de pedir. Em 22/10/2026 o advogado colou aqui
+        # pensando no segundo fator, porque este trecho nao dizia nada e o da
+        # semente dizia tudo ("e o codigo longo do QR Code, com 32 caracteres,
+        # e nao o codigo de 6 digitos"). O silencio de um lado, ao lado da
+        # explicacao do outro, sugere que os dois sao a mesma coisa.
+        #
+        # O engano custa caro aqui: senha errada so se descobre TENTANDO o
+        # login, que gasta tentativa do teto da conta, e tentativas erradas
+        # seguidas bloqueiam a conta no tribunal.
+        print("\n  Senha do portal: e a que voce digita para entrar no site do")
+        print("  tribunal. NAO e a semente do segundo fator, nem o codigo de")
+        print("  6 digitos do aplicativo autenticador.")
         if janela:
             print("  Abrindo a janela para a senha. Ela aceita colar (Ctrl+V).")
         senha = pedir_segredo("Senha do portal", janela)
