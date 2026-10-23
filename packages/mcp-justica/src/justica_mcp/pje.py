@@ -984,3 +984,114 @@ def pedir_o_download_dos_autos(
     feito["botao"] = seletor_do_envio
     botao.click()
     return feito
+
+
+# ==========================================================================
+# PERCORRER A LINHA DO TEMPO INTEIRA
+#
+# A corrida de 23/10/2026 leu 53 eventos e avisou: "pagina 1 de 3". Faltavam
+# duas. A tela gravada respondeu COMO se chega a elas, e a resposta nao e
+# botao:
+#
+#   - o conteiner tem a classe `scroll-y`:
+#       div#divTimeLine:divEventosTimeLine classe="eventos-timeline scroll-y"
+#   - entre os 109 clicaveis da tela NAO ha controle de pagina nenhum. Ha
+#     filtro, lupa, atualizar e "Inverter ordenacao", e mais nada;
+#   - os itens vao de y=125 a y=6719 dentro de uma janela de 720, e no fim do
+#     conteiner ha um `div.col-sm-12 text-center`, que e a marca de
+#     carregamento.
+#
+# Entao a linha do tempo carrega por ROLAGEM, e `paginaAtual` sobe conforme se
+# desce. Isso era especulacao minha antes da tela gravada; agora e medida.
+# ==========================================================================
+
+# Quantas rolagens no maximo. Teto existe porque a alternativa e um laco que
+# nao termina quando o portal muda: tres paginas pediram tres rolagens, e 40
+# cobre processo muito maior sem virar espera infinita.
+TETO_DE_ROLAGENS = 40
+
+# Quanto esperar o portal trazer a proxima leva, em milissegundos.
+ESPERA_DA_PROXIMA_LEVA = 1200
+
+JS_DE_ROLAR_A_LINHA_DO_TEMPO = r"""() => {
+  const conteiner = document.querySelector(
+    'div[id="divTimeLine:divEventosTimeLine"]');
+  if (!conteiner) return null;
+  conteiner.scrollTop = conteiner.scrollHeight;
+  const numero = (seletor) => {
+    const campo = document.querySelector(seletor);
+    const lido = parseInt(campo ? (campo.value || '') : '', 10);
+    return Number.isNaN(lido) ? null : lido;
+  };
+  return {
+    altura: conteiner.scrollHeight,
+    itens: conteiner.querySelectorAll('a').length,
+    pagina: numero('input[id="paginaAtual"]'),
+    paginas: numero('input[id="totalPaginas"]'),
+  };
+}"""
+
+
+def percorrer_a_linha_do_tempo(pagina: Any, *, teto: int = TETO_DE_ROLAGENS,
+                               espera: int = ESPERA_DA_PROXIMA_LEVA) -> dict:
+    """Rola a linha do tempo ate o fim e devolve o que conseguiu alcancar.
+
+    Devolve `{"paginas", "pagina", "rolagens", "itens", "completa", "aviso"}`.
+
+    `completa` e a resposta que importa, e ela e dita em voz alta: ler SO a
+    primeira pagina e achar que se leu o processo e o erro que este percurso
+    existe para evitar. Na corrida de 23/10/2026 a primeira pagina trazia 24
+    documentos com identificadores de 211055786 a 301359755, e a peticao
+    inicial, de identificador 128507266, estava numa pagina seguinte: pedir o
+    download com aquela faixa traria os autos pela metade.
+
+    Para quando a pagina atual chega a ultima, ou quando duas rolagens
+    seguidas nao trazem item novo. A segunda condicao existe porque
+    `paginaAtual` pode nao subir num portal alterado, e sem ela o laco rodaria
+    o teto inteiro a cada consulta.
+    """
+    rolagens = 0
+    itens_antes = -1
+    ultimo: Optional[dict] = None
+    parado = 0
+    while rolagens < teto:
+        try:
+            lido = pagina.evaluate(JS_DE_ROLAR_A_LINHA_DO_TEMPO)
+        except Exception as erro:
+            return {"paginas": None, "pagina": None, "rolagens": rolagens,
+                    "itens": None, "completa": False,
+                    "aviso": (f"A rolagem da linha do tempo falhou "
+                              f"({type(erro).__name__}). O que foi lido pode "
+                              "ser so parte do processo.")}
+        if not isinstance(lido, dict):
+            return {"paginas": None, "pagina": None, "rolagens": rolagens,
+                    "itens": None, "completa": False,
+                    "aviso": ("A linha do tempo nao foi encontrada. Isso NAO "
+                              "quer dizer que o processo nao tem movimento.")}
+        ultimo = lido
+        rolagens += 1
+        paginas, atual = lido.get("paginas"), lido.get("pagina")
+        if paginas and atual and atual >= paginas:
+            break
+        if lido.get("itens") == itens_antes:
+            parado += 1
+            if parado >= 2:
+                break
+        else:
+            parado = 0
+        itens_antes = lido.get("itens")
+        try:
+            pagina.wait_for_timeout(espera)
+        except Exception:
+            pass
+
+    lido = ultimo or {}
+    paginas, atual = lido.get("paginas"), lido.get("pagina")
+    completa = bool(paginas and atual and atual >= paginas)
+    aviso = ""
+    if not completa:
+        aviso = (f"A rolagem parou na pagina {atual} de {paginas} depois de "
+                 f"{rolagens} rolagem(ns). O que foi lido e SO ate ali, e a "
+                 "faixa de identificadores NAO cobre o processo inteiro.")
+    return {"paginas": paginas, "pagina": atual, "rolagens": rolagens,
+            "itens": lido.get("itens"), "completa": completa, "aviso": aviso}

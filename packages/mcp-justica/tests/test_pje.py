@@ -1215,3 +1215,128 @@ def test_a_escolha_por_palavra_inteira_tolera_rotulo_mais_longo():
     lista = _Lista([_Opcao("Ordem decrescente", "0"),
                     _Opcao("Ordem crescente", "1")])
     assert escolher_por_rotulo(_So(lista), "qualquer", "crescente") == "1"
+
+
+# ==========================================================================
+# PERCORRER A LINHA DO TEMPO INTEIRA
+#
+# A corrida de 23/10/2026 leu 53 eventos e avisou "pagina 1 de 3". A tela
+# gravada mostrou COMO se chega as outras duas, e nao e botao: o conteiner tem
+# a classe `scroll-y`, e entre os 109 clicaveis da tela nao ha controle de
+# pagina nenhum. A linha do tempo carrega por ROLAGEM.
+# ==========================================================================
+
+
+class _PaginaQueRola:
+    def __init__(self, levas):
+        """`levas` e a sequencia que cada rolagem devolve, em ordem."""
+        self.levas = list(levas)
+        self.rolagens = 0
+        self.esperas = 0
+
+    def evaluate(self, _js):
+        passo = self.levas[min(self.rolagens, len(self.levas) - 1)]
+        self.rolagens += 1
+        if isinstance(passo, Exception):
+            raise passo
+        return passo
+
+    def wait_for_timeout(self, _ms):
+        self.esperas += 1
+
+
+def _leva(pagina, paginas, itens):
+    return {"altura": 1000 * pagina, "itens": itens,
+            "pagina": pagina, "paginas": paginas}
+
+
+def test_rola_ate_a_ultima_pagina_e_para():
+    from justica_mcp.pje import percorrer_a_linha_do_tempo
+
+    pagina = _PaginaQueRola([_leva(1, 3, 20), _leva(2, 3, 45), _leva(3, 3, 70)])
+    percurso = percorrer_a_linha_do_tempo(pagina, espera=0)
+    assert percurso["completa"] is True
+    assert percurso["pagina"] == 3 and percurso["paginas"] == 3
+    assert percurso["rolagens"] == 3
+    assert percurso["aviso"] == ""
+
+
+def test_quando_nao_chega_ao_fim_ele_DIZ():
+    """Ler so parte e achar que se leu o processo e o erro que este percurso
+    existe para evitar."""
+    from justica_mcp.pje import percorrer_a_linha_do_tempo
+
+    pagina = _PaginaQueRola([_leva(1, 9, 20), _leva(2, 9, 45)])
+    percurso = percorrer_a_linha_do_tempo(pagina, teto=2, espera=0)
+    assert percurso["completa"] is False
+    assert "NAO cobre o processo inteiro" in percurso["aviso"]
+
+
+def test_para_quando_duas_rolagens_nao_trazem_item_novo():
+    """`paginaAtual` pode nao subir num portal alterado. Sem esta condicao o
+    laco rodaria o teto inteiro a cada consulta."""
+    from justica_mcp.pje import percorrer_a_linha_do_tempo
+
+    pagina = _PaginaQueRola([_leva(1, 5, 20), _leva(1, 5, 20), _leva(1, 5, 20)])
+    percurso = percorrer_a_linha_do_tempo(pagina, teto=40, espera=0)
+    assert percurso["rolagens"] == 3
+    assert percurso["completa"] is False
+
+
+def test_o_teto_de_rolagens_e_respeitado():
+    """Teto existe porque a alternativa e um laco que nao termina quando o
+    portal muda."""
+    from justica_mcp.pje import percorrer_a_linha_do_tempo
+
+    crescendo = [_leva(1, 99, 10 * i) for i in range(1, 30)]
+    percurso = percorrer_a_linha_do_tempo(_PaginaQueRola(crescendo),
+                                          teto=5, espera=0)
+    assert percurso["rolagens"] == 5
+    assert percurso["completa"] is False
+
+
+def test_conteiner_ausente_na_rolagem_nao_vira_processo_sem_movimento():
+    from justica_mcp.pje import percorrer_a_linha_do_tempo
+
+    percurso = percorrer_a_linha_do_tempo(_PaginaQueRola([None]), espera=0)
+    assert percurso["completa"] is False
+    assert "NAO quer dizer" in percurso["aviso"]
+
+
+def test_falha_na_rolagem_sai_como_aviso():
+    from justica_mcp.pje import percorrer_a_linha_do_tempo
+
+    percurso = percorrer_a_linha_do_tempo(
+        _PaginaQueRola([RuntimeError("caiu")]), espera=0)
+    assert percurso["completa"] is False
+    assert "pode ser so parte" in percurso["aviso"]
+
+
+def test_a_rolagem_nao_usa_identificador_gerado_pelo_jsf():
+    from justica_mcp.pje import JS_DE_ROLAR_A_LINHA_DO_TEMPO
+
+    assert "j_id" not in JS_DE_ROLAR_A_LINHA_DO_TEMPO
+    assert "scrollHeight" in JS_DE_ROLAR_A_LINHA_DO_TEMPO
+
+
+def test_a_consulta_rola_ANTES_de_ler():
+    """Guarda de fonte. Ler sem rolar devolve so a primeira leva, e foi assim
+    que a faixa de identificadores saiu cobrindo meio processo em 23/10/2026."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert fonte.index("percorrer_a_linha_do_tempo(aba)") < fonte.index(
+        "ler_a_linha_do_tempo(aba)")
+
+
+def test_o_arquivo_gravado_diz_se_a_leitura_e_completa():
+    """Faixa sem essa marca e armadilha: quem ler o arquivo depois nao tem
+    como saber se ele cobre o processo ou um pedaco dele."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert '"linha_do_tempo_completa"' in fonte

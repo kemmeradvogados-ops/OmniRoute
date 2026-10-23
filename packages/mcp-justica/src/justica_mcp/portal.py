@@ -6292,7 +6292,20 @@ def consultar_processo(
             # gastar outra autenticacao do advogado.
             _relatar_tela(aba, "AUTOS DO PROCESSO (ABA NOVA)")
 
-            from .pje import faixa_de_identificadores, ler_a_linha_do_tempo
+            from .pje import (faixa_de_identificadores, ler_a_linha_do_tempo,
+                              percorrer_a_linha_do_tempo)
+
+            # ROLAR ANTES DE LER. A linha do tempo carrega por rolagem, e ler
+            # sem rolar devolve so a primeira leva. Em 23/10/2026 a primeira
+            # trazia 24 documentos, de 211055786 a 301359755, e a peticao
+            # inicial, de identificador 128507266, estava mais abaixo: pedir o
+            # download com aquela faixa traria os autos pela metade.
+            percurso = percorrer_a_linha_do_tempo(aba)
+            if percurso["rolagens"]:
+                print(f"\n  Linha do tempo percorrida: {percurso['rolagens']} "
+                      f"rolagem(ns).")
+            if percurso["aviso"]:
+                print(f"  ATENCAO: {percurso['aviso']}")
 
             linha = ler_a_linha_do_tempo(aba)
             if linha["aviso"]:
@@ -6308,13 +6321,14 @@ def consultar_processo(
                 pecas_da_linha = [e for e in eventos if e["e_documento"]]
                 print(f"\n  LINHA DO TEMPO: {len(eventos)} evento(s), "
                       f"{len(pecas_da_linha)} documento(s).")
-                if linha["paginas"] and linha["paginas"] > 1:
-                    # Dito alto, porque e a diferenca entre "o processo tem
-                    # isto" e "esta pagina tem isto". Concluir pela primeira
-                    # pagina seria concluir por um pedaco.
-                    print(f"  ATENCAO: pagina {linha['pagina']} de "
-                          f"{linha['paginas']}. O que esta acima e SO esta "
-                          f"pagina; o resto nao foi lido.")
+                # Dito alto quando NAO se chegou ao fim: a diferenca entre
+                # "o processo tem isto" e "esta parte tem isto". O percurso
+                # acima ja tentou rolar ate a ultima pagina; se nao chegou, o
+                # aviso dele ja saiu, e aqui fica a contagem.
+                if linha["paginas"]:
+                    print(f"  Pagina {linha['pagina']} de {linha['paginas']}"
+                          + ("." if percurso["completa"]
+                             else ", e o percurso NAO chegou ao fim."))
                 primeiro, ultimo = faixa_de_identificadores(eventos)
                 if primeiro is not None:
                     print(f"  Identificadores de {primeiro} a {ultimo}.")
@@ -6325,6 +6339,10 @@ def consultar_processo(
                     "paginas": linha["paginas"],
                     "eventos": eventos,
                     "faixa_de_identificadores": [primeiro, ultimo],
+                    # Gravado junto, e nao so impresso: quem ler este arquivo
+                    # depois precisa saber se ele cobre o processo ou um
+                    # pedaco dele. Faixa sem essa marca e armadilha.
+                    "linha_do_tempo_completa": percurso["completa"],
                 }
                 arquivo = _gravar_consulta(dados_da_linha, numero.apenas_digitos)
                 print(f"\n  Conteudo completo em: {arquivo}")
