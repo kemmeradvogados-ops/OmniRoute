@@ -370,7 +370,7 @@ def buscar_autenticado(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     if botao_pesquisar is None:
         raise ConsultaPJeIndisponivel(
             f"O botao de pesquisar nao esta na tela ({pagina.url}). Nada foi digitado.")
-    seletor_do_botao = f'input[id="{botao_pesquisar.get_attribute("id")}"]'
+    seletor_do_botao = seletor_do_elemento(botao_pesquisar, "pesquisar")
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,
         descricao="consulta autenticada do PJe, somente a busca",
@@ -403,18 +403,69 @@ def buscar_autenticado(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     return pagina.url
 
 
-def achar_botao_pesquisar(pagina: Any) -> Optional[Any]:
-    """O botao de pesquisar, achado pelo que ESTA ESCRITO nele.
+def seletor_do_elemento(elemento: Any, apelido: str) -> str:
+    """O seletor que NOMEIA este elemento para a trava de navegacao.
 
-    Procurar pelo texto, e nao pelo identificador, e a escolha certa aqui: o
-    identificador do JSF nao foi lido em tela real, mas a palavra no botao foi
-    fotografada. Texto errado nao acha nada e o comando para; identificador
-    adivinhado tambem nao acha nada, so que depois de ja ter digitado.
+    Montava-se `input[id="..."]` com o identificador do elemento, o que
+    assumia duas coisas: que ele e um `input` e que ele tem identificador. A
+    primeira deixou de valer quando a busca passou a aceitar quatro tipos de
+    botao; a segunda nunca valeu para `<button>` sem id, e ali o seletor saia
+    como `input[id="None"]`, que a trava autorizaria sem nomear nada.
+
+    A trava precisa de um nome que case com o elemento de verdade: autorizacao
+    que nao casa e autorizacao que nao protege.
     """
-    for candidato in pagina.query_selector_all("input[type=submit], button"):
+    try:
+        etiqueta = (elemento.evaluate("e => e.tagName") or "").lower() or "*"
+        identificador = elemento.get_attribute("id")
+    except Exception:
+        return f'texto={apelido}'
+    if identificador:
+        return f'{etiqueta}[id="{identificador}"]'
+    return f'{etiqueta}:{apelido}'
+
+
+# Lido da tela real em 23/10/2026, na corrida que autenticou no PJe do Rio de
+# Janeiro. Ate entao este identificador nao era conhecido, e por isso a busca
+# era so por texto. Agora ele esta conferido, e entra como primeiro caminho.
+BOTAO_PESQUISAR_AUTENTICADO = 'input[id="fPP:searchProcessos"]'
+
+# Os quatro tipos, e nao dois. O RichFaces, que desenha o PJe, renderiza botao
+# de comando como `input[type=button]`, que a versao anterior desta funcao NAO
+# procurava: ela olhava so `input[type=submit], button`. O proprio projeto ja
+# tem a lista certa em `portal.ALVOS_CLICAVEIS`, e esta funcao nao a usava.
+TIPOS_DE_BOTAO = "button, input[type=submit], input[type=button], input[type=image]"
+
+
+def achar_botao_pesquisar(pagina: Any) -> Optional[Any]:
+    """O botao de pesquisar: pelo identificador conferido, depois pelo texto.
+
+    A corrida de 23/10/2026 autenticou no PJe do Rio de Janeiro e parou aqui,
+    dizendo que o botao nao estava na tela. Ele estava: o relato da propria
+    tela trazia `input#fPP:searchProcessos`, e a captura mostrou "PESQUISAR" no
+    fim do painel da esquerda, abaixo da dobra.
+
+    Duas coisas mudaram, e as duas vieram daquela tela:
+
+    O IDENTIFICADOR agora e conhecido. A versao anterior procurava so por
+    texto, e o comentario dizia por que: o identificador do JSF nunca tinha
+    sido lido em tela real. Agora foi, entao ele vira o primeiro caminho. A
+    busca por texto continua como segunda, porque identificador de JSF muda com
+    a versao do portal e a palavra no botao e mais estavel.
+
+    OS TIPOS DE BOTAO passaram de dois para quatro. RichFaces renderiza botao
+    de comando como `input[type=button]`, que nao estava na lista.
+
+    A posicao NAO entra aqui. Abaixo da dobra nao e escondido, e quem decide se
+    da para clicar e o proprio Playwright, que rola sozinho e reclama alto se
+    nao alcancar. Recusar por posicao foi o que parou quatro corridas no Portal
+    de Servicos em outubro.
+    """
+    direto = pagina.query_selector(BOTAO_PESQUISAR_AUTENTICADO)
+    if direto is not None:
+        return direto
+    for candidato in pagina.query_selector_all(TIPOS_DE_BOTAO):
         try:
-            if not candidato.is_visible():
-                continue
             rotulo = (candidato.get_attribute("value")
                       or candidato.inner_text() or "").strip().lower()
         except Exception:

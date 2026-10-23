@@ -244,7 +244,8 @@ def test_sem_redirecionamento_nao_ha_permissao_extra():
 # ==========================================================================
 
 from justica_mcp.pje import (  # noqa: E402
-    SELETOR_CANDIDATO_DO_NUMERO, TAMANHOS_DAS_PARTES, abrir_processo,
+    SELETOR_CANDIDATO_DO_NUMERO, TAMANHOS_DAS_PARTES, TIPOS_DE_BOTAO,
+    abrir_processo,
     achar_botao_pesquisar, achar_link_do_processo, buscar_autenticado,
     campos_do_numero, conferir_forma_dos_campos,
     endereco_da_consulta_autenticada, ler_aviso,
@@ -318,6 +319,11 @@ class _AutBotao:
     def inner_text(self):
         return self.rotulo
 
+    def evaluate(self, expressao):
+        if "tagName" in expressao:
+            return "INPUT"
+        return None
+
     def click(self):
         self.pagina.cliques.append(self.identificador)
 
@@ -347,6 +353,16 @@ class _AutTela:
         self.navegou.append(url)
         self.url = self.destino or url
 
+    def query_selector(self, seletor):
+        """O caminho pelo IDENTIFICADOR conferido, acrescentado em 23/10/2026.
+
+        Este duble devolve None de proposito: os testes que ja existiam cobrem
+        a busca POR TEXTO, que continua valendo como segundo caminho quando o
+        identificador do JSF mudar de versao. O caminho pelo identificador tem
+        teste proprio.
+        """
+        return None
+
     def query_selector_all(self, seletor):
         if seletor == SELETOR_CANDIDATO_DO_NUMERO:
             return list(self.campos)
@@ -355,7 +371,10 @@ class _AutTela:
         # "nao achei nada" precisa enxergar.
         if seletor == "input":
             return list(self.campos)
-        if seletor == "input[type=submit], button":
+        # Pela CONSTANTE, e nao por uma copia escrita a mao. Ate 23/10/2026
+        # este duble fixava "input[type=submit], button", que era exatamente a
+        # lista incompleta do defeito: o teste passava por fixar o erro.
+        if seletor == TIPOS_DE_BOTAO:
             return [self.botao] if self.botao else []
         return []
 
@@ -699,3 +718,115 @@ def test_campo_comum_nao_e_digitado_tecla_a_tecla():
     tela = _AutTela()
     buscar_autenticado(tela, _guarda(), parse_numero(PROCESSO), LOGIN_AUT, 10)
     assert not any(c.digitado for c in tela.campos)
+
+
+# ==========================================================================
+# O BOTAO DE PESQUISAR DA CONSULTA AUTENTICADA
+#
+# Corrida de 23/10/2026: a autenticacao no PJe do Rio de Janeiro passou,
+# login e segundo fator, e o comando parou dizendo que o botao de pesquisar
+# nao estava na tela. Ele estava. O relato da propria tela trazia
+# `input#fPP:searchProcessos`, e a captura mostrou "PESQUISAR" no fim do
+# painel da esquerda, abaixo da dobra.
+#
+# Duas causas, e as duas foram consertadas:
+#
+#   - a busca olhava `input[type=submit], button`, e o RichFaces, que desenha
+#     o PJe, renderiza botao de comando como `input[type=button]`;
+#   - o identificador do JSF nunca tinha sido lido em tela real, e por isso a
+#     busca era so por texto. Agora foi lido.
+# ==========================================================================
+
+
+class _BotaoDeMentira:
+    def __init__(self, etiqueta="input", identificador=None, valor=None,
+                 texto="", tipo=None):
+        self.etiqueta = etiqueta
+        self.identificador = identificador
+        self.valor = valor
+        self.texto = texto
+        self.tipo = tipo
+
+    def get_attribute(self, nome):
+        return {"id": self.identificador, "value": self.valor,
+                "type": self.tipo}.get(nome)
+
+    def inner_text(self):
+        return self.texto
+
+    def evaluate(self, expressao):
+        if "tagName" in expressao:
+            return self.etiqueta.upper()
+        return None
+
+
+class _PaginaDeMentira:
+    def __init__(self, botoes, com_identificador=None):
+        self.botoes = botoes
+        self.com_identificador = com_identificador
+
+    def query_selector(self, seletor):
+        return self.com_identificador
+
+    def query_selector_all(self, seletor):
+        return self.botoes
+
+
+def test_acha_pelo_identificador_conferido_em_tela_real():
+    from justica_mcp.pje import BOTAO_PESQUISAR_AUTENTICADO, achar_botao_pesquisar
+
+    alvo = _BotaoDeMentira(identificador="fPP:searchProcessos", valor="PESQUISAR")
+    pagina = _PaginaDeMentira([], com_identificador=alvo)
+    assert achar_botao_pesquisar(pagina) is alvo
+    assert "fPP:searchProcessos" in BOTAO_PESQUISAR_AUTENTICADO
+
+
+def test_acha_input_type_button_que_a_versao_anterior_perdia():
+    """RichFaces renderiza botao de comando como `input[type=button]`. A busca
+    antiga olhava so `input[type=submit], button`, e era essa a causa."""
+    from justica_mcp.pje import TIPOS_DE_BOTAO, achar_botao_pesquisar
+
+    assert "input[type=button]" in TIPOS_DE_BOTAO
+    alvo = _BotaoDeMentira(tipo="button", valor="PESQUISAR")
+    pagina = _PaginaDeMentira([_BotaoDeMentira(valor="LIMPAR"), alvo])
+    assert achar_botao_pesquisar(pagina) is alvo
+
+
+def test_a_posicao_na_tela_nao_recusa_o_botao():
+    """Guarda de fonte. Abaixo da dobra NAO e escondido, e quem decide se da
+    para clicar e o proprio Playwright, que rola sozinho. Recusar por posicao
+    parou quatro corridas no Portal de Servicos em outubro."""
+    import inspect
+
+    from justica_mcp import pje
+
+    fonte = inspect.getsource(pje.achar_botao_pesquisar)
+    sem_comentario = "\n".join(
+        linha for linha in fonte.splitlines()
+        if not linha.strip().startswith(("#", '"', "*")))
+    assert "is_visible" not in sem_comentario
+    assert "bounding_box" not in sem_comentario
+
+
+def test_o_seletor_da_trava_casa_com_o_elemento_de_verdade():
+    """Montava-se `input[id="..."]` sempre. Para um `<button>` sem id isso
+    saia como `input[id="None"]`, que a trava autorizaria sem nomear nada."""
+    from justica_mcp.pje import seletor_do_elemento
+
+    com_id = _BotaoDeMentira(etiqueta="input", identificador="fPP:searchProcessos")
+    assert seletor_do_elemento(com_id, "pesquisar") == 'input[id="fPP:searchProcessos"]'
+
+    sem_id = _BotaoDeMentira(etiqueta="button")
+    saida = seletor_do_elemento(sem_id, "pesquisar")
+    assert "None" not in saida
+    assert saida.startswith("button")
+
+
+def test_botao_sem_rotulo_nenhum_nao_e_escolhido():
+    """Escolher qualquer botao aqui seria clicar as cegas numa tela que tem
+    'LIMPAR' ao lado de 'PESQUISAR'."""
+    from justica_mcp.pje import achar_botao_pesquisar
+
+    pagina = _PaginaDeMentira([_BotaoDeMentira(valor="LIMPAR"),
+                               _BotaoDeMentira(valor=None, texto="")])
+    assert achar_botao_pesquisar(pagina) is None
