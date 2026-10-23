@@ -1488,3 +1488,54 @@ def test_sem_nenhum_download_de_autos_nada_e_clicado():
         pedir_o_download_dos_autos(pagina, _GuardaDeMentira(), de=1, ate=2)
     assert "aria-label" in str(erro.value) and "title" in str(erro.value)
     assert pagina.cliques == []
+
+
+# ==========================================================================
+# A AREA DE DOWNLOAD
+#
+# Corrida de 23/10/2026: o pedido foi feito inteiro. O relato da trava mostra
+# o painel aberto (`a:abrir-painel-de-download`), a faixa preenchida
+# (`navbar:idDe`, `navbar:idAte`) e o botao clicado (`navbar:j_id246`). E
+# nenhum arquivo chegou pelo navegador em 45 segundos.
+#
+# Isso NAO e falha: o PJe gera o arquivo e o deixa na Area de Download, uma
+# tela propria do portal, cujo caminho a tela dos autos declarou entre os de
+# navegacao. Buscar o arquivo la nao vai ser escrito as cegas.
+# ==========================================================================
+
+
+def test_o_caminho_da_area_de_download_nao_e_adivinhado():
+    """Ele veio dos CAMINHOS DE NAVEGACAO que a tela dos autos declarou."""
+    from justica_mcp.portal import CAMINHO_DA_AREA_DE_DOWNLOAD
+
+    assert CAMINHO_DA_AREA_DE_DOWNLOAD == "/1g/AreaDeDownload/listView.seam"
+
+
+def test_sem_arquivo_o_programa_vai_relatar_a_area_e_nao_desiste_calado():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert "_relatar_area_de_download" in fonte
+    assert "O PEDIDO FOI FEITO" in fonte
+
+
+def test_na_area_de_download_nada_e_clicado():
+    """Guarda de fonte. Clicar numa tela que eu nunca vi e exatamente o erro
+    que custou quatro corridas em outubro."""
+    import ast
+    import inspect
+    import textwrap
+
+    from justica_mcp import portal
+
+    arvore = ast.parse(textwrap.dedent(
+        inspect.getsource(portal._relatar_area_de_download)))
+    chamadas = [ast.unparse(no) for no in ast.walk(arvore)
+                if isinstance(no, ast.Call)]
+    assert not [c for c in chamadas if ".click(" in c], chamadas
+    # A unica acao autorizada e NAVEGAR.
+    fonte = inspect.getsource(portal._relatar_area_de_download)
+    assert "Acao.NAVEGAR" in fonte
+    assert "Acao.CLICAR" not in fonte

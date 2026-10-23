@@ -5596,6 +5596,57 @@ def _paginas_pedidas(bruto: Any) -> tuple:
     return tuple(sorted(set(saida)))
 
 
+# A Area de Download do PJe, pelo caminho que a tela dos autos declarou entre
+# os de navegacao em 23/10/2026. Nao e endereco adivinhado.
+CAMINHO_DA_AREA_DE_DOWNLOAD = "/1g/AreaDeDownload/listView.seam"
+
+
+def _relatar_area_de_download(aba, guarda, segundos: int) -> None:
+    """Vai ate a Area de Download e RELATA a tela, sem clicar em nada.
+
+    A corrida de 23/10/2026 fez o pedido inteiro, com o painel aberto, a faixa
+    conferida e o botao clicado, e nenhum arquivo chegou pelo navegador em
+    45s. Isso nao e falha: o PJe gera o arquivo e o deixa nesta tela.
+
+    Buscar o arquivo aqui ainda NAO esta escrito, e nao vai ser escrito as
+    cegas. O relato abaixo e o que permite escreve-lo contra a tela de
+    verdade, que e a regra desta casa desde que supor custou quatro corridas
+    em outubro.
+    """
+    from urllib.parse import urlparse
+
+    from .core.guarda_navegacao import Acao, Permissao
+
+    try:
+        partes = urlparse(aba.url)
+        destino = f"{partes.scheme}://{partes.netloc}{CAMINHO_DA_AREA_DE_DOWNLOAD}"
+    except Exception:
+        print("    Nao deu para montar o endereco da Area de Download.")
+        return
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=f"^{re.escape(destino)}",
+        descricao="area de download do PJe, somente leitura",
+        conferido_em="execucao atual",
+    ))
+    try:
+        guarda.pode_executar(Acao.NAVEGAR, destino, url=destino)
+        aba.goto(destino, timeout=segundos * 1000, wait_until="domcontentloaded")
+        _assentar(aba, segundos)
+    except Exception as exc:
+        print(f"    Nao foi possivel abrir a Area de Download "
+              f"({type(exc).__name__}).")
+        return
+
+    _relatar_tela(aba, "AREA DE DOWNLOAD DO PJE")
+    _relatar_estrutura_de_dados(aba)
+    print("\n    A busca do arquivo nesta tela ainda NAO esta escrita. O "
+          "relato acima")
+    print("    e a forma dela, sem conteudo, e e dele que ela sera escrita. "
+          "Nada foi")
+    print("    inventado, e nada foi clicado aqui.")
+
+
 def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
                          estado_local, identidade, segundos: int) -> None:
     """Pede os autos pelo painel do PJe e resgata o arquivo para o acervo.
@@ -5658,17 +5709,18 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         guarda.permitir_download = False
 
     if baixado is None:
-        print("    Nenhum arquivo chegou. O PJe pode ter mandado a geracao "
-              "para a")
-        print("    AREA DE DOWNLOAD (/1g/AreaDeDownload/listView.seam), que e "
-              "uma tela")
-        print("    propria do portal: o arquivo fica la pronto para buscar "
-              "depois.")
-        print("    Essa busca ainda NAO esta escrita. Nada foi gravado.")
+        print("    Nenhum arquivo chegou pelo navegador. O PEDIDO FOI FEITO: o")
+        print("    painel abriu, a faixa entrou conferida e o botao foi "
+              "clicado.")
+        print("    O PJe gera o arquivo e o deixa na AREA DE DOWNLOAD, que e "
+              "uma")
+        print("    tela propria do portal. Indo ate la para relatar o que ha "
+              "nela.")
+        _relatar_area_de_download(aba, guarda, segundos)
         estado_local.registrar(
             acao="download_dos_autos_do_pje", tribunal=identidade.tribunal,
             sistema=identidade.sistema, numero=numero.formatado,
-            resultado="sem arquivo",
+            resultado="pedido feito, arquivo na area de download",
         )
         return
 
