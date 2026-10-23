@@ -8160,3 +8160,67 @@ def test_quadro_vazio_e_DITO_e_nao_escondido():
 
     fonte = inspect.getsource(portal._relatar_area_de_download)
     assert "continuou sem conteudo" in fonte
+
+
+# --------------------------------------------------------------------------
+# Campo de senha que devolve marcador no lugar do texto
+# --------------------------------------------------------------------------
+
+
+def test_marcador_repetido_do_tamanho_certo_conta_como_escrito():
+    """O eproc da Justica Federal da 2a Regiao declara a senha como campo de
+    TEXTO e troca o digitado por marcador, mantendo o comprimento. Em
+    23/10/2026 o campo ficou com catorze caracteres, exatamente os catorze
+    esperados, e a conferencia exata recusou."""
+    from justica_mcp.portal import conferiu_a_escrita
+
+    assert conferiu_a_escrita("•" * 14, "senha_de_14_ca")
+    assert conferiu_a_escrita("*" * 8, "12345678")
+
+
+def test_marcador_de_tamanho_errado_continua_sendo_falha():
+    from justica_mcp.portal import conferiu_a_escrita
+
+    assert not conferiu_a_escrita("•" * 9, "senha_de_14_ca")
+    assert not conferiu_a_escrita("", "senha_de_14_ca")
+
+
+def test_campo_cheio_de_espaco_nao_passa_por_mascara():
+    """Aceitar espaco seria enviar senha em branco achando que escreveu."""
+    from justica_mcp.portal import conferiu_a_escrita, parece_mascarado
+
+    assert not parece_mascarado("   ")
+    assert not conferiu_a_escrita(" " * 14, "senha_de_14_ca")
+
+
+def test_letra_ou_digito_repetido_nao_e_mascara():
+    from justica_mcp.portal import parece_mascarado
+
+    assert not parece_mascarado("aaaa")
+    assert not parece_mascarado("0000")
+
+
+def test_conteudo_diferente_e_variado_continua_recusado():
+    """Mascara e UM caractere repetido. Texto variado e outra coisa no campo."""
+    from justica_mcp.portal import conferiu_a_escrita
+
+    assert not conferiu_a_escrita("outra_coisa_14", "senha_de_14_ca")
+
+
+def test_a_senha_certa_continua_passando_pela_igualdade_exata():
+    from justica_mcp.portal import conferiu_a_escrita
+
+    assert conferiu_a_escrita("senha_de_14_ca", "senha_de_14_ca")
+    assert not conferiu_a_escrita("senha_de_14_cb", "senha_de_14_ca")
+
+
+def test_a_conferencia_e_usada_nas_duas_tentativas_de_escrita():
+    """Guarda de fonte: conferir so depois da digitacao faria o `fill`, que
+    funciona, cair sempre na digitacao tecla a tecla."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.preencher_conferindo)
+    assert fonte.count("conferiu_a_escrita(") == 2
+    assert "mesmo_conteudo(" not in fonte

@@ -1286,6 +1286,48 @@ def mesmo_conteudo(escrito: str, pretendido: str) -> bool:
     return False
 
 
+# Marcadores que portal usa para esconder senha em campo de TEXTO. O eproc da
+# Justica Federal da 2a Regiao declara `#pwdSenha` como `type=text` e troca o
+# que foi digitado por marcador, mantendo o comprimento: em 23/10/2026 o campo
+# ficou com catorze caracteres, exatamente os catorze esperados, e a
+# comparacao exata recusou porque o conteudo lido eram os marcadores, nao a
+# senha. Nada foi enviado e nenhuma tentativa foi gasta, o que esta certo:
+# errado era concluir que a escrita falhou.
+MARCADORES_DE_SENHA = "•*●·∙◦○▪"
+
+
+def parece_mascarado(escrito: str) -> bool:
+    """O campo devolveu marcador no lugar do que foi digitado?
+
+    Exige UM unico caractere repetido do comeco ao fim, e que ele nao seja
+    letra, digito nem espaco. Campo cheio de espaco e falha de escrita de
+    verdade, e aceitar aquilo seria enviar senha em branco.
+    """
+    if not escrito:
+        return False
+    distintos = set(escrito)
+    if len(distintos) != 1:
+        return False
+    unico = next(iter(distintos))
+    if unico in MARCADORES_DE_SENHA:
+        return True
+    return not unico.isalnum() and not unico.isspace()
+
+
+def conferiu_a_escrita(escrito: str, valor: str) -> bool:
+    """Ficou o valor no campo, ou ficou o que o campo mostra no lugar dele?
+
+    Duas respostas boas. A primeira e o conteudo igual, que e a regra. A
+    segunda e o campo mascarado com o comprimento certo: ali nao da para
+    conferir o conteudo, e insistir seria recusar portal que funciona.
+
+    Comprimento diferente continua sendo falha, com mascara ou sem.
+    """
+    if mesmo_conteudo(escrito, valor):
+        return True
+    return len(escrito or "") == len(valor) and parece_mascarado(escrito)
+
+
 def preencher_conferindo(elemento, valor: str, rotulo: str) -> bool:
     """Preenche e CONFERE que o valor ficou no campo. Devolve se ficou.
 
@@ -1306,7 +1348,7 @@ def preencher_conferindo(elemento, valor: str, rotulo: str) -> bool:
     """
     elemento.click()
     elemento.fill(valor)
-    if mesmo_conteudo(_valor_de(elemento), valor):
+    if conferiu_a_escrita(_valor_de(elemento), valor):
         return True
 
     print(f"    O campo de {rotulo} nao aceitou o preenchimento direto; "
@@ -1318,13 +1360,17 @@ def preencher_conferindo(elemento, valor: str, rotulo: str) -> bool:
         print(f"    A digitacao falhou ({type(exc).__name__}).")
         return False
     final = _valor_de(elemento)
-    if mesmo_conteudo(final, valor):
+    if conferiu_a_escrita(final, valor):
         return True
     # A FORMA do que sobrou, nunca o conteudo: o valor e dado pessoal. Saber se
     # o campo ficou vazio ou pela metade separa duas causas diferentes, e sem
     # isso a proxima tentativa seria no escuro.
     print(f"    O campo ficou com {len(final)} caractere(s) e esperava "
           f"{len(valor)}.")
+    if final and len(final) == len(valor):
+        iguais = "sim" if len(set(final)) == 1 else "nao"
+        print(f"    O comprimento bateu e o conteudo nao. Todos os caracteres "
+              f"do campo sao iguais entre si: {iguais}.")
     return False
 
 
