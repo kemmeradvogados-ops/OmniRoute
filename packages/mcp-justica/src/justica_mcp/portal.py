@@ -4565,8 +4565,50 @@ def linhas_de_botoes(botoes, prefixo: str = "") -> list[str]:
     return saida
 
 
+# O dominio de primeiro nivel da Justica brasileira. Ele e RESTRITO: so orgao
+# do Poder Judiciario registra sob ele, e e isso que torna a regra abaixo
+# segura sem precisar listar servidor por servidor.
+DOMINIO_DA_JUSTICA = ".jus.br"
+
+
+def do_mesmo_tribunal(endereco_da_pagina: str, endereco_do_quadro: str) -> bool:
+    """Diz se o quadro pertence a Justica, e nao a um terceiro.
+
+    Era `netloc != casa`, igualdade exata de servidor, e isso ficou estreito
+    demais em 23/10/2026: a Area de Download do PJe do Rio poe o conteudo num
+    quadro servido por `pje-frontend-docs.tjrj.jus.br`, enquanto a pagina vem
+    de `tjrj.pje.jus.br`. Servidores diferentes, mesmo tribunal, e o relato
+    saiu descrevendo so a moldura: 84 elementos, nenhum do que importava.
+
+    Comparar o dominio registravel tambem nao resolve: `tjrj.pje.jus.br` da
+    `pje.jus.br` e `pje-frontend-docs.tjrj.jus.br` da `tjrj.jus.br`. Sao
+    DOMINIOS diferentes de verdade, do sistema nacional e do tribunal, e
+    ambos legitimos.
+
+    A regra que funciona e a do dominio: `.jus.br` e restrito ao Poder
+    Judiciario. Quadro servido de la e sistema de tribunal; o video do YouTube
+    da pagina inicial continua de fora, que e o caso para o qual a regra
+    antiga nasceu.
+
+    Esta funcao decide o que o programa LE, nunca o que ele faz: quem autoriza
+    acao e a trava de navegacao, por outro caminho.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        casa = (urlparse(endereco_da_pagina).netloc or "").lower()
+        fora = (urlparse(endereco_do_quadro).netloc or "").lower()
+    except Exception:
+        return False
+    if not casa or not fora:
+        return False
+    if fora == casa:
+        return True
+    return casa.endswith(DOMINIO_DA_JUSTICA) and fora.endswith(DOMINIO_DA_JUSTICA)
+
+
 def quadros_do_mesmo_portal(pagina, teto: int = 3) -> list:
-    """Quadros embutidos que pertencem ao PROPRIO portal, nunca a terceiros.
+    """Quadros embutidos que pertencem a Justica, nunca a terceiros.
 
     O Portal de Servicos do Tribunal de Justica do Rio de Janeiro poe a
     consulta processual inteira dentro de um `iframe`. Lido em 06/10/2026, o
@@ -4574,14 +4616,10 @@ def quadros_do_mesmo_portal(pagina, teto: int = 3) -> list:
     fale-conosco: o formulario que importa estava no quadro, e o relato nao
     descia ate la. Para quem le o relato, a tela parecia vazia.
 
-    So quadro do mesmo servidor entra. A pagina inicial do tribunal embute um
-    video do YouTube, e ler dentro dele nao diz nada sobre o portal e manda o
-    programa a um lugar que nao e do tribunal.
+    Quem decide se o quadro entra e `do_mesmo_tribunal`, e o porque esta la.
     """
-    from urllib.parse import urlparse
-
     try:
-        casa = urlparse(pagina.url).netloc
+        casa = pagina.url
         quadros = list(pagina.frames or [])[1:]
     except Exception:
         return []
@@ -4593,7 +4631,7 @@ def quadros_do_mesmo_portal(pagina, teto: int = 3) -> list:
             continue
         if not endereco or endereco.startswith("about:"):
             continue
-        if urlparse(endereco).netloc != casa:
+        if not do_mesmo_tribunal(casa, endereco):
             continue
         escolhidos.append(quadro)
         if len(escolhidos) >= teto:

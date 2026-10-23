@@ -8040,3 +8040,51 @@ def test_sem_tela_gravada_ultima_nao_levanta(tmp_path, monkeypatch):
     pasta.mkdir()
     monkeypatch.setattr(telas_mod, "pasta_das_telas", lambda: pasta)
     assert not telas_mod.resolver_a_tela("ultima").is_file()
+
+
+def test_quadro_de_outro_servidor_do_MESMO_tribunal_entra():
+    """Corrida de 23/10/2026: a Area de Download do PJe do Rio poe o conteudo
+    num quadro servido por `pje-frontend-docs.tjrj.jus.br`, enquanto a pagina
+    vem de `tjrj.pje.jus.br`. A igualdade exata de servidor descartava o
+    quadro, e o relato saia descrevendo so a moldura: 84 elementos, nenhum do
+    que importava."""
+    from justica_mcp.portal import quadros_do_mesmo_portal
+
+    pagina = _PaginaComQuadrosEmbutidos(
+        "https://tjrj.pje.jus.br/1g/AreaDeDownload/listView.seam",
+        [_QuadroEmbutido("https://pje-frontend-docs.tjrj.jus.br/#/area-download/")])
+    assert len(quadros_do_mesmo_portal(pagina)) == 1
+
+
+def test_o_dominio_registravel_nao_resolveria_este_caso():
+    """Guarda do raciocinio, para a regra nao ser "simplificada" depois:
+    `tjrj.pje.jus.br` da `pje.jus.br` e `pje-frontend-docs.tjrj.jus.br` da
+    `tjrj.jus.br`. Sao dominios diferentes de verdade, do sistema nacional e
+    do tribunal, e ambos legitimos. O que os une e o `.jus.br`."""
+    from justica_mcp.portal import do_mesmo_tribunal
+
+    assert do_mesmo_tribunal("https://tjrj.pje.jus.br/x",
+                             "https://pje-frontend-docs.tjrj.jus.br/y")
+    assert ".".join("tjrj.pje.jus.br".split(".")[-3:]) != ".".join(
+        "pje-frontend-docs.tjrj.jus.br".split(".")[-3:])
+
+
+def test_terceiro_continua_de_fora_mesmo_com_a_regra_mais_larga():
+    from justica_mcp.portal import do_mesmo_tribunal
+
+    assert not do_mesmo_tribunal("https://www.tjrj.jus.br/",
+                                 "https://www.youtube.com/embed/x")
+    assert not do_mesmo_tribunal("https://tjrj.pje.jus.br/x",
+                                 "https://cdn.exemplo.com.br/y")
+    assert not do_mesmo_tribunal("https://tjrj.pje.jus.br/x",
+                                 "https://maljus.br.exemplo.com/y")
+
+
+def test_pagina_fora_da_justica_volta_a_exigir_o_mesmo_servidor():
+    """A regra larga vale entre dois enderecos da Justica. Se a pagina nao for
+    `.jus.br`, nada de terceiro entra por tabela."""
+    from justica_mcp.portal import do_mesmo_tribunal
+
+    assert do_mesmo_tribunal("https://exemplo.com.br/a", "https://exemplo.com.br/b")
+    assert not do_mesmo_tribunal("https://exemplo.com.br/a",
+                                 "https://qualquer.jus.br/b")
