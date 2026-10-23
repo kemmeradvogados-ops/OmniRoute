@@ -118,3 +118,81 @@ def test_o_icone_e_um_png_de_512():
                                    "description", "author", "server"])
 def test_os_campos_exigidos_pela_especificacao_estao_presentes(campo):
     assert campo in _manifesto()
+
+
+# --------------------------------------------------------------------------
+# O manual e o instalador nao podem prometer o que o programa nao faz
+# --------------------------------------------------------------------------
+
+from pathlib import Path as _Caminho
+
+_RAIZ = _Caminho(__file__).resolve().parent.parent
+_MANUAL = _RAIZ / "docs" / "MANUAL-DA-EQUIPE.md"
+_INSTALADOR = _RAIZ / "scripts" / "instalar.ps1"
+
+
+def test_o_manual_existe_e_fala_da_equipe():
+    assert _MANUAL.is_file()
+    texto = _MANUAL.read_text(encoding="utf-8")
+    assert "Configurações → Extensões" in texto
+
+
+def test_o_instalador_existe():
+    assert _INSTALADOR.is_file()
+
+
+def test_todo_comando_do_manual_existe_de_verdade():
+    """Guarda: manual que ensina subcomando inexistente queima o tempo de quem
+    esta instalando, e ele nao tem como saber que o errado e o manual.
+
+    A primeira versao mandava `credenciais guardar` sem `--tribunal` e sem
+    `--sistema`, que sao obrigatorios, dizendo que o programa perguntaria.
+    """
+    import re
+
+    from justica_mcp import credenciais
+
+    texto = _MANUAL.read_text(encoding="utf-8")
+    comandos = set(re.findall(r"-m justica_mcp\.(\w+)(?:\s+([a-z-]+))?", texto))
+    modulos = {m for m, _ in comandos}
+    assert modulos <= {"server", "credenciais", "portal"}, modulos
+
+    # Cada subcomando citado para o cofre tem de ter a funcao que o executa.
+    do_cofre = {sub for mod, sub in comandos if mod == "credenciais" and sub}
+    assert do_cofre, "o manual precisa mostrar pelo menos um subcomando do cofre"
+    for sub in do_cofre:
+        nome = f"cmd_{sub.replace('-', '_')}"
+        assert hasattr(credenciais, nome), f"{sub}: falta {nome} em credenciais.py"
+
+    # E a linha do cofre precisa trazer os dois argumentos obrigatorios.
+    for linha in texto.splitlines():
+        if "justica_mcp.credenciais guardar" in linha:
+            assert "--tribunal" in linha and "--sistema" in linha, linha
+
+
+def test_o_manual_nao_promete_download_pelo_conector():
+    """Nenhuma das 14 ferramentas baixa arquivo, em portal nenhum."""
+    texto = _MANUAL.read_text(encoding="utf-8")
+    assert "Baixar os autos" in texto
+    assert "pela linha de comando" in texto
+
+
+def test_o_manual_diz_que_esaj_e_pje_sao_recusados_pela_ferramenta():
+    texto = _MANUAL.read_text(encoding="utf-8")
+    assert "e-SAJ" in texto and "PJe" in texto
+    assert "recusa" in texto
+
+
+def test_o_instalador_protege_o_env_existente():
+    """Guarda de fonte: sobrescrever `.env` ja destruiu a configuracao do
+    operador uma vez, em 22/10/2026."""
+    texto = _INSTALADOR.read_text(encoding="utf-8")
+    assert '/XF ".env"' in texto
+    assert "JA EXISTE um .env" in texto
+
+
+def test_o_instalador_nao_cria_ambiente_virtual_no_drive():
+    """Ambiente virtual guarda caminhos absolutos da maquina que o criou."""
+    texto = _INSTALADOR.read_text(encoding="utf-8")
+    assert "$env:LOCALAPPDATA" in texto
+    assert "POR QUE LOCAL" in texto
