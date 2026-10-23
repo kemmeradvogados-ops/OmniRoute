@@ -3430,7 +3430,7 @@ def test_sem_botao_de_copia_o_comando_relata_a_tela():
     from justica_mcp import portal
 
     fonte = inspect.getsource(portal._baixar_integra)
-    trecho = fonte.split("botao = elemento_visivel(pagina, BOTAO_INTEGRA)")[1]
+    trecho = fonte.split("seletor, botao = achar_botao_da_integra(pagina)")[1]
     cabeca = trecho.split("return []")[0]
     assert '_relatar_tela(pagina, "TELA DO PROCESSO")' in cabeca
 
@@ -4013,7 +4013,7 @@ def test_depois_do_aceite_o_botao_de_download_e_procurado_de_novo():
 
     fonte = inspect.getsource(portal._integra_pelo_acesso)
     depois = fonte.split("_responder_segundo_fator(")[1]
-    assert "elemento_visivel(pagina, BOTAO_INTEGRA)" in depois
+    assert "achar_botao_da_integra(pagina)" in depois
     assert "_fluxo_do_botao_de_copia(" in depois
     # E tem de vir ANTES de procurar partes soltas no quadro, que e o caminho
     # de excecao.
@@ -8268,3 +8268,71 @@ def test_o_grau_sai_da_origem_do_numero():
     primeira = parse_numero("0809090-88.2023.8.19.0001")
     assert primeira.grau == 1
     assert primeira.grau_nome == "primeira instancia"
+
+
+# --------------------------------------------------------------------------
+# O botao de Download Completo tem mais de um identificador
+# --------------------------------------------------------------------------
+
+
+class _PaginaComBotoes:
+    """Pagina de mentira que so conhece os seletores que lhe foram dados."""
+
+    def __init__(self, visiveis):
+        self.visiveis = dict(visiveis)
+        self.viewport_size = {"width": 1280, "height": 720}
+        self.url = "https://eproc.trf2.jus.br/eproc/controlador.php"
+
+    def query_selector_all(self, seletor):
+        achado = self.visiveis.get(seletor)
+        return [achado] if achado is not None else []
+
+
+def test_o_botao_da_integra_e_achado_pelo_sufixo_de_cada_instalacao():
+    """Cada instalacao do eproc carrega o sufixo do tribunal que a originou.
+
+    `RS` foi lido no eproc do Rio de Janeiro em 05/10/2026; `TRF4` no eproc de
+    segunda instancia do Tribunal Regional Federal da 2a Regiao em 23/10/2026.
+    Supor que o segundo seria igual ao primeiro fez a consulta terminar sem
+    arquivo, com o botao desenhado na tela.
+    """
+    from justica_mcp.portal import achar_botao_da_integra
+
+    alvo = _El(True, _caixa(10, 200), "download-completo")
+    seletor, botao = achar_botao_da_integra(
+        _PaginaComBotoes({"#btnDownloadCompletoTRF4": alvo}))
+    assert seletor == "#btnDownloadCompletoTRF4"
+    assert botao is alvo
+
+    seletor, botao = achar_botao_da_integra(
+        _PaginaComBotoes({"#btnDownloadCompletoRS": alvo}))
+    assert seletor == "#btnDownloadCompletoRS"
+
+
+def test_sem_nenhum_dos_botoes_a_busca_devolve_vazio():
+    from justica_mcp.portal import achar_botao_da_integra
+
+    assert achar_botao_da_integra(_PaginaComBotoes({})) == (None, None)
+
+
+def test_a_trava_autoriza_o_seletor_que_sera_clicado():
+    """Guarda de fonte: autorizar um seletor e clicar em outro e autorizacao
+    de mentira. O seletor volta junto da busca por isso."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._fluxo_do_botao_de_copia)
+    assert "seletores_clicaveis=(seletor,)" in fonte
+    assert "pode_executar(Acao.CLICAR, seletor" in fonte
+    assert "BOTAO_INTEGRA" not in fonte
+
+
+def test_todos_os_seletores_da_integra_foram_lidos_de_tela_real():
+    """Guarda: a lista nao cresce por deducao de sigla de tribunal."""
+    from justica_mcp.portal import BOTOES_DA_INTEGRA
+
+    assert BOTOES_DA_INTEGRA == (
+        "#btnDownloadCompletoRS",
+        "#btnDownloadCompletoTRF4",
+    )

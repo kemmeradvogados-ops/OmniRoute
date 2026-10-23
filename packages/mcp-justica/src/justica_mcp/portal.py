@@ -3803,7 +3803,35 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     return dados
 
 
-BOTAO_INTEGRA = "#btnDownloadCompletoRS"
+# O botao de Download Completo do eproc nao tem UM identificador so. Cada
+# instalacao carrega o sufixo do tribunal que a originou, e dois ja foram
+# lidos em tela real: `RS` no eproc do Rio de Janeiro, em 05/10/2026, e `TRF4`
+# no eproc de segunda instancia do Tribunal Regional Federal da 2a Regiao, em
+# 23/10/2026. Supor que o segundo seria igual ao primeiro foi o que fez a
+# consulta terminar sem arquivo, com o botao desenhado na tela.
+#
+# A lista e so de seletores LIDOS. Nenhum foi deduzido a partir da sigla de
+# outro tribunal: quando aparecer um terceiro, o relato da tela vai mostra-lo,
+# como mostrou este.
+BOTOES_DA_INTEGRA = (
+    "#btnDownloadCompletoRS",
+    "#btnDownloadCompletoTRF4",
+)
+
+
+def achar_botao_da_integra(pagina):
+    """O primeiro botao de copia integral que estiver VISIVEL na tela.
+
+    Devolve `(seletor, elemento)`, ou `(None, None)`. O seletor volta junto
+    porque a trava precisa dele: autorizar o clique num seletor e clicar em
+    outro seria autorizacao de mentira.
+    """
+    for seletor in BOTOES_DA_INTEGRA:
+        elemento = elemento_visivel(pagina, seletor)
+        if elemento is not None:
+            return seletor, elemento
+    return None, None
+
 
 # Palavras que denunciam um caminho de copia dos autos. Comparadas SEM ACENTO,
 # contra o texto do link ou do botao.
@@ -5343,11 +5371,11 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
     # `#btnDownloadCompletoRS`, que antes nao existia nela. E o mesmo botao do
     # Tribunal Regional Federal da 2a Regiao. Daqui em diante os dois tribunais
     # sao o mesmo portal, e seria desperdicio escrever um caminho so para o Rio.
-    botao = elemento_visivel(pagina, BOTAO_INTEGRA)
+    seletor, botao = achar_botao_da_integra(pagina)
     if botao is not None:
         print("    Liberado o acesso, o botao de Download Completo apareceu.")
-        return _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave,
-                                        segundos)
+        return _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor,
+                                        destino, chave, segundos)
 
     # Daqui para a frente a janela pode ser um quadro que o portal troca sob os
     # pes. Qualquer erro vira relato, e nao traceback: a consulta ja terminou, e
@@ -5396,7 +5424,7 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
     """
     from pathlib import Path  # noqa: F401  (usado no fluxo do botao)
 
-    botao = elemento_visivel(pagina, BOTAO_INTEGRA)
+    seletor, botao = achar_botao_da_integra(pagina)
     if botao is None:
         # Beco, se parar aqui calado. Conferido em campo em 05/10/2026: o eproc
         # do Rio nao tem `#btnDownloadCompletoRS` na tela do processo, e o
@@ -5411,7 +5439,8 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
         if acesso is not None:
             return _integra_pelo_acesso(pagina, guarda, acesso, destino, chave,
                                         identidade, segundos)
-        print(f"    O botao {BOTAO_INTEGRA} nao esta nesta tela, e tambem nao ha")
+        print(f"    Nenhum botao de copia integral nesta tela "
+              f"({', '.join(BOTOES_DA_INTEGRA)}), e tambem nao ha")
         print('    link de "acesso a integra do processo".')
         _relatar_tela(pagina, "TELA DO PROCESSO")
         itens = _itens_do_menu(pagina)
@@ -5421,12 +5450,13 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
             for item in itens:
                 print(f"      {item}")
         return []
-    return _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave, segundos)
+    return _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor, destino,
+                                    chave, segundos)
 
 
-def _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave: str,
-                             segundos: int) -> list:
-    """Do botao `#btnDownloadCompletoRS` em diante: gerar e baixar as partes.
+def _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor: str, destino,
+                             chave: str, segundos: int) -> list:
+    """Do botao de Download Completo em diante: gerar e baixar as partes.
 
     Separado de `_baixar_integra` porque o Rio chega a este mesmo botao por
     outro caminho. Conferido em campo em 05/10/2026: no eproc do Rio o botao NAO
@@ -5440,9 +5470,9 @@ def _fluxo_do_botao_de_copia(pagina, guarda, botao, destino, chave: str,
         padrao_url=permissao_efemera(pagina.url).padrao_url,
         descricao="copia integral pelo botao do portal",
         conferido_em="execucao atual",
-        seletores_clicaveis=(BOTAO_INTEGRA,),
+        seletores_clicaveis=(seletor,),
     ))
-    guarda.pode_executar(Acao.CLICAR, BOTAO_INTEGRA, url=pagina.url)
+    guarda.pode_executar(Acao.CLICAR, seletor, url=pagina.url)
 
     # A tela intermediaria pode vir como aba nova. Sem capturar a aba, o
     # relato descreveria a pagina antiga e nao diria nada de util.
