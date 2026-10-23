@@ -740,14 +740,21 @@ def test_campo_comum_nao_e_digitado_tecla_a_tecla():
 
 class _BotaoDeMentira:
     def __init__(self, etiqueta="input", identificador=None, valor=None,
-                 texto="", tipo=None):
+                 texto="", tipo=None, rotulo_acessivel=None,
+                 onde_fica_o_rotulo="aria-label"):
         self.etiqueta = etiqueta
         self.identificador = identificador
         self.valor = valor
         self.texto = texto
         self.tipo = tipo
+        self.rotulo_acessivel = rotulo_acessivel
+        # Em `title`, e nao em `aria-label`, e foi exatamente isso que parou a
+        # corrida de 23/10/2026: o seletor olhava so `aria-label`.
+        self.onde_fica_o_rotulo = onde_fica_o_rotulo
 
     def get_attribute(self, nome):
+        if nome == self.onde_fica_o_rotulo and self.rotulo_acessivel:
+            return self.rotulo_acessivel
         return {"id": self.identificador, "value": self.valor,
                 "type": self.tipo}.get(nome)
 
@@ -1030,7 +1037,18 @@ class _PaginaDoDownload:
         if tem_crescente:
             opcoes.append(_Opcao("Crescente", "1"))
         self.cronologia = _Lista(opcoes)
-        self.abridor = _BotaoDeMentira(valor="") if abridor else None
+        # Os dois irmaos que a tela real tem, e que trariam a coisa errada:
+        # "Download do documento" baixa UMA peca, "Download favoritos" baixa os
+        # marcados. Eles vem ANTES do certo na lista, como na tela.
+        self.outros_downloads = [
+            _BotaoDeMentira(valor="", rotulo_acessivel="Download do documento"),
+            _BotaoDeMentira(valor="", rotulo_acessivel="Download favoritos"),
+        ]
+        for irmao in self.outros_downloads:
+            irmao.click = lambda: self.cliques.append("download-errado")
+        self.abridor = _BotaoDeMentira(
+            valor="", rotulo_acessivel="Download autos do processo",
+            onde_fica_o_rotulo="title") if abridor else None
         if self.abridor is not None:
             self.abridor.click = lambda: self.cliques.append("abrir")
         self.botao = _BotaoDeMentira(valor="DOWNLOAD",
@@ -1039,20 +1057,23 @@ class _PaginaDoDownload:
             self.botao.click = lambda: self.cliques.append("download")
 
     def query_selector(self, seletor):
-        from justica_mcp.pje import (ABRIR_O_PAINEL_DE_DOWNLOAD,
-                                     CAMPO_IDENTIFICADOR_FINAL,
+        from justica_mcp.pje import (CAMPO_IDENTIFICADOR_FINAL,
                                      CAMPO_IDENTIFICADOR_INICIAL,
                                      CONTEINER_DOS_BOTOES_DE_DOWNLOAD,
                                      ESCOLHA_DA_CRONOLOGIA)
         return {
-            ABRIR_O_PAINEL_DE_DOWNLOAD: self.abridor,
             CAMPO_IDENTIFICADOR_INICIAL: self.de,
             CAMPO_IDENTIFICADOR_FINAL: self.ate,
             ESCOLHA_DA_CRONOLOGIA: self.cronologia,
             CONTEINER_DOS_BOTOES_DE_DOWNLOAD: None,
         }.get(seletor)
 
-    def query_selector_all(self, _seletor):
+    def query_selector_all(self, seletor):
+        # `a, button` e a busca do abridor do painel; a outra e a do botao de
+        # enviar. A tela real tem TRES icones de download, e o duble carrega os
+        # tres de proposito: so assim o teste prova que o certo e escolhido.
+        if seletor == "a, button":
+            return [c for c in (self.outros_downloads + [self.abridor]) if c]
         return [self.botao] if self.botao else []
 
     def wait_for_selector(self, *a, **kw):
@@ -1424,3 +1445,46 @@ def test_copia_repetida_nao_e_indexada_de_novo():
     fonte = inspect.getsource(portal._baixar_autos_do_pje)
     assert "REPETIDA_NO_TEXTO" in fonte
     assert "O indice NAO foi alterado" in fonte
+
+
+def test_o_rotulo_e_lido_de_aria_label_OU_de_title():
+    """A corrida de 23/10/2026 parou porque o seletor olhava so `aria-label`,
+    e naquele botao o rotulo vinha de `title`. O gravador de telas sempre
+    consultou as duas fontes; a busca e que olhava uma."""
+    from justica_mcp.pje import rotulo_acessivel
+
+    por_aria = _BotaoDeMentira(rotulo_acessivel="Download autos do processo")
+    por_title = _BotaoDeMentira(rotulo_acessivel="Download autos do processo",
+                                onde_fica_o_rotulo="title")
+    sem_rotulo = _BotaoDeMentira()
+    assert rotulo_acessivel(por_aria) == "download autos do processo"
+    assert rotulo_acessivel(por_title) == "download autos do processo"
+    assert rotulo_acessivel(sem_rotulo) == ""
+
+
+def test_entre_tres_icones_de_download_escolhe_o_dos_AUTOS():
+    """A tela real tem 'Download autos do processo', 'Download do documento' e
+    'Download favoritos'. Casar por "download" traria uma peca onde o advogado
+    espera o processo inteiro."""
+    from justica_mcp.pje import achar_o_abridor_do_painel
+
+    pagina = _PaginaDoDownload()
+    achado = achar_o_abridor_do_painel(pagina)
+    assert achado is pagina.abridor
+    pedir = __import__("justica_mcp.pje", fromlist=["x"]).pedir_o_download_dos_autos
+    pedir(pagina, _GuardaDeMentira(), de=1, ate=2)
+    assert "download-errado" not in pagina.cliques
+
+
+def test_sem_nenhum_download_de_autos_nada_e_clicado():
+    """So os irmaos na tela: nao se clica no que baixaria a coisa errada."""
+    import pytest
+
+    from justica_mcp.pje import (DownloadDoPJeIndisponivel,
+                                 pedir_o_download_dos_autos)
+
+    pagina = _PaginaDoDownload(abridor=False)
+    with pytest.raises(DownloadDoPJeIndisponivel) as erro:
+        pedir_o_download_dos_autos(pagina, _GuardaDeMentira(), de=1, ate=2)
+    assert "aria-label" in str(erro.value) and "title" in str(erro.value)
+    assert pagina.cliques == []

@@ -808,7 +808,24 @@ def faixa_de_identificadores(eventos: list) -> tuple:
 # pelo texto, dentro do conteiner, que tem nome estavel.
 # ==========================================================================
 
-ABRIR_O_PAINEL_DE_DOWNLOAD = '[aria-label="Download autos do processo"]'
+# O rotulo do botao que abre o painel, como a tela o declara. NAO e um
+# seletor: ele e procurado em `aria-label` E em `title`, porque a corrida de
+# 23/10/2026 parou aqui justamente por isso. O relato da tela dizia
+# `rotulo='Download autos do processo'` e o seletor `[aria-label="..."]` nao
+# casava: o gravador de telas tenta `aria-label`, depois `title`, depois
+# `placeholder`, e naquele botao o rotulo vem de `title`.
+ROTULO_DO_PAINEL_DE_DOWNLOAD = "download autos do processo"
+
+# PALAVRA OBRIGATORIA, e ela evita baixar a coisa errada. A mesma tela tem
+# TRES icones de download, e os rotulos sao parecidos:
+#
+#   'Download autos do processo'  o que se quer
+#   'Download do documento'       baixa UM documento so
+#   'Download favoritos'          baixa os marcados
+#
+# Casar por "download" pegaria o primeiro que aparecesse, e o advogado
+# receberia uma peca onde esperava os autos. "autos" e o que separa.
+PALAVRA_QUE_SEPARA_OS_DOWNLOADS = "autos"
 CONTEINER_DOS_BOTOES_DE_DOWNLOAD = 'div[id="navbar:botoesDownload"]'
 CAMPO_IDENTIFICADOR_INICIAL = 'input[id="navbar:idDe"]'
 CAMPO_IDENTIFICADOR_FINAL = 'input[id="navbar:idAte"]'
@@ -890,6 +907,42 @@ def achar_botao_de_enviar_o_download(pagina: Any) -> Optional[Any]:
     return None
 
 
+def rotulo_acessivel(elemento: Any) -> str:
+    """O rotulo do elemento, de onde quer que ele venha, em forma comparavel.
+
+    `aria-label` e `title`, nessa ordem, que sao as duas fontes que o gravador
+    de telas tambem consulta. Ler so uma delas foi o que parou a corrida de
+    23/10/2026: o rotulo estava em `title`.
+    """
+    for atributo in ("aria-label", "title"):
+        try:
+            valor = elemento.get_attribute(atributo)
+        except Exception:
+            continue
+        if valor and valor.strip():
+            return sem_acento_simples(valor)
+    return ""
+
+
+def achar_o_abridor_do_painel(pagina: Any) -> Optional[Any]:
+    """O botao que abre o painel de download dos AUTOS, e nao outro download.
+
+    Igualdade do rotulo primeiro; depois, rotulo que tenha "download" E
+    "autos". A segunda palavra nao e enfeite: a mesma tela tem tres icones de
+    download, e dois deles ("Download do documento", "Download favoritos")
+    trariam uma peca onde o advogado espera o processo.
+    """
+    candidatos = list(pagina.query_selector_all("a, button"))
+    rotulados = [(rotulo_acessivel(c), c) for c in candidatos]
+    for rotulo, elemento in rotulados:
+        if rotulo == ROTULO_DO_PAINEL_DE_DOWNLOAD:
+            return elemento
+    for rotulo, elemento in rotulados:
+        if "download" in rotulo and PALAVRA_QUE_SEPARA_OS_DOWNLOADS in rotulo:
+            return elemento
+    return None
+
+
 def pedir_o_download_dos_autos(
     pagina: Any, guarda: Any, *, de: int, ate: int,
     incluir_movimentos: bool = False, segundos: int = 120,
@@ -914,21 +967,23 @@ def pedir_o_download_dos_autos(
 
     feito: dict = {"faixa": [de, ate], "cronologia": CRESCENTE}
 
-    abridor = pagina.query_selector(ABRIR_O_PAINEL_DE_DOWNLOAD)
+    abridor = achar_o_abridor_do_painel(pagina)
     if abridor is None:
         raise DownloadDoPJeIndisponivel(
-            "O botao que abre o painel de download nao esta na tela "
-            f"({ABRIR_O_PAINEL_DE_DOWNLOAD}). Nada foi pedido.")
+            "O botao que abre o painel de download nao esta na tela: nenhum "
+            f"clicavel com rotulo {ROTULO_DO_PAINEL_DE_DOWNLOAD!r} em "
+            "`aria-label` ou `title`. Nada foi pedido.")
 
+    seletor_do_abridor = seletor_do_elemento(abridor, "abrir-painel-de-download")
     guarda.permissoes.append(Permissao(
         padrao_url=permissao_efemera(pagina.url).padrao_url,
         descricao="painel de download dos autos do PJe, somente leitura",
         conferido_em="execucao atual",
-        seletores_clicaveis=(ABRIR_O_PAINEL_DE_DOWNLOAD,),
+        seletores_clicaveis=(seletor_do_abridor,),
         seletores_preenchiveis=(CAMPO_IDENTIFICADOR_INICIAL,
                                 CAMPO_IDENTIFICADOR_FINAL),
     ))
-    guarda.pode_executar(Acao.CLICAR, ABRIR_O_PAINEL_DE_DOWNLOAD, url=pagina.url)
+    guarda.pode_executar(Acao.CLICAR, seletor_do_abridor, url=pagina.url)
     abridor.click()
     try:
         pagina.wait_for_selector(CAMPO_IDENTIFICADOR_INICIAL,
