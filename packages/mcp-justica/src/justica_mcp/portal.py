@@ -4622,6 +4622,16 @@ def linhas_de_botoes(botoes, prefixo: str = "") -> list[str]:
 DOMINIO_DA_JUSTICA = ".jus.br"
 
 
+def anfitriao_de(endereco: str) -> str:
+    """So o servidor do endereco, que e o que decide para onde vai a senha."""
+    from urllib.parse import urlparse
+
+    try:
+        return urlparse(endereco or "").netloc or "(endereco sem servidor)"
+    except Exception:
+        return "(endereco ilegivel)"
+
+
 def do_mesmo_tribunal(endereco_da_pagina: str, endereco_do_quadro: str) -> bool:
     """Diz se o quadro pertence a Justica, e nao a um terceiro.
 
@@ -6280,6 +6290,21 @@ def consultar_processo(
         print("  Nada foi enviado ao portal e nenhuma tentativa de login foi "
               "gasta.", file=sys.stderr)
         return 1
+
+    # ANTES de autenticar, em voz alta: o grau do processo e o servidor para
+    # onde a credencial vai. Os dois ja eram sabidos aqui e nenhum era dito.
+    # Em 23/10/2026 um processo de segunda instancia da Justica Federal da 2a
+    # Regiao foi consultado no portal da PRIMEIRA, porque a chave do arquivo de
+    # configuracao chamava-se TRF2 e guardava o endereco da secao judiciaria. A
+    # autenticacao foi gasta antes de alguem notar. Dizer as duas coisas custa
+    # duas linhas e teria evitado a corrida inteira.
+    print(f"\n  Processo de {numero.grau_nome} (deduzida do proprio numero: "
+          f"origem {numero.origem}).")
+    print(f"  A credencial vai para: {anfitriao_de(url)}")
+    print("  Confira que o portal e o do grau do processo. Primeiro e segundo "
+          "grau costumam")
+    print("  ter enderecos diferentes, e o nome da chave no .env nao garante "
+          "qual e qual.")
 
     def depois(pagina, guarda, estado_local, identidade):
         atual = pagina.url

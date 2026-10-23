@@ -8224,3 +8224,47 @@ def test_a_conferencia_e_usada_nas_duas_tentativas_de_escrita():
     fonte = inspect.getsource(portal.preencher_conferindo)
     assert fonte.count("conferiu_a_escrita(") == 2
     assert "mesmo_conteudo(" not in fonte
+
+
+# --------------------------------------------------------------------------
+# O grau e o destino, ditos ANTES de gastar a credencial
+# --------------------------------------------------------------------------
+
+
+def test_anfitriao_de_devolve_so_o_servidor():
+    from justica_mcp.portal import anfitriao_de
+
+    assert anfitriao_de(
+        "https://eproc.trf2.jus.br/eproc/index.php?x=1") == "eproc.trf2.jus.br"
+    assert anfitriao_de("") == "(endereco sem servidor)"
+
+
+def test_a_consulta_diz_o_grau_e_o_destino_antes_de_autenticar():
+    """Guarda de fonte: os dois ja eram sabidos e nenhum era dito.
+
+    Em 23/10/2026 um processo de segunda instancia da Justica Federal da 2a
+    Regiao foi consultado no portal da PRIMEIRA, porque a chave do `.env`
+    chamava-se TRF2 e guardava o endereco da secao judiciaria. A autenticacao
+    foi gasta antes de alguem notar.
+    """
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "numero.grau_nome" in fonte
+    assert "anfitriao_de(url)" in fonte
+    # E tem de vir antes do bloco que roda ja dentro do navegador.
+    assert fonte.index("anfitriao_de(url)") < fonte.index(
+        "def depois(pagina, guarda, estado_local, identidade):")
+
+
+def test_o_grau_sai_da_origem_do_numero():
+    from justica_mcp.core.cnj import parse_numero
+
+    segunda = parse_numero("5000001-91.2026.4.02.0000")
+    assert segunda.grau == 2
+    assert segunda.grau_nome == "segunda instancia"
+    primeira = parse_numero("0809090-88.2023.8.19.0001")
+    assert primeira.grau == 1
+    assert primeira.grau_nome == "primeira instancia"
