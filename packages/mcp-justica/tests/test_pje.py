@@ -1340,3 +1340,87 @@ def test_o_arquivo_gravado_diz_se_a_leitura_e_completa():
 
     fonte = inspect.getsource(portal.consultar_processo)
     assert '"linha_do_tempo_completa"' in fonte
+
+
+# ==========================================================================
+# O DOWNLOAD LIGADO A CONSULTA
+# ==========================================================================
+
+
+def test_o_download_so_e_pedido_com_a_linha_do_tempo_COMPLETA():
+    """Guarda de fonte, e e a recusa mais importante deste caminho.
+
+    A faixa sai da linha do tempo. Linha incompleta da faixa incompleta, e o
+    arquivo viria com um pedaco do processo sem que nada no PDF dissesse isso.
+    Na corrida de 23/10/2026 a primeira pagina dava de 211055786 a 301359755;
+    a leitura inteira deu de 116341641 a 301359755. Baixar pela primeira
+    traria menos da metade."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    trecho = fonte.split("_baixar_autos_do_pje")[0][-2500:]
+    assert 'not percurso["completa"]' in trecho
+    assert "pela metade" in trecho
+
+
+def test_sem_documento_na_linha_do_tempo_nada_e_pedido():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "primeiro is None" in fonte
+
+
+def test_o_download_do_pje_e_opcional():
+    """Baixar os autos sozinho seria decidir pelo advogado: a geracao demora e
+    o arquivo e grande."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "--documentos integra" in fonte
+
+
+def test_o_resgate_do_pje_reaproveita_as_tres_redeas():
+    """Guarda de fonte: ouvir o evento, procurar na pasta do navegador, e
+    dizer da Area de Download. As duas primeiras foram escritas a duras penas
+    no Portal de Servicos; reescreve-las aqui seria repetir o aprendizado."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert "expect_download" in fonte
+    assert "resgatar_descarga" in fonte
+    assert "AreaDeDownload" in fonte
+
+
+def test_a_permissao_de_download_e_desligada_sempre():
+    """`finally`, e nao depois do `if`: uma excecao no meio deixaria a trava
+    autorizando download em qualquer tela seguinte."""
+    import ast
+    import inspect
+    import textwrap
+
+    from justica_mcp import portal
+
+    arvore = ast.parse(textwrap.dedent(
+        inspect.getsource(portal._baixar_autos_do_pje)))
+    tentativas = [no for no in ast.walk(arvore) if isinstance(no, ast.Try)]
+    finais = "\n".join(ast.unparse(no) for t in tentativas for no in t.finalbody)
+    assert "permitir_download = False" in finais
+
+
+def test_copia_repetida_nao_e_indexada_de_novo():
+    """Indexar de novo diria que o processo tem o dobro de folhas que tem."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert "REPETIDA_NO_TEXTO" in fonte
+    assert "O indice NAO foi alterado" in fonte

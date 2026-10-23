@@ -5596,6 +5596,111 @@ def _paginas_pedidas(bruto: Any) -> tuple:
     return tuple(sorted(set(saida)))
 
 
+def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
+                         estado_local, identidade, segundos: int) -> None:
+    """Pede os autos pelo painel do PJe e resgata o arquivo para o acervo.
+
+    A faixa vem da LINHA DO TEMPO ja percorrida ate o fim, e quem chama ja
+    recusou pedir com leitura incompleta.
+
+    Tres redeas, as mesmas que o Portal de Servicos ensinou a duras penas:
+    ouvir o evento de download; se nada vier, procurar o arquivo novo na pasta
+    do navegador; e, se nem isso, dizer que o portal pode ter mandado o arquivo
+    para a Area de Download, que e uma tela PROPRIA do PJe e nao um erro.
+
+    Nada e inventado sobre o terceiro caso: `/1g/AreaDeDownload/listView.seam`
+    apareceu entre os caminhos de navegacao da tela dos autos em 23/10/2026.
+    Se for por ali, a corrida seguinte e que vai buscar, e isso fica dito em
+    vez de o programa fingir que baixou.
+    """
+    from pathlib import Path as _P
+
+    from .core.acervo import (
+        REPETIDA_IGUAL, REPETIDA_NO_TEXTO, REPETIDA_SUSPEITA, carregar_indice,
+        garantir_pasta,
+    )
+    from .dcp import instantaneo_da_pasta, resgatar_descarga
+    from .navegador import pasta_de_descargas
+    from .pje import DownloadDoPJeIndisponivel, pedir_o_download_dos_autos
+
+    indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+    pasta = garantir_pasta(numero.apenas_digitos)
+    print(f"\n  Pasta do processo: {pasta}")
+    print(f"  Pedindo os autos de {de} a {ate}, em ordem crescente.")
+
+    descargas = pasta_de_descargas()
+    antes = instantaneo_da_pasta(descargas)
+    guarda.permitir_download = True
+    baixado = None
+    try:
+        try:
+            with aba.expect_download(timeout=segundos * 1000) as aviso:
+                pedir_o_download_dos_autos(aba, guarda, de=de, ate=ate,
+                                           segundos=segundos)
+            arquivo = pasta / f"autos-{numero.apenas_digitos}.pdf"
+            aviso.value.save_as(str(arquivo))
+            baixado = arquivo
+            print(f"    Arquivo gravado: {arquivo.name}")
+        except DownloadDoPJeIndisponivel as exc:
+            print(f"    [PAROU] {exc}")
+            _relatar_tela(aba, "PAINEL DE DOWNLOAD DO PJE")
+            return
+        except Exception as exc:
+            # O evento nao veio. Nao e conclusao de que falhou: o Chromium
+            # escreve na pasta dele, e a geracao do PJe pode demorar.
+            print(f"    O evento de download nao veio em {segundos}s "
+                  f"({type(exc).__name__}). Procurando na pasta do navegador.")
+            resgatado = resgatar_descarga(
+                descargas, antes, pasta, f"autos-{numero.apenas_digitos}",
+                espera=segundos, recuo="    ")
+            baixado = _P(resgatado) if resgatado else None
+    finally:
+        guarda.permitir_download = False
+
+    if baixado is None:
+        print("    Nenhum arquivo chegou. O PJe pode ter mandado a geracao "
+              "para a")
+        print("    AREA DE DOWNLOAD (/1g/AreaDeDownload/listView.seam), que e "
+              "uma tela")
+        print("    propria do portal: o arquivo fica la pronto para buscar "
+              "depois.")
+        print("    Essa busca ainda NAO esta escrita. Nada foi gravado.")
+        estado_local.registrar(
+            acao="download_dos_autos_do_pje", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado,
+            resultado="sem arquivo",
+        )
+        return
+
+    veredicto, gemeo = indice.avaliar_repeticao(baixado)
+    if veredicto in (REPETIDA_IGUAL, REPETIDA_NO_TEXTO):
+        qual = ("identica a" if veredicto == REPETIDA_IGUAL
+                else "com o MESMO TEXTO de")
+        print(f"    COPIA REPETIDA: {qual} {_P(gemeo.arquivo).name} "
+              f"({gemeo.faixa()}), ja no acervo. O indice NAO foi alterado.")
+        if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
+            try:
+                baixado.unlink()
+                print("    O arquivo repetido foi removido da pasta.")
+            except OSError as exc:
+                print(f"    Nao consegui remover o repetido: {exc}")
+    elif veredicto == REPETIDA_SUSPEITA:
+        print(f"    ATENCAO: mesmo numero de paginas de "
+              f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), com texto "
+              f"diferente. NAO indexei:")
+        print("    numerar folha errada e pior que nao numerar. O arquivo "
+              f"esta em {baixado}.")
+    else:
+        item = indice.acrescentar(baixado, "integra")
+        indice.gravar()
+        print(f"    AUTOS gravados: {baixado.name} ({item.faixa()}).")
+    estado_local.registrar(
+        acao="download_dos_autos_do_pje", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado,
+        documento=str(baixado), resultado=veredicto,
+    )
+
+
 def consultar_processo(
     url: str,
     tribunal: str,
@@ -6353,8 +6458,27 @@ def consultar_processo(
                     sistema=identidade.sistema, numero=numero.formatado,
                     resultado=f"{len(eventos)} evento(s)",
                 )
-            print("\n  O DOWNLOAD DOS AUTOS ainda nao esta escrito. O painel do")
-            print("  portal pede a faixa de identificadores, que esta acima.")
+            if not documentos:
+                print("\n  O download dos autos NAO foi pedido. Para pedi-lo, "
+                      "repita com --documentos integra.")
+            elif not percurso["completa"]:
+                # RECUSA DELIBERADA. A faixa sai da linha do tempo, e linha do
+                # tempo incompleta da faixa incompleta: o arquivo viria com um
+                # pedaco do processo e nada no PDF diria isso. Melhor nao
+                # baixar do que baixar meio processo achando que e inteiro.
+                print("\n  O download NAO foi pedido: a linha do tempo nao foi "
+                      "percorrida ate o fim,")
+                print("  entao a faixa de identificadores cobre so parte do "
+                      "processo. Baixar assim")
+                print("  traria os autos pela metade, e o arquivo nao diria "
+                      "isso em lugar nenhum.")
+            elif primeiro is None:
+                print("\n  O download NAO foi pedido: a linha do tempo nao "
+                      "trouxe documento nenhum.")
+            else:
+                _baixar_autos_do_pje(
+                    aba, guarda, numero, primeiro, ultimo,
+                    estado_local, identidade, segundos)
             try:
                 aba.close()
             except Exception:
