@@ -5791,7 +5791,8 @@ def _resgatar_pelo_faro(farejador, aba, guarda, pasta, numero,
 
 
 def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
-                         estado_local, identidade, segundos: int) -> None:
+                         estado_local, identidade, segundos: int,
+                         prazo_do_arquivo: Optional[int] = None) -> None:
     """Pede os autos pelo painel do PJe e resgata o arquivo para o acervo.
 
     A faixa vem da LINHA DO TEMPO ja percorrida ate o fim, e quem chama ja
@@ -5807,6 +5808,15 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
     navegador. Ela nao espera o arquivo CHEGAR: anota o endereco dele caso ele
     apenas PASSE, e entao pede de novo pela sessao. Ver `FarejadorDeArquivos`.
 
+    DOIS prazos, e confundi-los foi o que fez as tres primeiras falharem
+    juntas naquela corrida. `segundos` e prazo de TELA: a tela que nao monta
+    nele esta quebrada. `prazo_do_arquivo` e prazo de ARQUIVO: o portal GERA
+    o PDF quando se pede, e um de 507 folhas nao fica pronto em 45s. O
+    caminho do PJe passava `segundos` nos dois lugares, entao o programa
+    desistia de esperar o arquivo antes de o portal ter terminado de faze-lo,
+    e a desistencia saia escrita como se nada tivesse sido entregue. Ver
+    `espera_do_arquivo`, cujo texto ja dizia isso desde o Portal de Servicos.
+
     Nada e inventado sobre o terceiro caso: `/1g/AreaDeDownload/listView.seam`
     apareceu entre os caminhos de navegacao da tela dos autos em 23/10/2026.
     Se for por ali, a corrida seguinte e que vai buscar, e isso fica dito em
@@ -5818,14 +5828,20 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         REPETIDA_IGUAL, REPETIDA_NO_TEXTO, REPETIDA_SUSPEITA, carregar_indice,
         garantir_pasta,
     )
-    from .dcp import instantaneo_da_pasta, resgatar_descarga
+    from .dcp import (
+        espera_do_arquivo, instantaneo_da_pasta, resgatar_descarga,
+    )
     from .navegador import FarejadorDeArquivos, pasta_de_descargas
     from .pje import DownloadDoPJeIndisponivel, pedir_o_download_dos_autos
 
+    prazo = espera_do_arquivo(
+        prazo_do_arquivo if prazo_do_arquivo else segundos)
     indice = carregar_indice(numero.apenas_digitos, numero.formatado)
     pasta = garantir_pasta(numero.apenas_digitos)
     print(f"\n  Pasta do processo: {pasta}")
     print(f"  Pedindo os autos de {de} a {ate}, em ordem crescente.")
+    print(f"  Prazo do ARQUIVO: {prazo}s (o que o portal tem para GERAR o "
+          f"PDF, que nao e o prazo de tela, de {segundos}s).")
 
     descargas = pasta_de_descargas()
     antes = instantaneo_da_pasta(descargas)
@@ -5839,7 +5855,7 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
     baixado = None
     try:
         try:
-            with aba.expect_download(timeout=segundos * 1000) as aviso:
+            with aba.expect_download(timeout=prazo * 1000) as aviso:
                 pedir_o_download_dos_autos(aba, guarda, de=de, ate=ate,
                                            segundos=segundos)
             arquivo = pasta / f"autos-{numero.apenas_digitos}.pdf"
@@ -5854,11 +5870,11 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
         except Exception as exc:
             # O evento nao veio. Nao e conclusao de que falhou: o Chromium
             # escreve na pasta dele, e a geracao do PJe pode demorar.
-            print(f"    O evento de download nao veio em {segundos}s "
+            print(f"    O evento de download nao veio em {prazo}s "
                   f"({type(exc).__name__}). Procurando na pasta do navegador.")
             resgatado = resgatar_descarga(
                 descargas, antes, pasta, f"autos-{numero.apenas_digitos}",
-                espera=segundos, recuo="    ")
+                espera=prazo, recuo="    ")
             baixado = _P(resgatado) if resgatado else None
     finally:
         guarda.permitir_download = False
@@ -6695,7 +6711,8 @@ def consultar_processo(
             else:
                 _baixar_autos_do_pje(
                     aba, guarda, numero, primeiro, ultimo,
-                    estado_local, identidade, segundos)
+                    estado_local, identidade, segundos,
+                    prazo_do_arquivo=segundos_download)
             try:
                 aba.close()
             except Exception:

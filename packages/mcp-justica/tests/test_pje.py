@@ -1703,3 +1703,47 @@ def test_o_resgate_pelo_faro_nao_clica_em_nada():
     fonte = inspect.getsource(portal._resgatar_pelo_faro)
     assert ".click(" not in fonte
     assert ".goto(" not in fonte
+
+
+# --------------------------------------------------------------------------
+# Prazo de tela e prazo de arquivo sao grandezas diferentes
+# --------------------------------------------------------------------------
+
+
+def test_o_download_dos_autos_usa_o_prazo_de_arquivo_e_nao_o_de_tela():
+    """O defeito que fez as tres primeiras redeas falharem juntas.
+
+    O caminho do PJe passava o prazo de TELA (45s por padrao) para esperar o
+    ARQUIVO. Um PDF de 507 folhas nao fica pronto em 45s, e o programa
+    desistia antes de o portal terminar de gera-lo. A licao ja estava escrita
+    em `espera_do_arquivo` desde o Portal de Servicos; faltava aplica-la aqui.
+    """
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert "espera_do_arquivo(" in fonte
+    assert "expect_download(timeout=prazo * 1000)" in fonte
+    assert "espera=prazo" in fonte
+    # A tela continua com o prazo de tela: a Area de Download que nao monta em
+    # 45s esta quebrada, e esperar 300s por ela so adiaria o relato.
+    assert "_relatar_area_de_download(aba, guarda, segundos)" in fonte
+
+
+def test_quem_chama_entrega_o_prazo_de_arquivo_pedido_na_linha_de_comando():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal.consultar_processo)
+    assert "prazo_do_arquivo=segundos_download" in fonte
+
+
+def test_o_prazo_de_arquivo_nunca_fica_abaixo_do_teto_proprio():
+    """Sem `--segundos-download`, o prazo nao pode cair para o de tela."""
+    from justica_mcp.dcp import TETO_DO_DOWNLOAD, espera_do_arquivo
+
+    assert espera_do_arquivo(45) == TETO_DO_DOWNLOAD
+    assert espera_do_arquivo(None) == TETO_DO_DOWNLOAD
+    assert espera_do_arquivo(900) == 900
