@@ -8088,3 +8088,75 @@ def test_pagina_fora_da_justica_volta_a_exigir_o_mesmo_servidor():
     assert do_mesmo_tribunal("https://exemplo.com.br/a", "https://exemplo.com.br/b")
     assert not do_mesmo_tribunal("https://exemplo.com.br/a",
                                  "https://qualquer.jus.br/b")
+
+
+# ==========================================================================
+# QUADRO QUE DESENHA DEPOIS DE CARREGAR
+#
+# A Area de Download do PJe e um aplicativo Angular dentro de um quadro. Na
+# primeira corrida em que o quadro foi enxergado, 23/10/2026, o relato saiu com
+# UM botao e nenhum campo: a tela ainda nao tinha sido desenhada.
+# ==========================================================================
+
+
+class _QuadroQueDemora:
+    def __init__(self, url, levas):
+        self.url = url
+        self.levas = list(levas)
+        self.consultas = 0
+
+    def query_selector_all(self, _seletor):
+        quantos = self.levas[min(self.consultas, len(self.levas) - 1)]
+        self.consultas += 1
+        return [object()] * quantos
+
+
+class _PaginaDeQuadroQueDemora:
+    def __init__(self, quadro):
+        self.url = "https://tjrj.pje.jus.br/1g/AreaDeDownload/listView.seam"
+        self.frames = [_QuadroEmbutido(self.url), quadro]
+        self.esperas = 0
+
+    def wait_for_timeout(self, _ms):
+        self.esperas += 1
+
+
+def test_espera_o_quadro_desenhar_antes_de_relatar():
+    from justica_mcp.portal import esperar_o_quadro_montar
+
+    quadro = _QuadroQueDemora(
+        "https://pje-frontend-docs.tjrj.jus.br/#/area-download", [1, 1, 40])
+    pagina = _PaginaDeQuadroQueDemora(quadro)
+    assert esperar_o_quadro_montar(pagina, segundos=10) is True
+    assert pagina.esperas >= 1
+
+
+def test_quadro_que_continua_vazio_devolve_falso_e_nao_levanta():
+    """Tela vazia TAMBEM e informacao: quem chama relata do mesmo jeito."""
+    from justica_mcp.portal import esperar_o_quadro_montar
+
+    quadro = _QuadroQueDemora(
+        "https://pje-frontend-docs.tjrj.jus.br/#/area-download", [1])
+    assert esperar_o_quadro_montar(_PaginaDeQuadroQueDemora(quadro),
+                                   segundos=2) is False
+
+
+def test_a_area_de_download_espera_antes_de_relatar():
+    """Guarda de fonte: relatar sem esperar foi o que trouxe '1 botao, 0
+    campos' na corrida de 23/10/2026."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._relatar_area_de_download)
+    assert fonte.index("esperar_o_quadro_montar") < fonte.index(
+        '_relatar_tela(aba, "AREA DE DOWNLOAD DO PJE")')
+
+
+def test_quadro_vazio_e_DITO_e_nao_escondido():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._relatar_area_de_download)
+    assert "continuou sem conteudo" in fonte

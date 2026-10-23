@@ -5639,6 +5639,45 @@ def _paginas_pedidas(bruto: Any) -> tuple:
 CAMINHO_DA_AREA_DE_DOWNLOAD = "/1g/AreaDeDownload/listView.seam"
 
 
+# Quantos elementos um quadro precisa ter para contar como "montado". Um
+# aplicativo Angular recem-carregado tem a moldura e quase nada; a tela de
+# verdade traz lista, botoes e linhas. Doze e baixo de proposito: errar para o
+# lado de relatar cedo e melhor que esperar o teto inteiro numa tela vazia de
+# verdade, porque o relato de uma tela vazia tambem e informacao.
+MINIMO_PARA_O_QUADRO_CONTAR_COMO_MONTADO = 12
+
+
+def esperar_o_quadro_montar(pagina, segundos: int,
+                            minimo: int = MINIMO_PARA_O_QUADRO_CONTAR_COMO_MONTADO
+                            ) -> bool:
+    """Espera o conteudo do quadro aparecer. Devolve se apareceu.
+
+    Escrito em 23/10/2026 para a Area de Download do PJe, que e um aplicativo
+    Angular dentro de um quadro: na primeira corrida em que o quadro foi
+    enxergado, o relato saiu com UM botao e nenhum campo, porque a tela ainda
+    nao tinha sido desenhada quando ele correu.
+
+    Devolver `False` nao e falha: quer dizer que a tela continuou vazia, e isso
+    e informacao tambem. Quem chama relata do mesmo jeito.
+    """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(1, segundos)
+    while _tempo.monotonic() < limite:
+        for quadro in quadros_do_mesmo_portal(pagina):
+            try:
+                quantos = len(quadro.query_selector_all("a, button, tr, li, td"))
+            except Exception:
+                quantos = 0
+            if quantos >= minimo:
+                return True
+        try:
+            pagina.wait_for_timeout(1000)
+        except Exception:
+            break
+    return False
+
+
 def _relatar_area_de_download(aba, guarda, segundos: int) -> None:
     """Vai ate a Area de Download e RELATA a tela, sem clicar em nada.
 
@@ -5676,6 +5715,14 @@ def _relatar_area_de_download(aba, guarda, segundos: int) -> None:
               f"({type(exc).__name__}).")
         return
 
+    # O conteudo e um aplicativo Angular dentro de um quadro, e ele desenha
+    # DEPOIS de carregar. Relatar sem esperar foi o que trouxe "1 botao, 0
+    # campos" na corrida de 23/10/2026.
+    montou = esperar_o_quadro_montar(aba, segundos)
+    if not montou:
+        print(f"    O quadro da Area de Download continuou sem conteudo depois "
+              f"de {segundos}s.")
+        print("    O relato abaixo e o que ha nela assim mesmo.")
     _relatar_tela(aba, "AREA DE DOWNLOAD DO PJE")
     _relatar_estrutura_de_dados(aba)
     print("\n    A busca do arquivo nesta tela ainda NAO esta escrita. O "
