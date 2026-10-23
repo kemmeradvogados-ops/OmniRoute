@@ -2,20 +2,28 @@
   "manifest_version": "0.3",
   "name": "justica-mcp",
   "display_name": "Justiça (tribunais brasileiros)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Acesso somente leitura a processos judiciais brasileiros: base nacional, Diário de Justiça Eletrônico, portais dos tribunais e leitura das peças já baixadas.",
-  "long_description": "Camada padronizadora de acesso processual, somente leitura.\n\nO que funciona sem credencial e sem portal: ficha do processo, movimentos e publicações do Diário de Justiça Eletrônico Nacional, pela base nacional do Conselho Nacional de Justiça.\n\nO que funciona a partir do disco: a lista das peças já gravadas de um processo e o texto de cada uma, sem abrir o portal e sem gastar tentativa de autenticação.\n\nO que funciona com credencial: a consulta autenticada no Portal de Serviços do Tribunal de Justiça do Estado do Rio de Janeiro, comprovada em corrida real, e no eproc.\n\nO que NÃO faz, de propósito: não dá ciência de intimação e não inicia prazo; não escreve nada em sistema de tribunal; não manda dado do cliente para fora da máquina.\n\nO download dos autos continua pela linha de comando, porque abre uma janela de verdade, pede presença humana no desafio de verificação e pode levar horas.",
+  "long_description": "Camada padronizadora de acesso processual, somente leitura.\n\nO que funciona sem credencial e sem portal: ficha do processo, movimentos e publicações do Diário de Justiça Eletrônico Nacional, pela base nacional do Conselho Nacional de Justiça.\n\nO que funciona a partir do disco: a lista das peças já gravadas de um processo e o texto de cada uma, sem abrir o portal e sem gastar tentativa de autenticação. É por aqui que a análise acontece.\n\nO que funciona com credencial, provado em corrida real: a consulta autenticada no Portal de Serviços do Tribunal de Justiça do Estado do Rio de Janeiro e no eproc. O e-SAJ e o PJe ainda NÃO são aceitos por esta ferramenta, e ela recusa em vez de gastar uma autenticação para falhar na tela errada; os dois funcionam pela linha de comando.\n\nO que NÃO faz, de propósito: não dá ciência de intimação e não inicia prazo; não escreve nada em sistema de tribunal; não manda dado do cliente para fora da máquina.\n\nO download dos autos é sempre pela linha de comando, em todos os portais, porque abre uma janela de verdade, pode pedir presença humana no desafio de verificação e, no eproc, pode levar horas até o tribunal montar o arquivo.",
   "author": {
     "name": "Kemmer Advogados"
   },
   "icon": "icon.png",
-  "keywords": ["juridico", "processo", "tribunal", "datajud", "advocacia"],
+  "keywords": [
+    "juridico",
+    "processo",
+    "tribunal",
+    "datajud",
+    "advocacia"
+  ],
   "server": {
     "type": "node",
     "entry_point": "server/lancador.mjs",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/server/lancador.mjs"],
+      "args": [
+        "${__dirname}/server/lancador.mjs"
+      ],
       "env": {
         "JUSTICA_PYTHON": "${user_config.python_do_ambiente}",
         "JUSTICA_PACOTE": "${user_config.pasta_do_projeto}",
@@ -103,7 +111,11 @@
     }
   ],
   "compatibility": {
-    "platforms": ["win32", "darwin", "linux"],
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
     "runtimes": {
       "node": ">=18.0.0"
     }

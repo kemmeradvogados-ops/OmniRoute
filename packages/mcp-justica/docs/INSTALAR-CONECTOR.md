@@ -281,17 +281,35 @@ autenticam, não têm teto por hora.
 
 ### Pronto, com credencial, provado em campo
 
-| Ferramenta | Situação |
-| --- | --- |
-| `justica_consultar_processo_autenticado` (sistema `dcp`) | Provado na corrida de 21/10/2026: autenticação, perfil, busca, capa, partes, movimentações, Visualizador, índice completo e download. |
+Atualizado em 23/10/2026. Cada linha abaixo corresponde a uma corrida real,
+com autenticação de verdade, e não a leitura de código.
 
-### Com credencial, **não** provado desde as mudanças desta semana
+| Sistema | Pela FERRAMENTA do conector | Pela LINHA DE COMANDO |
+| --- | --- | --- |
+| Portal de Serviços do Rio de Janeiro (`dcp`) | Sim. Capa, partes e movimentações. | Sim, com download dos autos. Corrida de 21/10/2026. |
+| `eproc` (Justiça Federal da 2ª Região) | Sim. Partes, eventos e documentos de cada evento. | Sim, com cópia integral. Corrida de 23/10/2026: 3 partes, 2237 folhas. |
+| `e-SAJ` (Tribunal de Justiça de São Paulo) | **Não.** A ferramenta recusa. | Sim. Corrida de 23/10/2026: autenticação, segundo fator, Pasta Digital e download. |
+| `PJe` (Tribunal de Justiça do Rio de Janeiro) | **Não.** A ferramenta recusa. | Sim. Corrida de 23/10/2026: linha do tempo com 141 eventos e os autos, 335 folhas. |
 
-| Sistema | Situação |
-| --- | --- |
-| `eproc` | A ferramenta aceita, e o código existe. **[Não verificado]** se continua funcionando: não houve corrida em campo depois das mudanças de código compartilhado desta semana. |
-| `e-SAJ` (Tribunal de Justiça de São Paulo) | Mesma situação: código existe, sem corrida de confirmação recente. |
-| `PJe` | **Não finalizado.** A consulta autenticada recusa o PJe de propósito: `justica_consultar_processo_autenticado` só aceita `dcp` e `eproc`. A extração da linha do tempo não foi escrita e o download não existe. |
+### Por que o conector não atende os quatro
+
+`justica_consultar_processo_autenticado` só aceita `dcp` e `eproc`, e a recusa
+é deliberada: a função que a ferramenta usa tem um caminho para o Portal de
+Serviços e outro para a busca rápida do eproc, e nenhum dos dois serve para o
+e-SAJ nem para o PJe. Aceitá-los sem escrever esses caminhos faria a chamada
+gastar uma autenticação para falhar na tela errada.
+
+O e-SAJ e o PJe funcionam hoje **pela linha de comando**, inclusive com
+download, e é por ali que se usam enquanto os caminhos da ferramenta não são
+escritos.
+
+### O download é sempre pela linha de comando
+
+Nenhuma ferramenta do conector baixa arquivo, em portal nenhum. O download
+abre uma janela de verdade, pode exigir presença humana no desafio de
+verificação e, no eproc, pode levar horas até o tribunal montar o arquivo.
+Depois que a corrida grava as peças, `justica_pecas_do_processo` e
+`justica_ler_peca` leem tudo do disco, sem autenticar e sem teto por hora.
 
 ### Serviço
 
