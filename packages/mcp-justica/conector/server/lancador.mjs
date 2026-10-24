@@ -99,6 +99,12 @@ const filho = spawn(python, ["-m", "justica_mcp.server"], {
   env: ambiente,
   // entrada e saida por cano, erro herdado para o log do aplicativo.
   stdio: ["pipe", "pipe", "inherit"],
+  // Sem isto, o Windows abre uma JANELA DE CONSOLE preta a cada vez que o
+  // conector sobe, e ela fica aberta enquanto o servidor viver. Nao e defeito
+  // do programa: `python.exe` e aplicacao de console, e o Windows cria um
+  // console para ela quando quem a chamou nao tem um. `windowsHide` manda o
+  // Node criar o processo sem janela. Em outros sistemas a opcao e ignorada.
+  windowsHide: true,
 });
 
 // O cano quebra quando o outro lado morre primeiro, e isso nao e defeito que

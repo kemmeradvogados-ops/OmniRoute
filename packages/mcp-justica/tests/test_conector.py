@@ -245,3 +245,11 @@ def test_o_cano_quebrado_nao_derruba_o_lancador():
     encerramento, nao defeito. Sem o ouvinte, o Node cai com EPIPE."""
     texto = _LANCADOR.read_text(encoding="utf-8")
     assert 'canal.on("error"' in texto
+
+
+def test_o_lancador_nao_abre_janela_de_console_no_windows():
+    """`python.exe` e aplicacao de console, e o Windows cria uma janela preta
+    para ela quando quem a chamou nao tem console. Ela ficava aberta enquanto
+    o conector vivesse, atras da janela do Claude."""
+    texto = _LANCADOR.read_text(encoding="utf-8")
+    assert "windowsHide: true" in texto
