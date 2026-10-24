@@ -280,6 +280,14 @@ def main(argv: list[str] | None = None) -> int:
                          "devolve mais de uma com o mesmo numero. Cada linha "
                          "costuma ser o processo numa serventia ou num grau "
                          "diferente, com historico proprio. Padrao: 1")
+    cp.add_argument("--sem-guardar", action="store_true", dest="sem_guardar",
+                    help="le os autos sem guarda-los no acervo da banca. O "
+                         "arquivo vai para a pasta de LEITURAS, que e local, "
+                         "fica fora do Google Drive e nao e indexada. Serve "
+                         "para processo que se consulta uma vez: guardar e o "
+                         "certo para processo que o escritorio vai trabalhar, "
+                         "porque ai uma autenticacao basta e a equipe inteira "
+                         "le de graca depois")
     cp.add_argument("--gravar-telas", action="store_true", dest="gravar_telas",
                     help="grava em disco a FORMA de cada tela que a corrida "
                          "tocar (etiquetas, identificadores, rotulos, geometria "
@@ -401,6 +409,23 @@ def main(argv: list[str] | None = None) -> int:
                 ligar_gravacao()
                 print(f"Gravando a FORMA de cada tela em {pasta_das_telas()}.")
                 print("Nenhum valor de campo e gravado. Ver `justica-portal telas`.")
+            # A pasta de destino sai de UMA variavel, lida a cada chamada.
+            # Apontar a variavel para a pasta de leituras redireciona tudo, em
+            # qualquer portal, sem uma linha por portal. Tem de ser feito antes
+            # de a consulta comecar: ela cria a pasta do processo logo no
+            # inicio, e nao no instante de gravar o primeiro arquivo.
+            if getattr(args, "sem_guardar", False):
+                import os as _os
+
+                from .core.acervo import VARIAVEL_PASTA, pasta_de_leituras
+
+                destino = pasta_de_leituras()
+                destino.mkdir(parents=True, exist_ok=True)
+                _os.environ[VARIAVEL_PASTA] = str(destino)
+                print(f"SEM GUARDAR: os autos vao para {destino}")
+                print("Essa pasta e local, fica fora do Google Drive e nao e "
+                      "indexada no acervo.")
+                print("Apagar o que ha nela nao perde nada do escritorio.")
             if not args.processo:
                 print(
                     "Nenhum processo informado. Passe --processo, ou defina no .env:\n"

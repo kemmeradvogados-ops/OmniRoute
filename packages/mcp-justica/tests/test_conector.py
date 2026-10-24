@@ -253,3 +253,118 @@ def test_o_lancador_nao_abre_janela_de_console_no_windows():
     o conector vivesse, atras da janela do Claude."""
     texto = _LANCADOR.read_text(encoding="utf-8")
     assert "windowsHide: true" in texto
+
+
+# --------------------------------------------------------------------------
+# As duas formas de ler os autos: guardando e sem guardar
+# --------------------------------------------------------------------------
+
+
+def test_a_pasta_de_leituras_nao_e_a_do_acervo():
+    """Uma e do escritorio, no Google Drive, indexada. A outra e local, de
+    quem leu, e pode ser apagada sem perder nada."""
+    import os
+
+    from justica_mcp.core.acervo import (
+        VARIAVEL_PASTA, pasta_de_copias, pasta_de_leituras,
+    )
+
+    antes = os.environ.get(VARIAVEL_PASTA)
+    os.environ[VARIAVEL_PASTA] = "/tmp/acervo-de-mentira"
+    try:
+        assert str(pasta_de_copias()) == "/tmp/acervo-de-mentira"
+        assert pasta_de_leituras() != pasta_de_copias()
+        assert pasta_de_leituras().name == "leituras"
+    finally:
+        if antes is None:
+            os.environ.pop(VARIAVEL_PASTA, None)
+        else:
+            os.environ[VARIAVEL_PASTA] = antes
+
+
+def test_a_troca_de_pasta_e_desfeita_sempre():
+    """A variavel e do processo inteiro: deixa-la trocada faria a proxima
+    chamada ler a pasta errada sem avisar."""
+    import os
+
+    from justica_mcp.core.acervo import VARIAVEL_PASTA, pasta_de_leituras
+    from justica_mcp.tools import _na_pasta
+
+    antes = os.environ.get(VARIAVEL_PASTA)
+    os.environ[VARIAVEL_PASTA] = "/tmp/acervo-de-mentira"
+    try:
+        with _na_pasta("leitura"):
+            assert os.environ[VARIAVEL_PASTA] == str(pasta_de_leituras())
+        assert os.environ[VARIAVEL_PASTA] == "/tmp/acervo-de-mentira"
+
+        # E tambem quando o bloco levanta.
+        try:
+            with _na_pasta("leitura"):
+                raise RuntimeError("alguma coisa")
+        except RuntimeError:
+            pass
+        assert os.environ[VARIAVEL_PASTA] == "/tmp/acervo-de-mentira"
+    finally:
+        if antes is None:
+            os.environ.pop(VARIAVEL_PASTA, None)
+        else:
+            os.environ[VARIAVEL_PASTA] = antes
+
+
+def test_a_troca_de_pasta_devolve_a_ausencia_da_variavel():
+    """Sem a variavel definida antes, ela nao pode sobrar definida depois."""
+    import os
+
+    from justica_mcp.core.acervo import VARIAVEL_PASTA
+    from justica_mcp.tools import _na_pasta
+
+    antes = os.environ.pop(VARIAVEL_PASTA, None)
+    try:
+        with _na_pasta("leitura"):
+            assert VARIAVEL_PASTA in os.environ
+        assert VARIAVEL_PASTA not in os.environ
+    finally:
+        if antes is not None:
+            os.environ[VARIAVEL_PASTA] = antes
+
+
+def test_ler_no_acervo_nao_troca_nada():
+    import os
+
+    from justica_mcp.core.acervo import VARIAVEL_PASTA
+    from justica_mcp.tools import _na_pasta
+
+    antes = os.environ.get(VARIAVEL_PASTA)
+    os.environ[VARIAVEL_PASTA] = "/tmp/acervo-de-mentira"
+    try:
+        with _na_pasta("acervo"):
+            assert os.environ[VARIAVEL_PASTA] == "/tmp/acervo-de-mentira"
+    finally:
+        if antes is None:
+            os.environ.pop(VARIAVEL_PASTA, None)
+        else:
+            os.environ[VARIAVEL_PASTA] = antes
+
+
+def test_o_download_sem_guardar_manda_a_opcao_ao_comando():
+    """Guarda de fonte: sem a opcao, o arquivo iria para o Google Drive."""
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    assert '"--sem-guardar"' in fonte
+    assert "if not params.guardar:" in fonte
+
+
+def test_a_linha_de_comando_troca_a_pasta_antes_de_consultar():
+    """Guarda de fonte: a consulta cria a pasta do processo no inicio, e nao
+    no instante de gravar o primeiro arquivo. Trocar depois nao adiantaria."""
+    import inspect
+
+    from justica_mcp import cli
+
+    fonte = inspect.getsource(cli.main)
+    assert "sem_guardar" in fonte
+    assert fonte.index("pasta_de_leituras") < fonte.index(
+        "return portal.consultar_processo(")

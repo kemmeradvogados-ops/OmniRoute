@@ -38,6 +38,30 @@ def pasta_de_copias() -> Path:
     return Path(bruto).expanduser() if bruto else diretorio_estado() / "processos"
 
 
+# A pasta das LEITURAS, que nao e o acervo. Ela guarda os autos que o advogado
+# pediu para ler sem guardar: ficam na maquina, fora do Google Drive, nao sao
+# indexados e podem ser apagados a qualquer momento sem perder nada.
+#
+# Por que existe. Baixar e guardar e o certo para processo que o escritorio vai
+# trabalhar: uma autenticacao e a equipe inteira le de graca, para sempre. Mas
+# para processo que se consulta uma vez, encher o acervo de PDF de sessenta
+# megabytes e peso sem proveito. Entao ha as duas formas, e quem escolhe e o
+# advogado.
+#
+# O mecanismo e o mesmo do acervo, e de proposito: muda so a raiz. Como
+# `pasta_de_copias` le a variavel de ambiente a cada chamada, apontar a
+# variavel para ca durante uma corrida redireciona TUDO, em qualquer portal,
+# sem uma linha de codigo por portal.
+NOME_DA_PASTA_DE_LEITURAS = "leituras"
+
+
+def pasta_de_leituras() -> Path:
+    """Raiz das leituras que nao vao para o acervo. Sempre local."""
+    from .estado import diretorio_estado
+
+    return diretorio_estado() / NOME_DA_PASTA_DE_LEITURAS
+
+
 class AcervoIndisponivel(RuntimeError):
     """A pasta de copias nao pode ser lida ou escrita agora."""
 

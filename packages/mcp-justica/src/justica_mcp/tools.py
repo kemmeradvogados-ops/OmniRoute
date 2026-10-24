@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Any, Optional
 
@@ -80,6 +81,12 @@ class LerPecaInput(NumeroInput):
     ate: Optional[int] = Field(default=None, ge=1, description=(
         "Ultima folha a ler, dentro da peca. Em branco le ate o fim ou ate o "
         "teto de caracteres."))
+    onde: str = Field(
+        default="acervo",
+        description=("'acervo' (padrao) para o que foi guardado na pasta da "
+                     "banca; 'leitura' para o que foi lido sem guardar, que "
+                     "fica so nesta maquina."),
+    )
 
 
 class PublicacoesOabInput(BaseModel):
@@ -92,7 +99,62 @@ class PublicacoesOabInput(BaseModel):
     solicitante: Optional[str] = None
 
 
+# As duas pastas em que um processo pode estar. O acervo e o do escritorio, no
+# Google Drive, indexado e compartilhado. As leituras sao locais, de quem leu,
+# nao indexadas, e podem ser apagadas sem perder nada.
+ONDE_ACERVO = "acervo"
+ONDE_LEITURA = "leitura"
+CAMPO_ONDE = Field(
+    default=ONDE_ACERVO,
+    description=("'acervo' (padrao) para o que foi guardado na pasta da banca; "
+                 "'leitura' para o que foi lido sem guardar, que fica so nesta "
+                 "maquina."),
+)
+
+
+@contextmanager
+def _na_pasta(onde: str):
+    """Aponta a raiz das copias para o acervo ou para as leituras.
+
+    A raiz sai de UMA variavel de ambiente, lida a cada chamada, entao trocar
+    a variavel pelo tempo da leitura redireciona tudo sem tocar em caminho
+    nenhum. Nao ha `await` dentro do bloco, de proposito: a variavel e do
+    processo inteiro, e uma pausa aqui deixaria outra chamada enxergar a pasta
+    trocada.
+    """
+    import os
+
+    from .core.acervo import VARIAVEL_PASTA, pasta_de_leituras
+
+    if onde != ONDE_LEITURA:
+        yield
+        return
+    antes = os.environ.get(VARIAVEL_PASTA)
+    os.environ[VARIAVEL_PASTA] = str(pasta_de_leituras())
+    try:
+        yield
+    finally:
+        if antes is None:
+            os.environ.pop(VARIAVEL_PASTA, None)
+        else:
+            os.environ[VARIAVEL_PASTA] = antes
+
+
+class PecasInput(NumeroInput):
+    onde: str = CAMPO_ONDE
+
+
 class BaixarAutosInput(NumeroInput):
+    guardar: bool = Field(
+        default=True,
+        description=("Verdadeiro (padrao) guarda os autos no acervo da banca, "
+                     "no Google Drive, indexado e disponivel para a equipe "
+                     "inteira ler de graca depois. Falso le sem guardar: o "
+                     "arquivo fica numa pasta local, nao e indexado e pode ser "
+                     "apagado. Guardar e o certo para processo que o "
+                     "escritorio vai trabalhar; nao guardar serve para o que se "
+                     "consulta uma vez."),
+    )
     documentos: str = Field(
         default="integra",
         description=("'integra' (padrao) para os autos num arquivo so; 'auto' "
@@ -459,7 +521,7 @@ def registrar(mcp: Any) -> None:
 
     @mcp.tool(name="justica_pecas_do_processo",
               annotations=somente_leitura("Pecas gravadas na pasta"))
-    async def justica_pecas_do_processo(params: NumeroInput) -> str:
+    async def justica_pecas_do_processo(params: PecasInput) -> str:
         """O que ja esta GRAVADO na pasta de copias deste processo.
 
         Nao abre o portal, nao autentica, nao baixa: le a pasta do disco. De
@@ -486,7 +548,9 @@ def registrar(mcp: Any) -> None:
             from .pecas import pecas_da_pasta
 
             numero = parse_numero(params.numero)
-            dados = pecas_da_pasta(numero.apenas_digitos, numero.formatado)
+            with _na_pasta(params.onde):
+                dados = pecas_da_pasta(numero.apenas_digitos, numero.formatado)
+            dados["onde"] = params.onde
             _estado.registrar(acao="pecas_do_processo",
                               solicitante=params.solicitante,
                               tribunal="", numero=numero.formatado,
@@ -523,8 +587,10 @@ def registrar(mcp: Any) -> None:
             from .pecas import ler_peca
 
             numero = parse_numero(params.numero)
-            dados = ler_peca(numero.apenas_digitos, numero.formatado,
-                             params.peca, de=params.de, ate=params.ate)
+            with _na_pasta(params.onde):
+                dados = ler_peca(numero.apenas_digitos, numero.formatado,
+                                 params.peca, de=params.de, ate=params.ate)
+            dados["onde"] = params.onde
             _estado.registrar(
                 acao="ler_peca", solicitante=params.solicitante, tribunal="",
                 numero=numero.formatado,
@@ -645,6 +711,8 @@ def registrar(mcp: Any) -> None:
         ]
         if params.aceito_o_termo:
             argumentos.append("--aceito-o-termo")
+        if not params.guardar:
+            argumentos.append("--sem-guardar")
         if params.segundos_download:
             argumentos += ["--segundos-download", str(params.segundos_download)]
 
@@ -660,6 +728,7 @@ def registrar(mcp: Any) -> None:
             "tribunal": tribunal.codigo,
             "sistema": sistema,
             "estado": trabalho.estado,
+            "onde_vai_ficar": ONDE_ACERVO if params.guardar else ONDE_LEITURA,
             "aviso": (
                 "O pedido comecou. Isso leva de minutos a horas conforme o "
                 "portal e o tamanho do processo. NAO chame esta ferramenta de "

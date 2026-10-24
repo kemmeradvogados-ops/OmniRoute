@@ -181,6 +181,31 @@ O conector pede o download e **responde na hora**, com um número de trabalho.
 Ele não fica esperando, porque isso leva de minutos a horas: o portal gera o
 arquivo quando se pede, e no eproc a geração pode demorar.
 
+### Guardar ou só ler: as duas formas
+
+Você escolhe, e a escolha muda onde o arquivo fica.
+
+| | Guardando (padrão) | Sem guardar |
+| --- | --- | --- |
+| Onde fica | Pasta de cópias da banca, no Google Drive | Pasta local desta máquina |
+| Quem lê depois | O escritório inteiro, de graça, para sempre | Só você, enquanto não apagar |
+| Entra no índice | Sim | Não |
+| Quando usar | Processo que o escritório vai trabalhar | Processo que você consulta uma vez |
+
+Para não guardar, diga isso ao pedir:
+
+- "Leia os autos desse processo **sem guardar**."
+
+Nos dois casos a leitura é igual. Para ler o que ficou sem guardar, diga de
+onde:
+
+- "Quais peças existem nesse processo, **na pasta de leituras**."
+- "Leia a peça tal desse processo, **na pasta de leituras**."
+
+Uma conta que vale fazer antes de escolher: guardar custa **uma** autenticação
+e depois a equipe lê quantas vezes quiser. Não guardar custa uma autenticação
+por vez que alguém precisar do processo de novo.
+
 Para acompanhar:
 
 - "Como está o download que você pediu."
