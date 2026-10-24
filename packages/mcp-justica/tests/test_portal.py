@@ -11,6 +11,7 @@ import pytest
 
 from justica_mcp.core.guarda_navegacao import Acao, GuardaNavegacao, Modo
 from justica_mcp.portal import PortalIndisponivel, permissao_efemera
+from conftest import fonte_da_consulta
 
 ENDERECO = "https://eproc1g.tjrj.jus.br/eproc/externo_controlador.php?acao=principal"
 
@@ -1398,7 +1399,7 @@ def test_consultar_repassa_os_seletores_para_a_autenticacao():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     for nome in ("campo_usuario=campo_usuario", "campo_senha=campo_senha",
                  "campo_senha_oculto=campo_senha_oculto", "botao_entrar=botao_entrar",
                  "campo_codigo=campo_codigo", "botao_validar=botao_validar"):
@@ -2690,7 +2691,7 @@ def test_consulta_sem_evento_entrega_o_relato_da_tela():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     trecho = fonte.split("Nenhum evento extraido")[1].split("return 1")[0]
     for esperado in ("_relatar_tela", "_relatar_estrutura_de_dados",
                      "pagina.frames", "guarda.relato()"):
@@ -2831,7 +2832,7 @@ def test_o_fim_da_saida_nao_desmente_o_que_aconteceu():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "botao de copia integral nao encontrado nesta tela." not in fonte
     assert "o motivo " in fonte
 
@@ -2956,7 +2957,7 @@ def test_falha_do_acervo_nao_derruba_a_consulta_ja_concluida():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert fonte.count("except AcervoIndisponivel as exc:") == 2, (
         "os dois ramos, e-SAJ e eproc, precisam sobreviver a falha do acervo")
     # A gravacao da consulta acontece antes, e o aviso aponta para ela.
@@ -3997,7 +3998,7 @@ def test_a_falha_da_copia_diz_mais_que_o_nome_da_classe():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     trecho = fonte.split("Copia integral nao concluida")[1][:200]
     assert "{detalhe}" in trecho
 
@@ -6605,7 +6606,7 @@ def test_a_bandeira_de_pular_o_historico_chega_na_leitura():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "com_movimentacoes=not sem_movimentacoes" in fonte
 
 
@@ -7483,7 +7484,7 @@ def test_a_trava_barrando_a_busca_nao_sobe_como_traceback():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     depois = fonte.split("buscar_dcp(pagina, guarda, numero, url, segundos")[1]
     # O trecho entre a busca e a linha seguinte do caminho normal e onde moram
     # os tratamentos de parada dela.
@@ -7543,7 +7544,7 @@ def test_o_comando_oferece_o_download_um_a_um():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert '"um-a-um"' in fonte
     assert "baixar_um_a_um(" in fonte
     assert "reabrir_o_visualizador" in fonte
@@ -7577,7 +7578,7 @@ def test_a_consulta_limpa_e_relata_o_cache_antes_de_baixar():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "limpar_descargas(" in fonte
     assert "medida_das_descargas()" in fonte
     assert "Cache do navegador" in fonte
@@ -8251,7 +8252,7 @@ def test_a_consulta_diz_o_grau_e_o_destino_antes_de_autenticar():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "numero.grau_nome" in fonte
     assert "anfitriao_de(url)" in fonte
     # E tem de vir antes do bloco que roda ja dentro do navegador.

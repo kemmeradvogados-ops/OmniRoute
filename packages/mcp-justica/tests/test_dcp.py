@@ -15,6 +15,7 @@ from justica_mcp.dcp import (
     DownloadIndisponivel, achar_botao_de_download, achar_escolha,
     baixar_integra, caixa_de_download_aberta,
 )
+from conftest import fonte_da_consulta, fonte_do_portal
 
 
 class _Elemento:
@@ -542,9 +543,8 @@ def test_consultar_sem_documentos_nao_abre_o_visualizador():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
-    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
-        'identidade.sistema == "pje"')[0]
+    fonte = fonte_da_consulta()
+    trecho = fonte_do_portal("dcp")
     assert 'documentos == "nenhum"' in trecho
     assert trecho.index('documentos == "nenhum"') < trecho.index("abrir_visualizador(")
 
@@ -555,9 +555,8 @@ def test_o_tamanho_do_arquivo_e_sempre_dito():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
-    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
-        'identidade.sistema == "pje"')[0]
+    fonte = fonte_da_consulta()
+    trecho = fonte_do_portal("dcp")
     assert "Tamanho:" in trecho
     assert "CONFIRA se o arquivo tem o processo inteiro" in trecho
     assert "nao baixa de uma vez" in trecho
@@ -568,9 +567,8 @@ def test_a_janela_do_visualizador_e_fechada_mesmo_com_falha():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
-    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
-        'identidade.sistema == "pje"')[0]
+    fonte = fonte_da_consulta()
+    trecho = fonte_do_portal("dcp")
     assert "finally:" in trecho and "_fechar(janela)" in trecho
 
 
@@ -775,9 +773,8 @@ def test_a_consulta_passa_pela_selecao_antes_de_buscar():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
-    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
-        'identidade.sistema == "pje"')[0]
+    fonte = fonte_da_consulta()
+    trecho = fonte_do_portal("dcp")
     assert trecho.index("entrar_no_portal_de_servicos(") < trecho.index("buscar_dcp(")
     assert "devolveu a" in trecho and "pagina publica" in trecho
 
@@ -1004,9 +1001,8 @@ def test_a_consulta_pergunta_o_perfil_antes_de_buscar():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
-    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
-        'identidade.sistema == "pje"')[0]
+    fonte = fonte_da_consulta()
+    trecho = fonte_do_portal("dcp")
     assert trecho.index("na_tela_de_perfil(pagina)") < trecho.index("buscar_dcp(")
     assert "escolher_perfil(pagina, guarda, perfil, segundos)" in trecho
 
@@ -1243,9 +1239,8 @@ def test_trava_barrando_o_programa_nao_vira_traceback():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
-    trecho = fonte.split('identidade.sistema == "dcp"')[1].split(
-        'identidade.sistema == "pje"')[0]
+    fonte = fonte_da_consulta()
+    trecho = fonte_do_portal("dcp")
     assert "except NavegacaoBloqueada as exc:" in trecho
     assert "defeito deste programa, nao do portal" in trecho
 
@@ -1710,7 +1705,7 @@ def test_o_caminho_reencontra_o_portal_a_cada_fronteira():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert fonte.count("reencontrar_o_portal(pagina") == 2
     # A primeira vem antes de a tela de perfil ser olhada.
     assert fonte.index("reencontrar_o_portal(pagina") < fonte.index(
@@ -4019,7 +4014,7 @@ def test_a_queda_para_os_lotes_saiu_do_padrao():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "INTEGRA NAO VEIO" not in fonte
 
 
@@ -7388,7 +7383,7 @@ def test_a_escolha_da_linha_chega_do_comando_ate_a_busca():
 
     assert "linha: int = 1" in inspect.getsource(dcp.buscar)
     assert "segundos, linha)" in inspect.getsource(dcp.buscar)
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     # O nome e longo de proposito: `linha` colidia com o `for linha in ...` da
     # funcao aninhada que o le. Ver o teste da funcao aninhada em
     # `tests/test_portal.py`.
@@ -7902,7 +7897,7 @@ def test_o_reabrir_procura_a_aba_do_portal_em_vez_de_reusar_a_capturada():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     trecho = fonte.split("def reabrir_o_visualizador()")[1].split("resposta =")[0]
     assert "aba_do_portal_viva(pagina)" in trecho
     assert "abrir_visualizador(pagina," not in trecho
@@ -8390,7 +8385,7 @@ def test_o_comando_aceita_o_teto_no_proprio_documentos():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     trecho = fonte.split('escolha.startswith("um-a-um:")')[1].split(
         'elif escolha.startswith("lote:")')[0]
     assert "teto=teto_do_percurso" in trecho
@@ -8519,9 +8514,9 @@ def _trecho_do_padrao():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     depois = fonte.split('elif escolha.startswith("lotes")')[1]
-    padrao = depois.split("\n                else:\n")[1]
+    padrao = depois.split("\n        else:\n")[1]
     return padrao.split("except DownloadIndisponivel as exc:")[0]
 
 
@@ -8544,7 +8539,7 @@ def test_a_integra_e_os_lotes_continuam_disponiveis_de_proposito():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "baixar_integra(" in fonte
     assert "baixar_em_lotes(" in fonte
 
@@ -9084,5 +9079,4 @@ def test_pular_chega_aos_dois_caminhos_do_percurso():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
-    assert fonte.count("pular=paginas_a_pular") == 2
+    assert fonte_do_portal("dcp").count("pular=paginas_a_pular") == 2

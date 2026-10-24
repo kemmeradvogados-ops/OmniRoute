@@ -6359,6 +6359,1042 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
     )
 
 
+# --------------------------------------------------------------------------
+# Um portal por funcao.
+#
+# Ate 24/10/2026 os quatro caminhos moravam dentro de uma funcao aninhada de
+# 997 linhas, com 26 pontos de saida. Ela funcionava, e foi assim que os
+# quatro portais ficaram provados em campo, mas qualquer mudanca que
+# atravessasse os quatro precisava ser feita quatro vezes no mesmo lugar, e
+# percorrer VARIOS processos numa corrida so era impossivel: cada `return`
+# encerrava a corrida inteira.
+#
+# A separacao nao mudou uma linha do corpo de nenhum dos quatro. Os blocos
+# foram movidos como estavam, e o que era nome do fechamento virou parametro
+# com o MESMO nome. Refatoracao que reescreve enquanto move e refatoracao que
+# nao se consegue conferir.
+# --------------------------------------------------------------------------
+
+
+def _consultar_esaj(pagina, guarda, estado_local, identidade, *, numero,
+                    documentos, segundos) -> int:
+    """O caminho do e-SAJ, do Tribunal de Justica de Sao Paulo.
+
+    Duas telas de consulta, uma por grau, com o numero partido em dois campos.
+    """
+    from .esaj import ConsultaESAJIndisponivel, buscar as buscar_esaj
+
+    print(f"  e-SAJ, {numero.grau_nome} (deduzida do proprio numero).")
+    try:
+        buscar_esaj(pagina, guarda, numero, segundos)
+    except ConsultaESAJIndisponivel as exc:
+        print(f"  [FALHA] {exc}")
+        return 1
+    print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
+
+    from .esaj import expandir_movimentacoes_ate_o_fim
+    from .esaj import extrair as extrair_esaj
+    from .esaj import extrair_movimentacoes as _contar_movs
+
+    # O historico verdadeiro so existe depois deste clique, e uma
+    # expansao so trazia um pedaco. Autorizado pelo operador em 22 de
+    # setembro de 2026: clicar ate a opcao sumir.
+    expansao = expandir_movimentacoes_ate_o_fim(
+        pagina, guarda, segundos, contar=lambda p: len(_contar_movs(p))
+    )
+    if expansao["expansoes"]:
+        print(f"  Movimentacoes expandidas {expansao['expansoes']}x "
+              f"({expansao['motivo']}).")
+        estado_local.registrar(
+            acao="expandir_movimentacoes", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado,
+            resultado=f"{expansao['expansoes']}x, {expansao['motivo']}",
+        )
+        if expansao["motivo"] == "teto de expansoes atingido":
+            print("    ATENCAO: o teto foi atingido e o botao ainda estava la.")
+            print("    A lista pode continuar incompleta.")
+
+    dados = extrair_esaj(pagina)
+    dados["numero"] = numero.formatado
+    dados["tribunal"] = identidade.tribunal
+    dados["sistema"] = identidade.sistema
+    dados["grau"] = numero.grau
+    dados["endereco"] = pagina.url
+
+    principais = dados["principais"]
+    print("\n  EXTRAIDO:")
+    for rotulo in ("classe", "assunto", "foro", "vara", "juiz"):
+        if principais.get(rotulo):
+            print(f"    {rotulo}: {principais[rotulo]}")
+    print(f"    partes: {dados['totais']['partes']}   "
+          f"movimentacoes: {dados['totais']['movimentacoes']}")
+    if dados["movimentacoes_origem"] == "varredura":
+        # Vindas de tabela sem identificador. A pagina do e-SAJ tem
+        # varias com data: peticoes diversas, incidentes, audiencias.
+        # Chama-las de movimentacoes seria afirmar o que nao se sabe, e
+        # o advogado leria um historico que talvez nao seja o historico.
+        print("    ATENCAO: estas linhas vieram de uma tabela SEM identificador,")
+        print("    achada por ter datas. A pagina tem outras tabelas com data")
+        print("    (peticoes, incidentes, audiencias). CONFIRA no portal se e")
+        print("    mesmo o historico de movimentacoes antes de confiar nelas.")
+    if not dados["movimentacoes_completas"]:
+        # Entregar a lista parcial como completa faria o advogado
+        # concluir que nao ha andamento anterior, que e pior que nao
+        # entregar nada. O clique que expande ainda nao foi conferido
+        # em campo, e nao vai ser adivinhado.
+        print("    ATENCAO: a pagina ainda oferece \"exibir mais movimentacoes\".")
+        print("    A lista acima e PARCIAL. O clique que expande ainda nao foi")
+        print("    conferido em campo, entao nao e dado por este comando.")
+    if dados["pasta_digital"]:
+        print(f"    integra disponivel em: {dados['pasta_digital'][:70]}")
+    for m in dados["movimentacoes"][:5]:
+        print(f"      {m['data']}  {m['descricao'][:70]}")
+
+    if documentos and documentos != "nenhum":
+        from .core.acervo import (
+            AcervoIndisponivel, carregar_indice, garantir_pasta,
+        )
+        from .esaj import copiar_pasta_digital
+
+        try:
+            indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+            pasta = garantir_pasta(numero.apenas_digitos)
+            print(f"\n  Pasta do processo: {pasta}")
+            guarda.permitir_download = True
+            # O caminho que funciona e o que o operador descreveu e
+            # fotografou: clicar em "Visualizar autos", marcar "Todas",
+            # "Baixar PDF", "Arquivo unico" e "Continuar". Buscar pelo
+            # endereco falhou por tres caminhos conferidos em campo, porque
+            # o ticket da Pasta Digital so e montado no instante do clique.
+            from .esaj import copiar_autos_pelo_visualizador
+
+            resultado = copiar_autos_pelo_visualizador(
+                pagina, guarda, pasta, numero.apenas_digitos, segundos
+            )
+            janela = resultado.pop("janela", None)
+            if resultado["situacao"] != "gravada" and janela is not None:
+                # Parou no meio: relatar a tela e o que permite escrever o
+                # passo que faltou, sem adivinhar seletor.
+                if resultado["situacao"] == "download_perdido":
+                    print(f"    O arquivo foi baixado mas nao pode ser gravado: "
+                          f"{resultado.get('detalhe', '')}")
+                else:
+                    print(f"    Nao concluiu no passo {resultado.get('passo', '?')}.")
+                _relatar_tela(janela, "PASTA DIGITAL")
+                _relatar_estrutura_de_dados(janela)
+            if janela is not None:
+                try:
+                    janela.close()
+                except Exception:
+                    pass
+            guarda.permitir_download = False
+            if resultado["situacao"] == "gravada":
+                from pathlib import Path as _P
+
+                from .core.acervo import (
+                    REPETIDA_IGUAL, REPETIDA_NO_TEXTO, REPETIDA_SUSPEITA,
+                )
+
+                baixado = _P(resultado["arquivo"])
+                veredicto, gemeo = indice.avaliar_repeticao(baixado)
+                if veredicto == REPETIDA_IGUAL:
+                    # Indexar de novo diria que o processo tem o dobro de
+                    # folhas que tem. Folha errada em citacao e o pior
+                    # defeito possivel neste indice.
+                    print(f"    COPIA REPETIDA: identica a "
+                          f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), ja no acervo.")
+                    print("    O indice NAO foi alterado, para nao renumerar folhas.")
+                    if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
+                        try:
+                            baixado.unlink()
+                            print("    O arquivo repetido foi removido da pasta.")
+                        except OSError as exc:
+                            print(f"    Nao consegui remover o repetido: {exc}")
+                    estado_local.registrar(
+                        acao="copia_repetida", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, numero=numero.formatado,
+                        documento=str(baixado), resultado=gemeo.faixa(),
+                    )
+                elif veredicto == REPETIDA_NO_TEXTO:
+                    # Bytes diferentes, TEXTO identico folha a folha.
+                    # Nao ha o que o advogado decida aqui: a diferenca
+                    # esta no carimbo de geracao que o portal escreve
+                    # dentro do PDF, fora da camada de texto.
+                    print(f"    Esta copia tem o MESMO TEXTO de "
+                          f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), "
+                          "folha a folha.")
+                    print("    Os bytes diferem so no carimbo de geracao, que o")
+                    print("    proprio portal escreve dentro do PDF. E a mesma")
+                    print("    integra, entao o indice NAO foi alterado.")
+                    if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
+                        try:
+                            baixado.unlink()
+                            print("    O arquivo repetido foi removido da pasta.")
+                        except OSError as exc:
+                            print(f"    Nao consegui remover o repetido: {exc}")
+                    estado_local.registrar(
+                        acao="copia_repetida_no_texto",
+                        tribunal=identidade.tribunal, sistema=identidade.sistema,
+                        numero=numero.formatado, documento=str(baixado),
+                        resultado=gemeo.faixa(),
+                    )
+                elif veredicto == REPETIDA_SUSPEITA:
+                    print(f"    ATENCAO: esta copia tem o mesmo numero de paginas de "
+                          f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), mas o "
+                          "conteudo difere.")
+                    print("    Pode ser a MESMA copia com data de geracao diferente,")
+                    print("    que o proprio portal escreve dentro do PDF. NAO indexei:")
+                    print("    numerar folha errada e pior que nao numerar. O arquivo")
+                    print(f"    esta em {baixado}. Confira e me diga o que fazer.")
+                    estado_local.registrar(
+                        acao="copia_suspeita_de_repeticao",
+                        tribunal=identidade.tribunal, sistema=identidade.sistema,
+                        numero=numero.formatado, documento=str(baixado),
+                        resultado=gemeo.faixa(),
+                    )
+                else:
+                    item = indice.acrescentar(baixado, "integra")
+                    indice.gravar()
+                    print(f"    COPIA INTEGRAL gravada: {baixado.name} "
+                          f"({item.faixa()})")
+                    estado_local.registrar(
+                        acao="copia_integral", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, numero=numero.formatado,
+                        documento=resultado["arquivo"], resultado=item.faixa(),
+                    )
+            else:
+                print(f"    COPIA NAO CONCLUIDA ({resultado['situacao']}): "
+                      f"{resultado.get('detalhe', '')}")
+                for pista in resultado.get("pistas") or []:
+                    print(f"      {pista}")
+                print("    Nada foi inventado: o download real sera escrito depois")
+                print("    de conferido o que a pasta digital devolve.")
+        except AcervoIndisponivel as exc:
+            # A consulta ja terminou e ja foi gravada. Derrubar tudo por causa da
+            # pasta de copias seria jogar fora o trabalho que deu certo por causa
+            # do que deu errado depois.
+            guarda.permitir_download = False
+            print(f"\n  [ACERVO] {exc}")
+            print("  A consulta acima vale e ja esta no arquivo indicado abaixo.")
+            print("  Repita o comando mais tarde para a parte de copia, ou confira")
+            print("  se o Google Drive esta sincronizando.")
+
+    dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
+    # Alimenta a comparacao de novidades, igual ao eproc. Sem isto, Sao
+    # Paulo ficaria fora do monitoramento: a consulta traria os dados e
+    # o `verificar_novos_andamentos` nunca saberia que eles existiram.
+    # A movimentacao do e-SAJ nao tem numero de evento, so data e
+    # descricao, entao a data faz as vezes de codigo; comparar por
+    # (data, descricao) e o que a pagina permite.
+    estado_local.gravar_snapshot(
+        numero.apenas_digitos,
+        [{"data_hora": m["data"], "codigo": m["data"], "nome": m["descricao"]}
+         for m in dados["movimentacoes"]],
+    )
+    print(f"\n  Conteudo completo em: {dados['arquivo']}")
+    print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
+    estado_local.registrar(
+        acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado,
+        resultado=f"{dados['totais']['movimentacoes']} movimentacao(oes)",
+    )
+    return 0
+
+
+def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
+                   documentos, linha_do_resultado, motivo, paginas_a_pular,
+                   perfil, segundos, segundos_download, sem_movimentacoes,
+                   url) -> int:
+    """O caminho do Portal de Servicos do Tribunal de Justica do Rio de Janeiro.
+
+    Entrada pela tela de selecao, escolha do tipo de usuario e menu. Nao ha
+    barra de busca rapida.
+    """
+    from .dcp import (MOTIVO_PADRAO, PAGINAS_POR_LOTE,
+                      ConsultaIndisponivel, DownloadIndisponivel,
+                      MotivoNaoInformado, PerfilNaoInformado,
+                      abrir_visualizador, baixar_em_lotes,
+                      baixar_integra, baixar_uma_peca,
+                      entrar_no_portal_de_servicos, escolher_perfil,
+                      espera_do_arquivo, na_tela_de_perfil,
+                      reencontrar_o_portal)
+    from .dcp import buscar as buscar_dcp
+    from .dcp import resumo_seguro
+
+    print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
+    # A entrada pela tela de selecao NAO e etapa decorativa. Conferido
+    # em campo em 06/10/2026: navegar direto para a consulta devolveu a
+    # pagina publica do tribunal. A sessao do IdServerJus existe, e o
+    # Portal de Servicos so e alcancado pela entrega que aquele
+    # formulario faz.
+    try:
+        pagina = entrar_no_portal_de_servicos(pagina, guarda, segundos)
+    except ConsultaIndisponivel as exc:
+        print(f"  [PAROU] {exc}")
+        _relatar_tela(pagina, "TELA DE SELECAO DE SISTEMAS")
+        return 1
+    print(f"  Portal de Servicos aberto: {endereco_sem_dado(pagina.url, 80)}")
+    _assentar(pagina, segundos)
+    # A aba que o programa segura pode ter ido embora enquanto a tela
+    # montava. Em 06/10/2026 foi isso: a janela aceita como portal
+    # virou `www.tjrj.jus.br`, e o comando a levou ate o fim.
+    pagina = reencontrar_o_portal(pagina, min(segundos, 15))
+    print(f"  Tela do portal: {endereco_sem_dado(pagina.url, 80)}")
+
+    # O portal pergunta o TIPO DE USUARIO antes de deixar entrar, e o
+    # perfil decide o que a sessao enxerga, como a inscricao no eproc.
+    if na_tela_de_perfil(pagina):
+        try:
+            escolher_perfil(pagina, guarda, perfil, segundos)
+        except PerfilNaoInformado as exc:
+            print(f"  [PAROU] {exc}")
+            _relatar_tela(pagina, "TELA DO TIPO DE USUARIO")
+            return 1
+        except NavegacaoBloqueada as exc:
+            # A trava barrando o proprio programa e defeito DESTE lado,
+            # nao do portal, e nao pode chegar ao operador como
+            # traceback: ele nao tem o que fazer com um, e o traceback
+            # parece defeito grave do navegador.
+            print(f"  [PAROU] A trava barrou uma acao do proprio comando: {exc}")
+            print("  Isto e defeito deste programa, nao do portal. Nada")
+            print("  foi feito na tela, e a sessao continua aberta.")
+            _relatar_tela(pagina, "TELA DO TIPO DE USUARIO")
+            return 1
+        print(f"  Tipo de usuario: {perfil}.")
+        _assentar(pagina, segundos)
+        pagina = reencontrar_o_portal(pagina, min(segundos, 15))
+
+    try:
+        buscar_dcp(pagina, guarda, numero, url, segundos,
+                   linha_do_resultado)
+    except ConsultaIndisponivel as exc:
+        print(f"  [PAROU] {exc}")
+        _relatar_tela(pagina, "TELA ONDE PAROU")
+        return 1
+    except NavegacaoBloqueada as exc:
+        # Mesma razao da escolha do perfil, logo acima, e o caso
+        # aconteceu em 16/10/2026: a trava barrou o clique na linha do
+        # resultado porque o pedido vinha com o endereco do QUADRO e a
+        # permissao estava escrita com o da PAGINA. Defeito deste lado,
+        # e chegou ao advogado como vinte linhas de traceback.
+        print(f"  [PAROU] A trava barrou uma acao do proprio comando: {exc}")
+        print("  Isto e defeito deste programa, nao do portal. Nada")
+        print("  foi feito na tela, e a sessao continua aberta.")
+        _relatar_tela(pagina, "TELA ONDE PAROU")
+        return 1
+    print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
+    for recado in _mensagens_de_erro(pagina):
+        print(f"    O portal disse: {recado}")
+    estado_local.registrar(
+        acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado,
+        resultado="busca enviada",
+    )
+
+    # LER a tela do processo, e nao so chegar a ela. Ate 13/10/2026 o
+    # caminho do DCP passava direto daqui para os documentos: a
+    # consulta nao devolvia capa nem movimentacao, nao gravava arquivo
+    # e nao alimentava a comparacao de novidades, entao processo do Rio
+    # de Janeiro ficava fora do monitoramento. A leitura e generica e
+    # vem marcada como tal dentro do proprio arquivo.
+    dados = _ler_a_tela_do_dcp(
+        pagina, guarda, numero, identidade, estado_local, segundos,
+        com_movimentacoes=not sem_movimentacoes)
+    print("\n  LIDO DA TELA DO PROCESSO:")
+    for linha in resumo_seguro(dados):
+        print(f"    {linha}")
+    print(f"  Conteudo completo em: {dados['arquivo']}")
+    print("  O arquivo contem dado de cliente. Nao o cole em conversa "
+          "nenhuma.")
+
+    # Abrir os autos e um SEGUNDO passo, e so acontece quando o
+    # operador pede documentos. Consultar e ler a capa; abrir o
+    # visualizador e entrar nos autos, e as duas coisas nao se
+    # confundem so porque ficam na mesma tela.
+    if documentos == "nenhum":
+        print("  Documentos nao pedidos: o visualizador NAO foi aberto.")
+        return 0
+
+    try:
+        janela = abrir_visualizador(
+            pagina, guarda, segundos,
+            motivo=(motivo or "").strip() or MOTIVO_PADRAO)
+    except (ConsultaIndisponivel, MotivoNaoInformado) as exc:
+        print(f"  [PAROU] {exc}")
+        _relatar_tela(pagina, "TELA DO PROCESSO")
+        return 1
+    print(f"  Visualizador aberto: {endereco_sem_dado(janela.url, 80)}")
+    _assentar(janela, segundos)
+
+    # As tres formas de baixar, pedidas pelo advogado em 08/10/2026
+    # depois de a integra nao vir de uma vez: tudo num arquivo so,
+    # UMA peca pela pagina em que ela comeca, ou o processo inteiro
+    # em lotes de N paginas.
+    escolha = (documentos or "").strip().lower()
+    arquivos = []
+    # Prazo de ARQUIVO, que nunca e o de tela: o portal gera o PDF
+    # quando se pede, e um lote de 300 paginas leva o tempo que leva.
+    prazo_do_arquivo = espera_do_arquivo(
+        segundos_download if segundos_download else segundos)
+    try:
+        from .core.acervo import garantir_pasta
+
+        # A pasta de descargas do navegador cresce para sempre, e nada
+        # nunca a limpou. Ver o bloco em `limpar_descargas`: ela entrou
+        # na lista de suspeitos da queda do navegador de 21/10/2026,
+        # junto das falhas de gravacao com OSError. O que e anterior a
+        # esta corrida ja foi resgatado ou ja se perdeu.
+        import time as _tempo
+
+        _inicio_da_corrida = _tempo.time()
+        _quantos, _bytes = limpar_descargas(_inicio_da_corrida)
+        _restam, _ocupado = medida_das_descargas()
+        if _quantos:
+            print(f"  Cache do navegador: {_quantos} arquivo(s) "
+                  f"anteriores apagados, {_bytes // (1024 * 1024)} MB "
+                  "liberados.")
+        print(f"  Cache do navegador em {pasta_de_descargas()}: "
+              f"{_restam} arquivo(s), {_ocupado // (1024 * 1024)} MB.")
+
+        pasta = garantir_pasta(numero.apenas_digitos)
+        if escolha.startswith("peca:"):
+            alvo = escolha.split(":", 1)[1].strip()
+            if not alvo.isdigit():
+                print(f"  [PAROU] --documentos peca:{alvo!r} nao e uma "
+                      "pagina. Use o numero que aparece ao lado do nome "
+                      "do documento no indice, por exemplo peca:92.")
+                return 1
+            arquivos = [baixar_uma_peca(
+                janela, guarda, pasta, numero.apenas_digitos,
+                int(alvo), prazo_do_arquivo)]
+        elif (escolha in ("um-a-um", "um a um", "umaum", "cada")
+              or escolha.startswith("um-a-um:")):
+            # O unico tamanho que este portal entrega. Ver o bloco em
+            # `baixar_um_a_um`: integra e lote de 25 documentos nao
+            # vieram em 900s; um documento de 131 paginas veio, e em
+            # 20/10/2026 os 35 documentos do processo vieram assim.
+            from .dcp import (TETO_DE_DOCUMENTOS_UM_A_UM,
+                              baixar_um_a_um)
+
+            def reabrir_o_visualizador():
+                # A aba do portal AGORA, e nao a que foi capturada no
+                # comeco da consulta. Em 20/10/2026 o reabrir morreu
+                # com TargetClosedError na terceira peca: a aba
+                # capturada tambem ja nao respondia. Ver
+                # `aba_do_portal_viva`.
+                from .dcp import aba_do_portal_viva
+
+                return abrir_visualizador(aba_do_portal_viva(pagina),
+                                          guarda, segundos, motivo)
+
+            teto_do_percurso = TETO_DE_DOCUMENTOS_UM_A_UM
+            if ":" in escolha:
+                pedido = escolha.split(":", 1)[1].strip()
+                if not pedido.isdigit() or int(pedido) < 1:
+                    print(f"  [PAROU] {pedido!r} nao e um numero de "
+                          "documentos. Use 'um-a-um:400'.")
+                    return 1
+                teto_do_percurso = int(pedido)
+            resposta = baixar_um_a_um(
+                janela, guarda, pasta, numero.apenas_digitos,
+                reabrir_o_visualizador, prazo_do_arquivo,
+                teto=teto_do_percurso, pular=paginas_a_pular)
+            janela = resposta["janela"]
+            arquivos = resposta["arquivos"]
+            if resposta["pulados"]:
+                print(f"  {len(resposta['pulados'])} documento(s) ja "
+                      "estavam em disco e foram pulados.")
+            if resposta["falhas"]:
+                print(f"  [INCOMPLETO] {len(resposta['falhas'])} "
+                      "documento(s) nao vieram:")
+                for falha in resposta["falhas"][:10]:
+                    print(f"    {falha}")
+                if len(resposta["falhas"]) > 10:
+                    print(f"    e mais {len(resposta['falhas']) - 10}.")
+                print("  Os que deram certo estao em disco e valem. "
+                      "Repita o comando: o que ja esta gravado e "
+                      "pulado.")
+            if not arquivos and not resposta["pulados"]:
+                raise DownloadIndisponivel(
+                    "Nenhum documento foi gravado. "
+                    + "; ".join(resposta["falhas"][:3]))
+        elif escolha.startswith("lote:"):
+            # UM lote so, contado a partir de 1. A divisao nao muda: o
+            # lote 2 de quatro tem as mesmas paginas, sozinho ou no
+            # meio dos outros.
+            alvo = escolha.split(":", 1)[1].strip()
+            if not alvo.isdigit() or int(alvo) < 1:
+                print(f"  [PAROU] --documentos lote:{alvo!r} nao e um "
+                      "numero de lote. Use lote:1, lote:2 e assim por "
+                      "diante, ou 'lotes' para todos.")
+                return 1
+            arquivos = baixar_em_lotes(
+                janela, guarda, pasta, numero.apenas_digitos,
+                PAGINAS_POR_LOTE, prazo_do_arquivo, apenas=int(alvo))
+        elif escolha.startswith("lotes"):
+            _, _, quanto = escolha.partition(":")
+            tamanho_do_lote = (int(quanto) if quanto.strip().isdigit()
+                               else PAGINAS_POR_LOTE)
+            arquivos = baixar_em_lotes(
+                janela, guarda, pasta, numero.apenas_digitos,
+                tamanho_do_lote, prazo_do_arquivo)
+        else:
+            # O PADRAO vai para `um-a-um`, que e o unico tamanho de
+            # selecao que este portal foi visto entregar.
+            #
+            # Isto contraria uma instrucao do advogado, e por isso fica
+            # escrito. Em 08/10/2026 ele pediu "a integra primeiro, e os
+            # lotes por conta propria quando ela nao vem: eu queria isso
+            # como padrao para problemas como esse". A instrucao foi
+            # dada quando ninguem sabia que NENHUM dos dois vem. O que
+            # se mediu em campo em 20/10/2026, no mesmo processo e na
+            # mesma corrida:
+            #
+            #   integra (35 documentos)          nada em 900s
+            #   lote de 25 documentos, 300 pag.  nada em 900s
+            #   1 documento de 131 paginas       gravado
+            #
+            # A integra continua inteira, para quem a pedir de proposito
+            # com `--documentos integra`: nada foi tirado. O que mudou e
+            # a aposta do PADRAO, porque gastar 900s num caminho que
+            # nunca foi visto entregar, e depois mais 900s noutro
+            # igual, e meia hora da vida de quem roda o comando.
+            #
+            # A desistencia do portal, que existe desde 20/10/2026, nao
+            # salva aqui: ela so dispara quando o indicador de geracao
+            # CHEGA A APARECER, e na integra ele nunca apareceu.
+            #
+            # O teto de documentos continua valendo: `um-a-um` com teto
+            # padrao recusa indice grande e diz como subi-lo. O padrao
+            # nao comeca horas de download sozinho.
+            from .dcp import baixar_um_a_um as _um_a_um
+
+            print("  Padrao: um download por documento. A integra e o "
+                  "lote de 300 paginas nao foram vistos entregar neste "
+                  "portal (medido em 20/10/2026); para tenta-los assim "
+                  "mesmo, use --documentos integra ou --documentos "
+                  "lotes.")
+
+            def _reabrir_padrao():
+                from .dcp import aba_do_portal_viva
+
+                return abrir_visualizador(aba_do_portal_viva(pagina),
+                                          guarda, segundos, motivo)
+
+            resposta = _um_a_um(
+                janela, guarda, pasta, numero.apenas_digitos,
+                _reabrir_padrao, prazo_do_arquivo,
+                pular=paginas_a_pular)
+            janela = resposta["janela"]
+            arquivos = resposta["arquivos"]
+            if resposta["pulados"]:
+                print(f"  {len(resposta['pulados'])} documento(s) ja "
+                      "estavam em disco e foram pulados.")
+            if resposta["falhas"]:
+                print(f"  [INCOMPLETO] {len(resposta['falhas'])} "
+                      "documento(s) nao vieram:")
+                for falha in resposta["falhas"][:10]:
+                    print(f"    {falha}")
+                if len(resposta["falhas"]) > 10:
+                    print(f"    e mais {len(resposta['falhas']) - 10}.")
+                print("  Os que deram certo estao em disco e valem. "
+                      "Repita o comando: o que ja esta gravado e "
+                      "pulado.")
+    except DownloadIndisponivel as exc:
+        print(f"  [PAROU] {exc}")
+        _relatar_tela(janela, "TELA DO VISUALIZADOR")
+        return 1
+    finally:
+        _fechar(janela)
+
+    total = 0
+    for arquivo in arquivos:
+        tamanho = 0
+        try:
+            import os as _os
+
+            tamanho = _os.path.getsize(arquivo)
+        except OSError:
+            pass
+        total += tamanho
+        print(f"\n  Gravado em {arquivo}")
+        print(f"  Tamanho: {tamanho} byte(s).")
+    # Dito sempre, e nao so quando algo parece errado: o advogado
+    # informou que processo grande as vezes nao baixa de uma vez, e um
+    # PDF parcial guardado como integra nao se denuncia sozinho.
+    if len(arquivos) == 1 and not escolha.startswith("peca:"):
+        print("  CONFIRA se o arquivo tem o processo inteiro. Processo "
+              "grande as vezes nao baixa de uma vez, e daqui nao da "
+              "para saber.")
+    estado_local.registrar(
+        acao="copia_integral", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado,
+        resultado=f"{len(arquivos)} arquivo(s) gravado(s)",
+        detalhe=str(total),
+    )
+    return 0
+
+
+def _consultar_pje(pagina, guarda, estado_local, identidade, *, numero,
+                   aceitar_termo, documentos, segundos, segundos_download,
+                   url) -> int:
+    """O caminho do PJe, com o numero partido em seis campos e os autos em aba
+    nova, depois do aviso de responsabilidade."""
+    from .pje import (ConsultaPJeIndisponivel, abrir_processo,
+                      buscar_autenticado, parece_aviso_de_responsabilidade)
+
+    print("  PJe, consulta autenticada (caminho fotografado em 30/09/2026).")
+    try:
+        final = buscar_autenticado(pagina, guarda, numero, url, segundos)
+    except ConsultaPJeIndisponivel as exc:
+        print(f"  [PAROU] {exc}")
+        _relatar_tela(pagina, "TELA ONDE PAROU")
+        _relatar_estrutura_de_dados(pagina)
+        return 1
+    print(f"  Endereco: {final}")
+
+    recados = _mensagens_de_erro(pagina)
+    for recado in recados:
+        print(f"    O portal disse: {recado}")
+
+    estado_local.registrar(
+        acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado,
+        resultado="busca enviada",
+    )
+
+    # Abrir os autos e um SEGUNDO passo, separado de proposito: o clique
+    # no numero levanta o aviso de responsabilidade da resolucao nº. 121
+    # do Conselho Nacional de Justica, e aceita-lo e ato do advogado, nao
+    # do programa. Sem o aceite explicito o comando mostra o texto do
+    # aviso e para.
+    try:
+        aba, avisos = abrir_processo(
+            pagina, guarda, numero, aceitar_termo=aceitar_termo,
+            segundos=segundos)
+    except ConsultaPJeIndisponivel as exc:
+        print(f"  [PAROU] {exc}")
+        _relatar_tela(pagina, "TELA DO RESULTADO")
+        return 1
+
+    for aviso in avisos:
+        print("\n  O PORTAL PEDIU UM ACEITE, E ELE NAO FOI DADO:")
+        for pedaco in aviso.splitlines():
+            if pedaco.strip():
+                print(f"    {pedaco.strip()}")
+        if parece_aviso_de_responsabilidade(aviso):
+            print("    Este e o aviso de responsabilizacao civil, "
+                  "administrativa e criminal.")
+
+    if aba is None:
+        if avisos:
+            print("\n  Nada foi aberto. Leia o aviso acima; se for o caso de")
+            print("  aceita-lo, repita o comando com --aceito-o-termo.")
+        else:
+            print("\n  O clique no numero nao abriu aba nova nem mostrou aviso.")
+            print("  Nada foi aberto.")
+        _relatar_tela(pagina, "TELA DO RESULTADO")
+        return 1
+
+    print("\n  O aceite foi dado pelo operador e os autos abriram em aba nova.")
+    estado_local.registrar(
+        acao="aceite_do_termo_de_responsabilidade",
+        tribunal=identidade.tribunal, sistema=identidade.sistema,
+        numero=numero.formatado, resultado="autos abertos",
+    )
+    # A tela e SEMPRE gravada aqui, mesmo quando a leitura abaixo
+    # acerta: a linha do tempo foi escrita contra o que a tela de
+    # 23/10/2026 declarou, e nao contra a arvore de nos dela, que nao
+    # existia no disco porque `--gravar-telas` nao gravava fora do
+    # Portal de Servicos. Enquanto a leitura nao for conferida em mais
+    # de um processo, a tela gravada e o que permite consertar sem
+    # gastar outra autenticacao do advogado.
+    _relatar_tela(aba, "AUTOS DO PROCESSO (ABA NOVA)")
+
+    from .pje import (faixa_de_identificadores, ler_a_linha_do_tempo,
+                      percorrer_a_linha_do_tempo)
+
+    # ROLAR ANTES DE LER. A linha do tempo carrega por rolagem, e ler
+    # sem rolar devolve so a primeira leva. Em 23/10/2026 a primeira
+    # trazia 24 documentos, de 211055786 a 301359755, e a peticao
+    # inicial, de identificador 128507266, estava mais abaixo: pedir o
+    # download com aquela faixa traria os autos pela metade.
+    percurso = percorrer_a_linha_do_tempo(aba)
+    if percurso["rolagens"]:
+        print(f"\n  Linha do tempo percorrida: {percurso['rolagens']} "
+              f"rolagem(ns).")
+    if percurso["aviso"]:
+        print(f"  ATENCAO: {percurso['aviso']}")
+
+    linha = ler_a_linha_do_tempo(aba)
+    if linha["aviso"]:
+        print(f"\n  LINHA DO TEMPO: {linha['aviso']}")
+        _relatar_estrutura_de_dados(aba)
+    else:
+        eventos = linha["eventos"]
+        # `pecas_da_linha`, e NAO `documentos`: `documentos` e
+        # parametro de `consultar_processo`, o da opcao do mesmo nome.
+        # Usa-lo aqui o tornaria local de `depois` na funcao inteira, e
+        # a leitura dele no ramo do Portal de Servicos viraria
+        # UnboundLocalError em tempo de execucao. Uma guarda pegou.
+        pecas_da_linha = [e for e in eventos if e["e_documento"]]
+        print(f"\n  LINHA DO TEMPO: {len(eventos)} evento(s), "
+              f"{len(pecas_da_linha)} documento(s).")
+        # Dito alto quando NAO se chegou ao fim: a diferenca entre
+        # "o processo tem isto" e "esta parte tem isto". O percurso
+        # acima ja tentou rolar ate a ultima pagina; se nao chegou, o
+        # aviso dele ja saiu, e aqui fica a contagem.
+        if linha["paginas"]:
+            print(f"  Pagina {linha['pagina']} de {linha['paginas']}"
+                  + ("." if percurso["completa"]
+                     else ", e o percurso NAO chegou ao fim."))
+        primeiro, ultimo = faixa_de_identificadores(eventos)
+        if primeiro is not None:
+            print(f"  Identificadores de {primeiro} a {ultimo}.")
+        dados_da_linha = {
+            "numero": numero.formatado,
+            "sistema": "pje",
+            "pagina": linha["pagina"],
+            "paginas": linha["paginas"],
+            "eventos": eventos,
+            "faixa_de_identificadores": [primeiro, ultimo],
+            # Gravado junto, e nao so impresso: quem ler este arquivo
+            # depois precisa saber se ele cobre o processo ou um
+            # pedaco dele. Faixa sem essa marca e armadilha.
+            "linha_do_tempo_completa": percurso["completa"],
+        }
+        arquivo = _gravar_consulta(dados_da_linha, numero.apenas_digitos)
+        print(f"\n  Conteudo completo em: {arquivo}")
+        print("  O arquivo contem dado de cliente. Nao o cole em "
+              "conversa nenhuma.")
+        estado_local.registrar(
+            acao="linha_do_tempo_do_pje", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado,
+            resultado=f"{len(eventos)} evento(s)",
+        )
+    if not documentos:
+        print("\n  O download dos autos NAO foi pedido. Para pedi-lo, "
+              "repita com --documentos integra.")
+    elif not percurso["completa"]:
+        # RECUSA DELIBERADA. A faixa sai da linha do tempo, e linha do
+        # tempo incompleta da faixa incompleta: o arquivo viria com um
+        # pedaco do processo e nada no PDF diria isso. Melhor nao
+        # baixar do que baixar meio processo achando que e inteiro.
+        print("\n  O download NAO foi pedido: a linha do tempo nao foi "
+              "percorrida ate o fim,")
+        print("  entao a faixa de identificadores cobre so parte do "
+              "processo. Baixar assim")
+        print("  traria os autos pela metade, e o arquivo nao diria "
+              "isso em lugar nenhum.")
+    elif primeiro is None:
+        print("\n  O download NAO foi pedido: a linha do tempo nao "
+              "trouxe documento nenhum.")
+    else:
+        _baixar_autos_do_pje(
+            aba, guarda, numero, primeiro, ultimo,
+            estado_local, identidade, segundos,
+            prazo_do_arquivo=segundos_download)
+    try:
+        aba.close()
+    except Exception:
+        pass
+    return 0
+
+
+def _consultar_eproc(pagina, guarda, estado_local, identidade, *, numero,
+                     documentos, segundos) -> int:
+    """O caminho do eproc, pela barra de busca rapida, que existe em toda tela.
+
+    E tambem o caminho padrao: portal novo que tenha busca rapida cai aqui.
+    """
+    atual = pagina.url
+    campo = elemento_visivel(pagina, BUSCA_RAPIDA)
+    if campo is None:
+        print("  [FALHA] Campo de busca rapida nao encontrado na tela.")
+        return 1
+    botao = elemento_visivel(pagina, BOTAO_BUSCA)
+    if botao is None:
+        print("  [FALHA] Botao de busca nao encontrado na tela.")
+        return 1
+
+    # Autorizacao estreita: so a busca, so nesta tela. O formulario de
+    # cadastro que divide a pagina continua inteiramente barrado.
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(atual).padrao_url,
+        descricao="busca rapida de processo, somente leitura",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(BOTAO_BUSCA,),
+        seletores_preenchiveis=(BUSCA_RAPIDA,),
+    ))
+
+    guarda.pode_executar(Acao.PREENCHER, BUSCA_RAPIDA, url=atual)
+    campo.click()
+    campo.fill(numero.formatado)
+    conferido = campo.evaluate("e => (e.value || '').length")
+    if not conferido:
+        print("  [ABORTADO] O numero nao entrou no campo. Nada foi enviado.")
+        return 1
+
+    guarda.pode_executar(Acao.CLICAR, BOTAO_BUSCA, url=atual)
+    estado_local.registrar(
+        acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado, resultado="enviada",
+    )
+    botao.click()
+    try:
+        pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+    except Exception:
+        pass
+
+    final = pagina.url
+    print(f"  Endereco: {final}")
+    print(f"  Titulo: {pagina.title()!r}")
+
+    termo = guarda._termo_de_risco(final)
+    if termo is not None:
+        print(f"\n  TRAVA: o destino contem o termo de risco {termo!r}.")
+        print("  A leitura foi interrompida. Informe este endereco.")
+        return 1
+
+    erros = _mensagens_de_erro(pagina)
+    if erros:
+        print("\n  MENSAGENS NA TELA:")
+        for e in erros:
+            print(f"    {e}")
+
+    from .extracao import esperar_tela_do_processo, extrair_processo, resumo
+
+    # Esperar o CONTEUDO, e nao so a rede. O eproc chega nesta tela com
+    # `autocarregar=true`, navega no meio do caminho e traz os eventos
+    # depois do desenho: ler naquele instante devolve zero tabela, que e
+    # indistinguivel de processo inexistente.
+    _assentar(pagina, segundos)
+    chegou = esperar_tela_do_processo(pagina, segundos)
+    if chegou == "nada":
+        print("  A tela do processo nao apareceu no tempo dado.")
+    elif chegou == "capa":
+        print("  A capa do processo apareceu, mas nenhuma linha de evento.")
+    dados = extrair_processo(pagina, numero.formatado)
+    if not dados["eventos"]:
+        print("\n  [ATENCAO] Nenhum evento extraido. A tela pode ter outra")
+        print("  estrutura, ou o processo pode estar em segredo de justica.")
+        print(f"  Tabelas na pagina: "
+              f"{[t.get_attribute('id') or '-' for t in pagina.query_selector_all('table')]}")
+        # Conteudo dentro de quadro embutido e a explicacao mais comum para
+        # "zero tabelas" numa tela que visivelmente tem tabelas: a leitura
+        # de cima nao atravessa o quadro. Contar por quadro separa isso de
+        # processo que realmente nao existe ali.
+        try:
+            for quadro in pagina.frames[1:]:
+                quantas = len(quadro.query_selector_all("table"))
+                print(f"    quadro embutido {quadro.name or '(sem nome)'}: "
+                      f"{quantas} tabela(s)")
+        except Exception as exc:
+            print(f"    Quadros embutidos ilegiveis: {type(exc).__name__}")
+        # O relato inteiro, e nao so a contagem. Sem ele este ponto vira um
+        # beco: o comando diz que nao achou e nao entrega nada com que
+        # escrever a leitura certa. E o mesmo que o e-SAJ e o PJe ja fazem
+        # quando param no meio.
+        _relatar_tela(pagina, "TELA DA CONSULTA")
+        _relatar_estrutura_de_dados(pagina)
+        print("\n  RELATO DA TRAVA:")
+        for linha in guarda.relato():
+            print(f"    {linha}")
+        return 1
+
+    # O conteudo vai para arquivo; o terminal recebe so o resumo. Despejar
+    # dezenas de eventos na tela convida a colar dado de cliente onde nao
+    # deve, e o arquivo e o que o restante do sistema vai consumir.
+    destino = _gravar_consulta(dados, numero.apenas_digitos)
+    print("\n  EXTRAIDO:")
+    for linha in resumo(dados):
+        print(f"    {linha}")
+
+    # Alimenta o mesmo mecanismo de comparacao da Fase 1, de modo que
+    # `verificar_novos_andamentos` passe a enxergar tambem o autenticado.
+    registro = estado_local.gravar_snapshot(
+        numero.apenas_digitos,
+        [{"data_hora": e["data_hora"], "codigo": e["evento"], "nome": e["descricao"]}
+         for e in dados["eventos"]],
+    )
+    if registro.get("primeiro"):
+        print("\n    Referencia inicial gravada para comparacao futura.")
+    elif registro["mudou"]:
+        print(f"\n    Houve mudanca desde a consulta anterior "
+              f"({registro['coletado_em']}).")
+    else:
+        print("\n    Sem mudanca desde a consulta anterior.")
+
+    # ---------- copias dos documentos ----------
+    if documentos and documentos != "nenhum":
+        from .core.acervo import (
+            AcervoIndisponivel, carregar_indice, decidir_estrategia,
+            garantir_pasta, pdfs_fora_do_indice,
+        )
+        from .documentos import baixar_documentos_dos_eventos
+
+        try:
+            indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+            # A pasta nasce aqui, e nao no instante de gravar o primeiro
+            # arquivo: ela e o endereco do processo no acervo, e precisa
+            # existir mesmo que a consulta nao copie nada.
+            pasta = garantir_pasta(numero.apenas_digitos)
+            print(f"  Pasta do processo: {pasta}")
+            avulsos = pdfs_fora_do_indice(indice)
+            if avulsos:
+                print(f"  ATENCAO: {len(avulsos)} arquivo(s) na pasta fora do indice, "
+                      f"por exemplo {avulsos[0]}.")
+                print("  Nao da para saber o que eles cobrem, entao nao contam como copia.")
+            guarda.permissoes.insert(0, permissao_de_origem(
+                pagina.url, "documentos do processo, mesma origem do portal"
+            ))
+            guarda.permitir_download = True
+            print()
+
+            if documentos == "auto":
+                estrategia = decidir_estrategia(indice, dados["eventos"])
+                print(f"  ACERVO: {estrategia['motivo']}")
+            elif documentos == "integra":
+                estrategia = {"acao": "integra", "motivo": "Integra pedida no comando."}
+            else:
+                quantos = 5
+                if documentos.startswith("ultimos:"):
+                    try:
+                        quantos = max(int(documentos.split(":", 1)[1]), 1)
+                    except ValueError:
+                        quantos = 5
+                estrategia = {"acao": "ultimos", "quantos": quantos}
+
+            if estrategia["acao"] == "integra":
+                print("  COPIA INTEGRAL (pelo botao do portal)...")
+                falhou = False
+                try:
+                    # A copia do eproc vem PARTIDA: conferido em campo em
+                    # 05/10/2026, com duas partes. O numero depende do
+                    # processo, entao aqui se recebe uma lista.
+                    arquivos = _baixar_integra(
+                        pagina, guarda, pasta, numero.apenas_digitos,
+                        identidade, segundos
+                    )
+                except Exception as exc:
+                    arquivos, falhou = [], True
+                    # O nome da classe sozinho nao diz nada: o Playwright chama
+                    # tudo de `Error`, e a execucao de 05/10/2026 terminou num
+                    # "(Error)" seco que nao permitia decidir nada. A PRIMEIRA
+                    # linha da mensagem diz o essencial; o resto e o despejo do
+                    # log, que sepultava o relato da tela impresso acima.
+                    primeira = str(exc).strip().splitlines()[:1]
+                    detalhe = primeira[0][:160] if primeira else "sem mensagem"
+                    print(f"    Copia integral nao concluida "
+                          f"({type(exc).__name__}: {detalhe}).")
+                if arquivos:
+                    from pathlib import Path as _P
+
+                    from .core.acervo import maior_evento
+
+                    ate = maior_evento(dados["eventos"])
+                    # Cada parte entra como um item, e a numeracao de folhas
+                    # segue continua de uma para a outra. Juntar as partes num
+                    # arquivo so seria mais bonito e exigiria supor o formato
+                    # delas, que ainda nao foi visto.
+                    for ordem, arquivo in enumerate(arquivos, 1):
+                        item = indice.acrescentar(
+                            _P(arquivo), "integra", evento_ate=ate,
+                            rotulo=(f"parte {ordem} de {len(arquivos)}"
+                                    if len(arquivos) > 1 else None),
+                        )
+                        print(f"    gravada: {_P(arquivo).name}  ({item.faixa()})")
+                        estado_local.registrar(
+                            acao="copia_integral", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, numero=numero.formatado,
+                            documento=arquivo, resultado=item.faixa(),
+                        )
+                    print(f"    cobrindo ate o evento {ate}")
+                elif not falhou:
+                    # Mensagem NEUTRA de proposito. Ela dizia "botao de copia
+                    # integral nao encontrado nesta tela", o que passou a ser
+                    # falso no dia em que o pedido de geracao passou a ser
+                    # aceito: o botao foi encontrado, clicado, e o portal
+                    # respondeu que esta montando o arquivo. Quem le so o fim
+                    # da saida concluiria o contrario do que aconteceu. O
+                    # motivo verdadeiro, qualquer que seja, ja foi impresso
+                    # pelas funcoes acima, que sabem qual e.
+                    print("    Nenhum arquivo gravado nesta execucao; o motivo "
+                          "esta logo acima.")
+
+            elif estrategia["acao"] == "complemento":
+                faltantes = estrategia["faltantes"]
+                if not faltantes:
+                    print("    Nada a complementar.")
+                else:
+                    # Um evento sintetico por documento faltante preserva o
+                    # vinculo com o evento de origem no nome do arquivo.
+                    pendentes = [
+                        {**f["evento"], "documentos": [f["documento"]]} for f in faltantes
+                    ]
+                    copia = baixar_documentos_dos_eventos(
+                        pagina, guarda, pendentes, pasta, quantos_eventos=len(pendentes)
+                    )
+                    print(f"  COMPLEMENTO: {len(copia.gravadas)} documento(s)")
+                    from pathlib import Path as _P
+
+                    for c in copia.gravadas:
+                        item = indice.acrescentar(
+                            _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
+                        )
+                        print(f"    ev{c.evento} {c.rotulo}  ->  {item.faixa()}")
+                        estado_local.registrar(
+                            acao="copia_documento", tribunal=identidade.tribunal,
+                            sistema=identidade.sistema, numero=numero.formatado,
+                            documento=c.arquivo, resultado=item.faixa(),
+                        )
+                    for c in copia.falhas:
+                        print(f"    falhou ev{c.evento} {c.rotulo}: {c.erro}")
+
+            else:
+                quantos = estrategia["quantos"]
+                print(f"  COPIAS DOS {quantos} EVENTO(S) MAIS RECENTES...")
+                copia = baixar_documentos_dos_eventos(
+                    pagina, guarda, dados["eventos"], pasta, quantos_eventos=quantos
+                )
+                from pathlib import Path as _P
+
+                for linha in copia.resumo():
+                    print(f"    {linha}")
+                for c in copia.gravadas:
+                    item = indice.acrescentar(
+                        _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
+                    )
+                    estado_local.registrar(
+                        acao="copia_documento", tribunal=identidade.tribunal,
+                        sistema=identidade.sistema, numero=numero.formatado,
+                        documento=c.arquivo, resultado=item.faixa(),
+                    )
+
+            guarda.permitir_download = False
+            if not indice.vazio:
+                indice.gravar()
+                print(f"\n  Acervo: {indice.ultima_folha} folha(s) em {indice.pasta}")
+        except AcervoIndisponivel as exc:
+            # A consulta ja terminou e ja foi gravada. Derrubar tudo por causa da
+            # pasta de copias seria jogar fora o trabalho que deu certo por causa
+            # do que deu errado depois.
+            guarda.permitir_download = False
+            print(f"\n  [ACERVO] {exc}")
+            print("  A consulta acima vale e ja esta no arquivo indicado abaixo.")
+            print("  Repita o comando mais tarde para a parte de copia, ou confira")
+            print("  se o Google Drive esta sincronizando.")
+
+    print(f"\n  Conteudo completo em: {destino}")
+    print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
+    estado_local.registrar(
+        acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado,
+        resultado=f"{dados['totais']['eventos']} evento(s)",
+    )
+    return 0
+
+
 def consultar_processo(
     url: str,
     tribunal: str,
@@ -6447,1003 +7483,35 @@ def consultar_processo(
           "qual e qual.")
 
     def depois(pagina, guarda, estado_local, identidade):
-        atual = pagina.url
         print(f"\n  CONSULTA DO PROCESSO {numero.formatado}")
 
         # Cada sistema tem a sua forma de chegar ao processo, e a diferenca nao
         # e cosmetica: o eproc tem barra de busca rapida em toda tela, o e-SAJ
         # tem duas telas de consulta, uma por grau, com o numero partido em dois
         # campos. Tratar tudo como eproc foi possivel enquanto so havia eproc.
+        #
+        # Daqui em diante cada caminho mora na sua propria funcao, no nivel do
+        # modulo. Esta funcao so escolhe qual chamar.
         if identidade.sistema == "esaj":
-            from .esaj import ConsultaESAJIndisponivel, buscar as buscar_esaj
-
-            print(f"  e-SAJ, {numero.grau_nome} (deduzida do proprio numero).")
-            try:
-                buscar_esaj(pagina, guarda, numero, segundos)
-            except ConsultaESAJIndisponivel as exc:
-                print(f"  [FALHA] {exc}")
-                return 1
-            print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
-
-            from .esaj import expandir_movimentacoes_ate_o_fim
-            from .esaj import extrair as extrair_esaj
-            from .esaj import extrair_movimentacoes as _contar_movs
-
-            # O historico verdadeiro so existe depois deste clique, e uma
-            # expansao so trazia um pedaco. Autorizado pelo operador em 22 de
-            # setembro de 2026: clicar ate a opcao sumir.
-            expansao = expandir_movimentacoes_ate_o_fim(
-                pagina, guarda, segundos, contar=lambda p: len(_contar_movs(p))
-            )
-            if expansao["expansoes"]:
-                print(f"  Movimentacoes expandidas {expansao['expansoes']}x "
-                      f"({expansao['motivo']}).")
-                estado_local.registrar(
-                    acao="expandir_movimentacoes", tribunal=identidade.tribunal,
-                    sistema=identidade.sistema, numero=numero.formatado,
-                    resultado=f"{expansao['expansoes']}x, {expansao['motivo']}",
-                )
-                if expansao["motivo"] == "teto de expansoes atingido":
-                    print("    ATENCAO: o teto foi atingido e o botao ainda estava la.")
-                    print("    A lista pode continuar incompleta.")
-
-            dados = extrair_esaj(pagina)
-            dados["numero"] = numero.formatado
-            dados["tribunal"] = identidade.tribunal
-            dados["sistema"] = identidade.sistema
-            dados["grau"] = numero.grau
-            dados["endereco"] = pagina.url
-
-            principais = dados["principais"]
-            print("\n  EXTRAIDO:")
-            for rotulo in ("classe", "assunto", "foro", "vara", "juiz"):
-                if principais.get(rotulo):
-                    print(f"    {rotulo}: {principais[rotulo]}")
-            print(f"    partes: {dados['totais']['partes']}   "
-                  f"movimentacoes: {dados['totais']['movimentacoes']}")
-            if dados["movimentacoes_origem"] == "varredura":
-                # Vindas de tabela sem identificador. A pagina do e-SAJ tem
-                # varias com data: peticoes diversas, incidentes, audiencias.
-                # Chama-las de movimentacoes seria afirmar o que nao se sabe, e
-                # o advogado leria um historico que talvez nao seja o historico.
-                print("    ATENCAO: estas linhas vieram de uma tabela SEM identificador,")
-                print("    achada por ter datas. A pagina tem outras tabelas com data")
-                print("    (peticoes, incidentes, audiencias). CONFIRA no portal se e")
-                print("    mesmo o historico de movimentacoes antes de confiar nelas.")
-            if not dados["movimentacoes_completas"]:
-                # Entregar a lista parcial como completa faria o advogado
-                # concluir que nao ha andamento anterior, que e pior que nao
-                # entregar nada. O clique que expande ainda nao foi conferido
-                # em campo, e nao vai ser adivinhado.
-                print("    ATENCAO: a pagina ainda oferece \"exibir mais movimentacoes\".")
-                print("    A lista acima e PARCIAL. O clique que expande ainda nao foi")
-                print("    conferido em campo, entao nao e dado por este comando.")
-            if dados["pasta_digital"]:
-                print(f"    integra disponivel em: {dados['pasta_digital'][:70]}")
-            for m in dados["movimentacoes"][:5]:
-                print(f"      {m['data']}  {m['descricao'][:70]}")
-
-            if documentos and documentos != "nenhum":
-                from .core.acervo import (
-                    AcervoIndisponivel, carregar_indice, garantir_pasta,
-                )
-                from .esaj import copiar_pasta_digital
-
-                try:
-                    indice = carregar_indice(numero.apenas_digitos, numero.formatado)
-                    pasta = garantir_pasta(numero.apenas_digitos)
-                    print(f"\n  Pasta do processo: {pasta}")
-                    guarda.permitir_download = True
-                    # O caminho que funciona e o que o operador descreveu e
-                    # fotografou: clicar em "Visualizar autos", marcar "Todas",
-                    # "Baixar PDF", "Arquivo unico" e "Continuar". Buscar pelo
-                    # endereco falhou por tres caminhos conferidos em campo, porque
-                    # o ticket da Pasta Digital so e montado no instante do clique.
-                    from .esaj import copiar_autos_pelo_visualizador
-
-                    resultado = copiar_autos_pelo_visualizador(
-                        pagina, guarda, pasta, numero.apenas_digitos, segundos
-                    )
-                    janela = resultado.pop("janela", None)
-                    if resultado["situacao"] != "gravada" and janela is not None:
-                        # Parou no meio: relatar a tela e o que permite escrever o
-                        # passo que faltou, sem adivinhar seletor.
-                        if resultado["situacao"] == "download_perdido":
-                            print(f"    O arquivo foi baixado mas nao pode ser gravado: "
-                                  f"{resultado.get('detalhe', '')}")
-                        else:
-                            print(f"    Nao concluiu no passo {resultado.get('passo', '?')}.")
-                        _relatar_tela(janela, "PASTA DIGITAL")
-                        _relatar_estrutura_de_dados(janela)
-                    if janela is not None:
-                        try:
-                            janela.close()
-                        except Exception:
-                            pass
-                    guarda.permitir_download = False
-                    if resultado["situacao"] == "gravada":
-                        from pathlib import Path as _P
-
-                        from .core.acervo import (
-                            REPETIDA_IGUAL, REPETIDA_NO_TEXTO, REPETIDA_SUSPEITA,
-                        )
-
-                        baixado = _P(resultado["arquivo"])
-                        veredicto, gemeo = indice.avaliar_repeticao(baixado)
-                        if veredicto == REPETIDA_IGUAL:
-                            # Indexar de novo diria que o processo tem o dobro de
-                            # folhas que tem. Folha errada em citacao e o pior
-                            # defeito possivel neste indice.
-                            print(f"    COPIA REPETIDA: identica a "
-                                  f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), ja no acervo.")
-                            print("    O indice NAO foi alterado, para nao renumerar folhas.")
-                            if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
-                                try:
-                                    baixado.unlink()
-                                    print("    O arquivo repetido foi removido da pasta.")
-                                except OSError as exc:
-                                    print(f"    Nao consegui remover o repetido: {exc}")
-                            estado_local.registrar(
-                                acao="copia_repetida", tribunal=identidade.tribunal,
-                                sistema=identidade.sistema, numero=numero.formatado,
-                                documento=str(baixado), resultado=gemeo.faixa(),
-                            )
-                        elif veredicto == REPETIDA_NO_TEXTO:
-                            # Bytes diferentes, TEXTO identico folha a folha.
-                            # Nao ha o que o advogado decida aqui: a diferenca
-                            # esta no carimbo de geracao que o portal escreve
-                            # dentro do PDF, fora da camada de texto.
-                            print(f"    Esta copia tem o MESMO TEXTO de "
-                                  f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), "
-                                  "folha a folha.")
-                            print("    Os bytes diferem so no carimbo de geracao, que o")
-                            print("    proprio portal escreve dentro do PDF. E a mesma")
-                            print("    integra, entao o indice NAO foi alterado.")
-                            if baixado != _P(gemeo.arquivo) and _P(gemeo.arquivo).is_file():
-                                try:
-                                    baixado.unlink()
-                                    print("    O arquivo repetido foi removido da pasta.")
-                                except OSError as exc:
-                                    print(f"    Nao consegui remover o repetido: {exc}")
-                            estado_local.registrar(
-                                acao="copia_repetida_no_texto",
-                                tribunal=identidade.tribunal, sistema=identidade.sistema,
-                                numero=numero.formatado, documento=str(baixado),
-                                resultado=gemeo.faixa(),
-                            )
-                        elif veredicto == REPETIDA_SUSPEITA:
-                            print(f"    ATENCAO: esta copia tem o mesmo numero de paginas de "
-                                  f"{_P(gemeo.arquivo).name} ({gemeo.faixa()}), mas o "
-                                  "conteudo difere.")
-                            print("    Pode ser a MESMA copia com data de geracao diferente,")
-                            print("    que o proprio portal escreve dentro do PDF. NAO indexei:")
-                            print("    numerar folha errada e pior que nao numerar. O arquivo")
-                            print(f"    esta em {baixado}. Confira e me diga o que fazer.")
-                            estado_local.registrar(
-                                acao="copia_suspeita_de_repeticao",
-                                tribunal=identidade.tribunal, sistema=identidade.sistema,
-                                numero=numero.formatado, documento=str(baixado),
-                                resultado=gemeo.faixa(),
-                            )
-                        else:
-                            item = indice.acrescentar(baixado, "integra")
-                            indice.gravar()
-                            print(f"    COPIA INTEGRAL gravada: {baixado.name} "
-                                  f"({item.faixa()})")
-                            estado_local.registrar(
-                                acao="copia_integral", tribunal=identidade.tribunal,
-                                sistema=identidade.sistema, numero=numero.formatado,
-                                documento=resultado["arquivo"], resultado=item.faixa(),
-                            )
-                    else:
-                        print(f"    COPIA NAO CONCLUIDA ({resultado['situacao']}): "
-                              f"{resultado.get('detalhe', '')}")
-                        for pista in resultado.get("pistas") or []:
-                            print(f"      {pista}")
-                        print("    Nada foi inventado: o download real sera escrito depois")
-                        print("    de conferido o que a pasta digital devolve.")
-                except AcervoIndisponivel as exc:
-                    # A consulta ja terminou e ja foi gravada. Derrubar tudo por causa da
-                    # pasta de copias seria jogar fora o trabalho que deu certo por causa
-                    # do que deu errado depois.
-                    guarda.permitir_download = False
-                    print(f"\n  [ACERVO] {exc}")
-                    print("  A consulta acima vale e ja esta no arquivo indicado abaixo.")
-                    print("  Repita o comando mais tarde para a parte de copia, ou confira")
-                    print("  se o Google Drive esta sincronizando.")
-
-            dados["arquivo"] = str(_gravar_consulta(dados, numero.apenas_digitos))
-            # Alimenta a comparacao de novidades, igual ao eproc. Sem isto, Sao
-            # Paulo ficaria fora do monitoramento: a consulta traria os dados e
-            # o `verificar_novos_andamentos` nunca saberia que eles existiram.
-            # A movimentacao do e-SAJ nao tem numero de evento, so data e
-            # descricao, entao a data faz as vezes de codigo; comparar por
-            # (data, descricao) e o que a pagina permite.
-            estado_local.gravar_snapshot(
-                numero.apenas_digitos,
-                [{"data_hora": m["data"], "codigo": m["data"], "nome": m["descricao"]}
-                 for m in dados["movimentacoes"]],
-            )
-            print(f"\n  Conteudo completo em: {dados['arquivo']}")
-            print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
-            estado_local.registrar(
-                acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
-                sistema=identidade.sistema, numero=numero.formatado,
-                resultado=f"{dados['totais']['movimentacoes']} movimentacao(oes)",
-            )
-            return 0
-
+            return _consultar_esaj(
+                pagina, guarda, estado_local, identidade, numero=numero,
+                documentos=documentos, segundos=segundos)
         if identidade.sistema == "dcp":
-            from .dcp import (MOTIVO_PADRAO, PAGINAS_POR_LOTE,
-                              ConsultaIndisponivel, DownloadIndisponivel,
-                              MotivoNaoInformado, PerfilNaoInformado,
-                              abrir_visualizador, baixar_em_lotes,
-                              baixar_integra, baixar_uma_peca,
-                              entrar_no_portal_de_servicos, escolher_perfil,
-                              espera_do_arquivo, na_tela_de_perfil,
-                              reencontrar_o_portal)
-            from .dcp import buscar as buscar_dcp
-            from .dcp import resumo_seguro
-
-            print("  DCP, pelo Portal de Servicos (telas lidas em 06/10/2026).")
-            # A entrada pela tela de selecao NAO e etapa decorativa. Conferido
-            # em campo em 06/10/2026: navegar direto para a consulta devolveu a
-            # pagina publica do tribunal. A sessao do IdServerJus existe, e o
-            # Portal de Servicos so e alcancado pela entrega que aquele
-            # formulario faz.
-            try:
-                pagina = entrar_no_portal_de_servicos(pagina, guarda, segundos)
-            except ConsultaIndisponivel as exc:
-                print(f"  [PAROU] {exc}")
-                _relatar_tela(pagina, "TELA DE SELECAO DE SISTEMAS")
-                return 1
-            print(f"  Portal de Servicos aberto: {endereco_sem_dado(pagina.url, 80)}")
-            _assentar(pagina, segundos)
-            # A aba que o programa segura pode ter ido embora enquanto a tela
-            # montava. Em 06/10/2026 foi isso: a janela aceita como portal
-            # virou `www.tjrj.jus.br`, e o comando a levou ate o fim.
-            pagina = reencontrar_o_portal(pagina, min(segundos, 15))
-            print(f"  Tela do portal: {endereco_sem_dado(pagina.url, 80)}")
-
-            # O portal pergunta o TIPO DE USUARIO antes de deixar entrar, e o
-            # perfil decide o que a sessao enxerga, como a inscricao no eproc.
-            if na_tela_de_perfil(pagina):
-                try:
-                    escolher_perfil(pagina, guarda, perfil, segundos)
-                except PerfilNaoInformado as exc:
-                    print(f"  [PAROU] {exc}")
-                    _relatar_tela(pagina, "TELA DO TIPO DE USUARIO")
-                    return 1
-                except NavegacaoBloqueada as exc:
-                    # A trava barrando o proprio programa e defeito DESTE lado,
-                    # nao do portal, e nao pode chegar ao operador como
-                    # traceback: ele nao tem o que fazer com um, e o traceback
-                    # parece defeito grave do navegador.
-                    print(f"  [PAROU] A trava barrou uma acao do proprio comando: {exc}")
-                    print("  Isto e defeito deste programa, nao do portal. Nada")
-                    print("  foi feito na tela, e a sessao continua aberta.")
-                    _relatar_tela(pagina, "TELA DO TIPO DE USUARIO")
-                    return 1
-                print(f"  Tipo de usuario: {perfil}.")
-                _assentar(pagina, segundos)
-                pagina = reencontrar_o_portal(pagina, min(segundos, 15))
-
-            try:
-                buscar_dcp(pagina, guarda, numero, url, segundos,
-                           linha_do_resultado)
-            except ConsultaIndisponivel as exc:
-                print(f"  [PAROU] {exc}")
-                _relatar_tela(pagina, "TELA ONDE PAROU")
-                return 1
-            except NavegacaoBloqueada as exc:
-                # Mesma razao da escolha do perfil, logo acima, e o caso
-                # aconteceu em 16/10/2026: a trava barrou o clique na linha do
-                # resultado porque o pedido vinha com o endereco do QUADRO e a
-                # permissao estava escrita com o da PAGINA. Defeito deste lado,
-                # e chegou ao advogado como vinte linhas de traceback.
-                print(f"  [PAROU] A trava barrou uma acao do proprio comando: {exc}")
-                print("  Isto e defeito deste programa, nao do portal. Nada")
-                print("  foi feito na tela, e a sessao continua aberta.")
-                _relatar_tela(pagina, "TELA ONDE PAROU")
-                return 1
-            print(f"  Endereco: {endereco_sem_dado(pagina.url)}")
-            for recado in _mensagens_de_erro(pagina):
-                print(f"    O portal disse: {recado}")
-            estado_local.registrar(
-                acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
-                sistema=identidade.sistema, numero=numero.formatado,
-                resultado="busca enviada",
-            )
-
-            # LER a tela do processo, e nao so chegar a ela. Ate 13/10/2026 o
-            # caminho do DCP passava direto daqui para os documentos: a
-            # consulta nao devolvia capa nem movimentacao, nao gravava arquivo
-            # e nao alimentava a comparacao de novidades, entao processo do Rio
-            # de Janeiro ficava fora do monitoramento. A leitura e generica e
-            # vem marcada como tal dentro do proprio arquivo.
-            dados = _ler_a_tela_do_dcp(
-                pagina, guarda, numero, identidade, estado_local, segundos,
-                com_movimentacoes=not sem_movimentacoes)
-            print("\n  LIDO DA TELA DO PROCESSO:")
-            for linha in resumo_seguro(dados):
-                print(f"    {linha}")
-            print(f"  Conteudo completo em: {dados['arquivo']}")
-            print("  O arquivo contem dado de cliente. Nao o cole em conversa "
-                  "nenhuma.")
-
-            # Abrir os autos e um SEGUNDO passo, e so acontece quando o
-            # operador pede documentos. Consultar e ler a capa; abrir o
-            # visualizador e entrar nos autos, e as duas coisas nao se
-            # confundem so porque ficam na mesma tela.
-            if documentos == "nenhum":
-                print("  Documentos nao pedidos: o visualizador NAO foi aberto.")
-                return 0
-
-            try:
-                janela = abrir_visualizador(
-                    pagina, guarda, segundos,
-                    motivo=(motivo or "").strip() or MOTIVO_PADRAO)
-            except (ConsultaIndisponivel, MotivoNaoInformado) as exc:
-                print(f"  [PAROU] {exc}")
-                _relatar_tela(pagina, "TELA DO PROCESSO")
-                return 1
-            print(f"  Visualizador aberto: {endereco_sem_dado(janela.url, 80)}")
-            _assentar(janela, segundos)
-
-            # As tres formas de baixar, pedidas pelo advogado em 08/10/2026
-            # depois de a integra nao vir de uma vez: tudo num arquivo so,
-            # UMA peca pela pagina em que ela comeca, ou o processo inteiro
-            # em lotes de N paginas.
-            escolha = (documentos or "").strip().lower()
-            arquivos = []
-            # Prazo de ARQUIVO, que nunca e o de tela: o portal gera o PDF
-            # quando se pede, e um lote de 300 paginas leva o tempo que leva.
-            prazo_do_arquivo = espera_do_arquivo(
-                segundos_download if segundos_download else segundos)
-            try:
-                from .core.acervo import garantir_pasta
-
-                # A pasta de descargas do navegador cresce para sempre, e nada
-                # nunca a limpou. Ver o bloco em `limpar_descargas`: ela entrou
-                # na lista de suspeitos da queda do navegador de 21/10/2026,
-                # junto das falhas de gravacao com OSError. O que e anterior a
-                # esta corrida ja foi resgatado ou ja se perdeu.
-                import time as _tempo
-
-                _inicio_da_corrida = _tempo.time()
-                _quantos, _bytes = limpar_descargas(_inicio_da_corrida)
-                _restam, _ocupado = medida_das_descargas()
-                if _quantos:
-                    print(f"  Cache do navegador: {_quantos} arquivo(s) "
-                          f"anteriores apagados, {_bytes // (1024 * 1024)} MB "
-                          "liberados.")
-                print(f"  Cache do navegador em {pasta_de_descargas()}: "
-                      f"{_restam} arquivo(s), {_ocupado // (1024 * 1024)} MB.")
-
-                pasta = garantir_pasta(numero.apenas_digitos)
-                if escolha.startswith("peca:"):
-                    alvo = escolha.split(":", 1)[1].strip()
-                    if not alvo.isdigit():
-                        print(f"  [PAROU] --documentos peca:{alvo!r} nao e uma "
-                              "pagina. Use o numero que aparece ao lado do nome "
-                              "do documento no indice, por exemplo peca:92.")
-                        return 1
-                    arquivos = [baixar_uma_peca(
-                        janela, guarda, pasta, numero.apenas_digitos,
-                        int(alvo), prazo_do_arquivo)]
-                elif (escolha in ("um-a-um", "um a um", "umaum", "cada")
-                      or escolha.startswith("um-a-um:")):
-                    # O unico tamanho que este portal entrega. Ver o bloco em
-                    # `baixar_um_a_um`: integra e lote de 25 documentos nao
-                    # vieram em 900s; um documento de 131 paginas veio, e em
-                    # 20/10/2026 os 35 documentos do processo vieram assim.
-                    from .dcp import (TETO_DE_DOCUMENTOS_UM_A_UM,
-                                      baixar_um_a_um)
-
-                    def reabrir_o_visualizador():
-                        # A aba do portal AGORA, e nao a que foi capturada no
-                        # comeco da consulta. Em 20/10/2026 o reabrir morreu
-                        # com TargetClosedError na terceira peca: a aba
-                        # capturada tambem ja nao respondia. Ver
-                        # `aba_do_portal_viva`.
-                        from .dcp import aba_do_portal_viva
-
-                        return abrir_visualizador(aba_do_portal_viva(pagina),
-                                                  guarda, segundos, motivo)
-
-                    teto_do_percurso = TETO_DE_DOCUMENTOS_UM_A_UM
-                    if ":" in escolha:
-                        pedido = escolha.split(":", 1)[1].strip()
-                        if not pedido.isdigit() or int(pedido) < 1:
-                            print(f"  [PAROU] {pedido!r} nao e um numero de "
-                                  "documentos. Use 'um-a-um:400'.")
-                            return 1
-                        teto_do_percurso = int(pedido)
-                    resposta = baixar_um_a_um(
-                        janela, guarda, pasta, numero.apenas_digitos,
-                        reabrir_o_visualizador, prazo_do_arquivo,
-                        teto=teto_do_percurso, pular=paginas_a_pular)
-                    janela = resposta["janela"]
-                    arquivos = resposta["arquivos"]
-                    if resposta["pulados"]:
-                        print(f"  {len(resposta['pulados'])} documento(s) ja "
-                              "estavam em disco e foram pulados.")
-                    if resposta["falhas"]:
-                        print(f"  [INCOMPLETO] {len(resposta['falhas'])} "
-                              "documento(s) nao vieram:")
-                        for falha in resposta["falhas"][:10]:
-                            print(f"    {falha}")
-                        if len(resposta["falhas"]) > 10:
-                            print(f"    e mais {len(resposta['falhas']) - 10}.")
-                        print("  Os que deram certo estao em disco e valem. "
-                              "Repita o comando: o que ja esta gravado e "
-                              "pulado.")
-                    if not arquivos and not resposta["pulados"]:
-                        raise DownloadIndisponivel(
-                            "Nenhum documento foi gravado. "
-                            + "; ".join(resposta["falhas"][:3]))
-                elif escolha.startswith("lote:"):
-                    # UM lote so, contado a partir de 1. A divisao nao muda: o
-                    # lote 2 de quatro tem as mesmas paginas, sozinho ou no
-                    # meio dos outros.
-                    alvo = escolha.split(":", 1)[1].strip()
-                    if not alvo.isdigit() or int(alvo) < 1:
-                        print(f"  [PAROU] --documentos lote:{alvo!r} nao e um "
-                              "numero de lote. Use lote:1, lote:2 e assim por "
-                              "diante, ou 'lotes' para todos.")
-                        return 1
-                    arquivos = baixar_em_lotes(
-                        janela, guarda, pasta, numero.apenas_digitos,
-                        PAGINAS_POR_LOTE, prazo_do_arquivo, apenas=int(alvo))
-                elif escolha.startswith("lotes"):
-                    _, _, quanto = escolha.partition(":")
-                    tamanho_do_lote = (int(quanto) if quanto.strip().isdigit()
-                                       else PAGINAS_POR_LOTE)
-                    arquivos = baixar_em_lotes(
-                        janela, guarda, pasta, numero.apenas_digitos,
-                        tamanho_do_lote, prazo_do_arquivo)
-                else:
-                    # O PADRAO vai para `um-a-um`, que e o unico tamanho de
-                    # selecao que este portal foi visto entregar.
-                    #
-                    # Isto contraria uma instrucao do advogado, e por isso fica
-                    # escrito. Em 08/10/2026 ele pediu "a integra primeiro, e os
-                    # lotes por conta propria quando ela nao vem: eu queria isso
-                    # como padrao para problemas como esse". A instrucao foi
-                    # dada quando ninguem sabia que NENHUM dos dois vem. O que
-                    # se mediu em campo em 20/10/2026, no mesmo processo e na
-                    # mesma corrida:
-                    #
-                    #   integra (35 documentos)          nada em 900s
-                    #   lote de 25 documentos, 300 pag.  nada em 900s
-                    #   1 documento de 131 paginas       gravado
-                    #
-                    # A integra continua inteira, para quem a pedir de proposito
-                    # com `--documentos integra`: nada foi tirado. O que mudou e
-                    # a aposta do PADRAO, porque gastar 900s num caminho que
-                    # nunca foi visto entregar, e depois mais 900s noutro
-                    # igual, e meia hora da vida de quem roda o comando.
-                    #
-                    # A desistencia do portal, que existe desde 20/10/2026, nao
-                    # salva aqui: ela so dispara quando o indicador de geracao
-                    # CHEGA A APARECER, e na integra ele nunca apareceu.
-                    #
-                    # O teto de documentos continua valendo: `um-a-um` com teto
-                    # padrao recusa indice grande e diz como subi-lo. O padrao
-                    # nao comeca horas de download sozinho.
-                    from .dcp import baixar_um_a_um as _um_a_um
-
-                    print("  Padrao: um download por documento. A integra e o "
-                          "lote de 300 paginas nao foram vistos entregar neste "
-                          "portal (medido em 20/10/2026); para tenta-los assim "
-                          "mesmo, use --documentos integra ou --documentos "
-                          "lotes.")
-
-                    def _reabrir_padrao():
-                        from .dcp import aba_do_portal_viva
-
-                        return abrir_visualizador(aba_do_portal_viva(pagina),
-                                                  guarda, segundos, motivo)
-
-                    resposta = _um_a_um(
-                        janela, guarda, pasta, numero.apenas_digitos,
-                        _reabrir_padrao, prazo_do_arquivo,
-                        pular=paginas_a_pular)
-                    janela = resposta["janela"]
-                    arquivos = resposta["arquivos"]
-                    if resposta["pulados"]:
-                        print(f"  {len(resposta['pulados'])} documento(s) ja "
-                              "estavam em disco e foram pulados.")
-                    if resposta["falhas"]:
-                        print(f"  [INCOMPLETO] {len(resposta['falhas'])} "
-                              "documento(s) nao vieram:")
-                        for falha in resposta["falhas"][:10]:
-                            print(f"    {falha}")
-                        if len(resposta["falhas"]) > 10:
-                            print(f"    e mais {len(resposta['falhas']) - 10}.")
-                        print("  Os que deram certo estao em disco e valem. "
-                              "Repita o comando: o que ja esta gravado e "
-                              "pulado.")
-            except DownloadIndisponivel as exc:
-                print(f"  [PAROU] {exc}")
-                _relatar_tela(janela, "TELA DO VISUALIZADOR")
-                return 1
-            finally:
-                _fechar(janela)
-
-            total = 0
-            for arquivo in arquivos:
-                tamanho = 0
-                try:
-                    import os as _os
-
-                    tamanho = _os.path.getsize(arquivo)
-                except OSError:
-                    pass
-                total += tamanho
-                print(f"\n  Gravado em {arquivo}")
-                print(f"  Tamanho: {tamanho} byte(s).")
-            # Dito sempre, e nao so quando algo parece errado: o advogado
-            # informou que processo grande as vezes nao baixa de uma vez, e um
-            # PDF parcial guardado como integra nao se denuncia sozinho.
-            if len(arquivos) == 1 and not escolha.startswith("peca:"):
-                print("  CONFIRA se o arquivo tem o processo inteiro. Processo "
-                      "grande as vezes nao baixa de uma vez, e daqui nao da "
-                      "para saber.")
-            estado_local.registrar(
-                acao="copia_integral", tribunal=identidade.tribunal,
-                sistema=identidade.sistema, numero=numero.formatado,
-                resultado=f"{len(arquivos)} arquivo(s) gravado(s)",
-                detalhe=str(total),
-            )
-            return 0
-
+            return _consultar_dcp(
+                pagina, guarda, estado_local, identidade, numero=numero,
+                documentos=documentos, linha_do_resultado=linha_do_resultado,
+                motivo=motivo, paginas_a_pular=paginas_a_pular, perfil=perfil,
+                segundos=segundos, segundos_download=segundos_download,
+                sem_movimentacoes=sem_movimentacoes, url=url)
         if identidade.sistema == "pje":
-            from .pje import (ConsultaPJeIndisponivel, abrir_processo,
-                              buscar_autenticado, parece_aviso_de_responsabilidade)
-
-            print("  PJe, consulta autenticada (caminho fotografado em 30/09/2026).")
-            try:
-                final = buscar_autenticado(pagina, guarda, numero, url, segundos)
-            except ConsultaPJeIndisponivel as exc:
-                print(f"  [PAROU] {exc}")
-                _relatar_tela(pagina, "TELA ONDE PAROU")
-                _relatar_estrutura_de_dados(pagina)
-                return 1
-            print(f"  Endereco: {final}")
-
-            recados = _mensagens_de_erro(pagina)
-            for recado in recados:
-                print(f"    O portal disse: {recado}")
-
-            estado_local.registrar(
-                acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
-                sistema=identidade.sistema, numero=numero.formatado,
-                resultado="busca enviada",
-            )
-
-            # Abrir os autos e um SEGUNDO passo, separado de proposito: o clique
-            # no numero levanta o aviso de responsabilidade da resolucao nº. 121
-            # do Conselho Nacional de Justica, e aceita-lo e ato do advogado, nao
-            # do programa. Sem o aceite explicito o comando mostra o texto do
-            # aviso e para.
-            try:
-                aba, avisos = abrir_processo(
-                    pagina, guarda, numero, aceitar_termo=aceitar_termo,
-                    segundos=segundos)
-            except ConsultaPJeIndisponivel as exc:
-                print(f"  [PAROU] {exc}")
-                _relatar_tela(pagina, "TELA DO RESULTADO")
-                return 1
-
-            for aviso in avisos:
-                print("\n  O PORTAL PEDIU UM ACEITE, E ELE NAO FOI DADO:")
-                for pedaco in aviso.splitlines():
-                    if pedaco.strip():
-                        print(f"    {pedaco.strip()}")
-                if parece_aviso_de_responsabilidade(aviso):
-                    print("    Este e o aviso de responsabilizacao civil, "
-                          "administrativa e criminal.")
-
-            if aba is None:
-                if avisos:
-                    print("\n  Nada foi aberto. Leia o aviso acima; se for o caso de")
-                    print("  aceita-lo, repita o comando com --aceito-o-termo.")
-                else:
-                    print("\n  O clique no numero nao abriu aba nova nem mostrou aviso.")
-                    print("  Nada foi aberto.")
-                _relatar_tela(pagina, "TELA DO RESULTADO")
-                return 1
-
-            print("\n  O aceite foi dado pelo operador e os autos abriram em aba nova.")
-            estado_local.registrar(
-                acao="aceite_do_termo_de_responsabilidade",
-                tribunal=identidade.tribunal, sistema=identidade.sistema,
-                numero=numero.formatado, resultado="autos abertos",
-            )
-            # A tela e SEMPRE gravada aqui, mesmo quando a leitura abaixo
-            # acerta: a linha do tempo foi escrita contra o que a tela de
-            # 23/10/2026 declarou, e nao contra a arvore de nos dela, que nao
-            # existia no disco porque `--gravar-telas` nao gravava fora do
-            # Portal de Servicos. Enquanto a leitura nao for conferida em mais
-            # de um processo, a tela gravada e o que permite consertar sem
-            # gastar outra autenticacao do advogado.
-            _relatar_tela(aba, "AUTOS DO PROCESSO (ABA NOVA)")
-
-            from .pje import (faixa_de_identificadores, ler_a_linha_do_tempo,
-                              percorrer_a_linha_do_tempo)
-
-            # ROLAR ANTES DE LER. A linha do tempo carrega por rolagem, e ler
-            # sem rolar devolve so a primeira leva. Em 23/10/2026 a primeira
-            # trazia 24 documentos, de 211055786 a 301359755, e a peticao
-            # inicial, de identificador 128507266, estava mais abaixo: pedir o
-            # download com aquela faixa traria os autos pela metade.
-            percurso = percorrer_a_linha_do_tempo(aba)
-            if percurso["rolagens"]:
-                print(f"\n  Linha do tempo percorrida: {percurso['rolagens']} "
-                      f"rolagem(ns).")
-            if percurso["aviso"]:
-                print(f"  ATENCAO: {percurso['aviso']}")
-
-            linha = ler_a_linha_do_tempo(aba)
-            if linha["aviso"]:
-                print(f"\n  LINHA DO TEMPO: {linha['aviso']}")
-                _relatar_estrutura_de_dados(aba)
-            else:
-                eventos = linha["eventos"]
-                # `pecas_da_linha`, e NAO `documentos`: `documentos` e
-                # parametro de `consultar_processo`, o da opcao do mesmo nome.
-                # Usa-lo aqui o tornaria local de `depois` na funcao inteira, e
-                # a leitura dele no ramo do Portal de Servicos viraria
-                # UnboundLocalError em tempo de execucao. Uma guarda pegou.
-                pecas_da_linha = [e for e in eventos if e["e_documento"]]
-                print(f"\n  LINHA DO TEMPO: {len(eventos)} evento(s), "
-                      f"{len(pecas_da_linha)} documento(s).")
-                # Dito alto quando NAO se chegou ao fim: a diferenca entre
-                # "o processo tem isto" e "esta parte tem isto". O percurso
-                # acima ja tentou rolar ate a ultima pagina; se nao chegou, o
-                # aviso dele ja saiu, e aqui fica a contagem.
-                if linha["paginas"]:
-                    print(f"  Pagina {linha['pagina']} de {linha['paginas']}"
-                          + ("." if percurso["completa"]
-                             else ", e o percurso NAO chegou ao fim."))
-                primeiro, ultimo = faixa_de_identificadores(eventos)
-                if primeiro is not None:
-                    print(f"  Identificadores de {primeiro} a {ultimo}.")
-                dados_da_linha = {
-                    "numero": numero.formatado,
-                    "sistema": "pje",
-                    "pagina": linha["pagina"],
-                    "paginas": linha["paginas"],
-                    "eventos": eventos,
-                    "faixa_de_identificadores": [primeiro, ultimo],
-                    # Gravado junto, e nao so impresso: quem ler este arquivo
-                    # depois precisa saber se ele cobre o processo ou um
-                    # pedaco dele. Faixa sem essa marca e armadilha.
-                    "linha_do_tempo_completa": percurso["completa"],
-                }
-                arquivo = _gravar_consulta(dados_da_linha, numero.apenas_digitos)
-                print(f"\n  Conteudo completo em: {arquivo}")
-                print("  O arquivo contem dado de cliente. Nao o cole em "
-                      "conversa nenhuma.")
-                estado_local.registrar(
-                    acao="linha_do_tempo_do_pje", tribunal=identidade.tribunal,
-                    sistema=identidade.sistema, numero=numero.formatado,
-                    resultado=f"{len(eventos)} evento(s)",
-                )
-            if not documentos:
-                print("\n  O download dos autos NAO foi pedido. Para pedi-lo, "
-                      "repita com --documentos integra.")
-            elif not percurso["completa"]:
-                # RECUSA DELIBERADA. A faixa sai da linha do tempo, e linha do
-                # tempo incompleta da faixa incompleta: o arquivo viria com um
-                # pedaco do processo e nada no PDF diria isso. Melhor nao
-                # baixar do que baixar meio processo achando que e inteiro.
-                print("\n  O download NAO foi pedido: a linha do tempo nao foi "
-                      "percorrida ate o fim,")
-                print("  entao a faixa de identificadores cobre so parte do "
-                      "processo. Baixar assim")
-                print("  traria os autos pela metade, e o arquivo nao diria "
-                      "isso em lugar nenhum.")
-            elif primeiro is None:
-                print("\n  O download NAO foi pedido: a linha do tempo nao "
-                      "trouxe documento nenhum.")
-            else:
-                _baixar_autos_do_pje(
-                    aba, guarda, numero, primeiro, ultimo,
-                    estado_local, identidade, segundos,
-                    prazo_do_arquivo=segundos_download)
-            try:
-                aba.close()
-            except Exception:
-                pass
-            return 0
-
-        campo = elemento_visivel(pagina, BUSCA_RAPIDA)
-        if campo is None:
-            print("  [FALHA] Campo de busca rapida nao encontrado na tela.")
-            return 1
-        botao = elemento_visivel(pagina, BOTAO_BUSCA)
-        if botao is None:
-            print("  [FALHA] Botao de busca nao encontrado na tela.")
-            return 1
-
-        # Autorizacao estreita: so a busca, so nesta tela. O formulario de
-        # cadastro que divide a pagina continua inteiramente barrado.
-        guarda.permissoes.append(Permissao(
-            padrao_url=permissao_efemera(atual).padrao_url,
-            descricao="busca rapida de processo, somente leitura",
-            conferido_em="execucao atual",
-            seletores_clicaveis=(BOTAO_BUSCA,),
-            seletores_preenchiveis=(BUSCA_RAPIDA,),
-        ))
-
-        guarda.pode_executar(Acao.PREENCHER, BUSCA_RAPIDA, url=atual)
-        campo.click()
-        campo.fill(numero.formatado)
-        conferido = campo.evaluate("e => (e.value || '').length")
-        if not conferido:
-            print("  [ABORTADO] O numero nao entrou no campo. Nada foi enviado.")
-            return 1
-
-        guarda.pode_executar(Acao.CLICAR, BOTAO_BUSCA, url=atual)
-        estado_local.registrar(
-            acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
-            sistema=identidade.sistema, numero=numero.formatado, resultado="enviada",
-        )
-        botao.click()
-        try:
-            pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
-        except Exception:
-            pass
-
-        final = pagina.url
-        print(f"  Endereco: {final}")
-        print(f"  Titulo: {pagina.title()!r}")
-
-        termo = guarda._termo_de_risco(final)
-        if termo is not None:
-            print(f"\n  TRAVA: o destino contem o termo de risco {termo!r}.")
-            print("  A leitura foi interrompida. Informe este endereco.")
-            return 1
-
-        erros = _mensagens_de_erro(pagina)
-        if erros:
-            print("\n  MENSAGENS NA TELA:")
-            for e in erros:
-                print(f"    {e}")
-
-        from .extracao import esperar_tela_do_processo, extrair_processo, resumo
-
-        # Esperar o CONTEUDO, e nao so a rede. O eproc chega nesta tela com
-        # `autocarregar=true`, navega no meio do caminho e traz os eventos
-        # depois do desenho: ler naquele instante devolve zero tabela, que e
-        # indistinguivel de processo inexistente.
-        _assentar(pagina, segundos)
-        chegou = esperar_tela_do_processo(pagina, segundos)
-        if chegou == "nada":
-            print("  A tela do processo nao apareceu no tempo dado.")
-        elif chegou == "capa":
-            print("  A capa do processo apareceu, mas nenhuma linha de evento.")
-        dados = extrair_processo(pagina, numero.formatado)
-        if not dados["eventos"]:
-            print("\n  [ATENCAO] Nenhum evento extraido. A tela pode ter outra")
-            print("  estrutura, ou o processo pode estar em segredo de justica.")
-            print(f"  Tabelas na pagina: "
-                  f"{[t.get_attribute('id') or '-' for t in pagina.query_selector_all('table')]}")
-            # Conteudo dentro de quadro embutido e a explicacao mais comum para
-            # "zero tabelas" numa tela que visivelmente tem tabelas: a leitura
-            # de cima nao atravessa o quadro. Contar por quadro separa isso de
-            # processo que realmente nao existe ali.
-            try:
-                for quadro in pagina.frames[1:]:
-                    quantas = len(quadro.query_selector_all("table"))
-                    print(f"    quadro embutido {quadro.name or '(sem nome)'}: "
-                          f"{quantas} tabela(s)")
-            except Exception as exc:
-                print(f"    Quadros embutidos ilegiveis: {type(exc).__name__}")
-            # O relato inteiro, e nao so a contagem. Sem ele este ponto vira um
-            # beco: o comando diz que nao achou e nao entrega nada com que
-            # escrever a leitura certa. E o mesmo que o e-SAJ e o PJe ja fazem
-            # quando param no meio.
-            _relatar_tela(pagina, "TELA DA CONSULTA")
-            _relatar_estrutura_de_dados(pagina)
-            print("\n  RELATO DA TRAVA:")
-            for linha in guarda.relato():
-                print(f"    {linha}")
-            return 1
-
-        # O conteudo vai para arquivo; o terminal recebe so o resumo. Despejar
-        # dezenas de eventos na tela convida a colar dado de cliente onde nao
-        # deve, e o arquivo e o que o restante do sistema vai consumir.
-        destino = _gravar_consulta(dados, numero.apenas_digitos)
-        print("\n  EXTRAIDO:")
-        for linha in resumo(dados):
-            print(f"    {linha}")
-
-        # Alimenta o mesmo mecanismo de comparacao da Fase 1, de modo que
-        # `verificar_novos_andamentos` passe a enxergar tambem o autenticado.
-        registro = estado_local.gravar_snapshot(
-            numero.apenas_digitos,
-            [{"data_hora": e["data_hora"], "codigo": e["evento"], "nome": e["descricao"]}
-             for e in dados["eventos"]],
-        )
-        if registro.get("primeiro"):
-            print("\n    Referencia inicial gravada para comparacao futura.")
-        elif registro["mudou"]:
-            print(f"\n    Houve mudanca desde a consulta anterior "
-                  f"({registro['coletado_em']}).")
-        else:
-            print("\n    Sem mudanca desde a consulta anterior.")
-
-        # ---------- copias dos documentos ----------
-        if documentos and documentos != "nenhum":
-            from .core.acervo import (
-                AcervoIndisponivel, carregar_indice, decidir_estrategia,
-                garantir_pasta, pdfs_fora_do_indice,
-            )
-            from .documentos import baixar_documentos_dos_eventos
-
-            try:
-                indice = carregar_indice(numero.apenas_digitos, numero.formatado)
-                # A pasta nasce aqui, e nao no instante de gravar o primeiro
-                # arquivo: ela e o endereco do processo no acervo, e precisa
-                # existir mesmo que a consulta nao copie nada.
-                pasta = garantir_pasta(numero.apenas_digitos)
-                print(f"  Pasta do processo: {pasta}")
-                avulsos = pdfs_fora_do_indice(indice)
-                if avulsos:
-                    print(f"  ATENCAO: {len(avulsos)} arquivo(s) na pasta fora do indice, "
-                          f"por exemplo {avulsos[0]}.")
-                    print("  Nao da para saber o que eles cobrem, entao nao contam como copia.")
-                guarda.permissoes.insert(0, permissao_de_origem(
-                    pagina.url, "documentos do processo, mesma origem do portal"
-                ))
-                guarda.permitir_download = True
-                print()
-
-                if documentos == "auto":
-                    estrategia = decidir_estrategia(indice, dados["eventos"])
-                    print(f"  ACERVO: {estrategia['motivo']}")
-                elif documentos == "integra":
-                    estrategia = {"acao": "integra", "motivo": "Integra pedida no comando."}
-                else:
-                    quantos = 5
-                    if documentos.startswith("ultimos:"):
-                        try:
-                            quantos = max(int(documentos.split(":", 1)[1]), 1)
-                        except ValueError:
-                            quantos = 5
-                    estrategia = {"acao": "ultimos", "quantos": quantos}
-
-                if estrategia["acao"] == "integra":
-                    print("  COPIA INTEGRAL (pelo botao do portal)...")
-                    falhou = False
-                    try:
-                        # A copia do eproc vem PARTIDA: conferido em campo em
-                        # 05/10/2026, com duas partes. O numero depende do
-                        # processo, entao aqui se recebe uma lista.
-                        arquivos = _baixar_integra(
-                            pagina, guarda, pasta, numero.apenas_digitos,
-                            identidade, segundos
-                        )
-                    except Exception as exc:
-                        arquivos, falhou = [], True
-                        # O nome da classe sozinho nao diz nada: o Playwright chama
-                        # tudo de `Error`, e a execucao de 05/10/2026 terminou num
-                        # "(Error)" seco que nao permitia decidir nada. A PRIMEIRA
-                        # linha da mensagem diz o essencial; o resto e o despejo do
-                        # log, que sepultava o relato da tela impresso acima.
-                        primeira = str(exc).strip().splitlines()[:1]
-                        detalhe = primeira[0][:160] if primeira else "sem mensagem"
-                        print(f"    Copia integral nao concluida "
-                              f"({type(exc).__name__}: {detalhe}).")
-                    if arquivos:
-                        from pathlib import Path as _P
-
-                        from .core.acervo import maior_evento
-
-                        ate = maior_evento(dados["eventos"])
-                        # Cada parte entra como um item, e a numeracao de folhas
-                        # segue continua de uma para a outra. Juntar as partes num
-                        # arquivo so seria mais bonito e exigiria supor o formato
-                        # delas, que ainda nao foi visto.
-                        for ordem, arquivo in enumerate(arquivos, 1):
-                            item = indice.acrescentar(
-                                _P(arquivo), "integra", evento_ate=ate,
-                                rotulo=(f"parte {ordem} de {len(arquivos)}"
-                                        if len(arquivos) > 1 else None),
-                            )
-                            print(f"    gravada: {_P(arquivo).name}  ({item.faixa()})")
-                            estado_local.registrar(
-                                acao="copia_integral", tribunal=identidade.tribunal,
-                                sistema=identidade.sistema, numero=numero.formatado,
-                                documento=arquivo, resultado=item.faixa(),
-                            )
-                        print(f"    cobrindo ate o evento {ate}")
-                    elif not falhou:
-                        # Mensagem NEUTRA de proposito. Ela dizia "botao de copia
-                        # integral nao encontrado nesta tela", o que passou a ser
-                        # falso no dia em que o pedido de geracao passou a ser
-                        # aceito: o botao foi encontrado, clicado, e o portal
-                        # respondeu que esta montando o arquivo. Quem le so o fim
-                        # da saida concluiria o contrario do que aconteceu. O
-                        # motivo verdadeiro, qualquer que seja, ja foi impresso
-                        # pelas funcoes acima, que sabem qual e.
-                        print("    Nenhum arquivo gravado nesta execucao; o motivo "
-                              "esta logo acima.")
-
-                elif estrategia["acao"] == "complemento":
-                    faltantes = estrategia["faltantes"]
-                    if not faltantes:
-                        print("    Nada a complementar.")
-                    else:
-                        # Um evento sintetico por documento faltante preserva o
-                        # vinculo com o evento de origem no nome do arquivo.
-                        pendentes = [
-                            {**f["evento"], "documentos": [f["documento"]]} for f in faltantes
-                        ]
-                        copia = baixar_documentos_dos_eventos(
-                            pagina, guarda, pendentes, pasta, quantos_eventos=len(pendentes)
-                        )
-                        print(f"  COMPLEMENTO: {len(copia.gravadas)} documento(s)")
-                        from pathlib import Path as _P
-
-                        for c in copia.gravadas:
-                            item = indice.acrescentar(
-                                _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
-                            )
-                            print(f"    ev{c.evento} {c.rotulo}  ->  {item.faixa()}")
-                            estado_local.registrar(
-                                acao="copia_documento", tribunal=identidade.tribunal,
-                                sistema=identidade.sistema, numero=numero.formatado,
-                                documento=c.arquivo, resultado=item.faixa(),
-                            )
-                        for c in copia.falhas:
-                            print(f"    falhou ev{c.evento} {c.rotulo}: {c.erro}")
-
-                else:
-                    quantos = estrategia["quantos"]
-                    print(f"  COPIAS DOS {quantos} EVENTO(S) MAIS RECENTES...")
-                    copia = baixar_documentos_dos_eventos(
-                        pagina, guarda, dados["eventos"], pasta, quantos_eventos=quantos
-                    )
-                    from pathlib import Path as _P
-
-                    for linha in copia.resumo():
-                        print(f"    {linha}")
-                    for c in copia.gravadas:
-                        item = indice.acrescentar(
-                            _P(c.arquivo), "documento", evento=c.evento, rotulo=c.rotulo
-                        )
-                        estado_local.registrar(
-                            acao="copia_documento", tribunal=identidade.tribunal,
-                            sistema=identidade.sistema, numero=numero.formatado,
-                            documento=c.arquivo, resultado=item.faixa(),
-                        )
-
-                guarda.permitir_download = False
-                if not indice.vazio:
-                    indice.gravar()
-                    print(f"\n  Acervo: {indice.ultima_folha} folha(s) em {indice.pasta}")
-            except AcervoIndisponivel as exc:
-                # A consulta ja terminou e ja foi gravada. Derrubar tudo por causa da
-                # pasta de copias seria jogar fora o trabalho que deu certo por causa
-                # do que deu errado depois.
-                guarda.permitir_download = False
-                print(f"\n  [ACERVO] {exc}")
-                print("  A consulta acima vale e ja esta no arquivo indicado abaixo.")
-                print("  Repita o comando mais tarde para a parte de copia, ou confira")
-                print("  se o Google Drive esta sincronizando.")
-
-        print(f"\n  Conteudo completo em: {destino}")
-        print("  O arquivo contem dado de cliente. Nao o cole em conversa nenhuma.")
-        estado_local.registrar(
-            acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
-            sistema=identidade.sistema, numero=numero.formatado,
-            resultado=f"{dados['totais']['eventos']} evento(s)",
-        )
-        return 0
+            return _consultar_pje(
+                pagina, guarda, estado_local, identidade, numero=numero,
+                aceitar_termo=aceitar_termo, documentos=documentos,
+                segundos=segundos, segundos_download=segundos_download,
+                url=url)
+        return _consultar_eproc(
+            pagina, guarda, estado_local, identidade, numero=numero,
+            documentos=documentos, segundos=segundos)
 
     return autenticar(
         url, tribunal, sistema, confirmado=confirmado, perfil=perfil,

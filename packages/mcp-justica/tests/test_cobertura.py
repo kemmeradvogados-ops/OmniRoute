@@ -316,11 +316,9 @@ def test_numero_de_folhas_diferente_e_falso_e_nao_nulo(tmp_path):
 def test_a_consulta_trata_o_texto_identico_sem_perguntar():
     """Guarda de fonte: o ramo novo precisa existir no caminho que o advogado
     roda, e nao so na funcao que o mede."""
-    import inspect
+    from conftest import fonte_da_consulta
 
-    from justica_mcp import portal
-
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "REPETIDA_NO_TEXTO" in fonte
     assert "MESMO TEXTO" in fonte
     # E precisa REMOVER o repetido, como ja faz o ramo de bytes iguais: deixar

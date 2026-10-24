@@ -13,6 +13,7 @@ from justica_mcp.esaj import (
     PRIMEIRO_GRAU, SEGUNDO_GRAU, ConsultaESAJIndisponivel, buscar,
     partes_do_numero, tela_para,
 )
+from conftest import fonte_da_consulta
 
 PRIMEIRA = "1000001-56.2023.8.26.0100"
 SEGUNDA = "2081722-17.2026.8.26.0000"
@@ -202,7 +203,7 @@ def test_a_consulta_despacha_pelo_sistema_e_nao_trata_tudo_como_eproc():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert 'identidade.sistema == "esaj"' in fonte
     assert "buscar as buscar_esaj" in fonte
     # e o caminho do eproc continua sendo o outro ramo, nao foi removido
@@ -390,7 +391,7 @@ def test_a_consulta_grava_o_arquivo_e_nao_despeja_na_tela():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("BUSCA_RAPIDA")]
     assert "_gravar_consulta" in ramo
     assert "Nao o cole em conversa nenhuma" in ramo
@@ -402,7 +403,7 @@ def test_a_consulta_avisa_quando_a_lista_veio_parcial():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "e PARCIAL" in fonte
     assert "nao foi" in fonte and "conferido em campo" in fonte
 
@@ -415,7 +416,7 @@ def test_a_consulta_alimenta_a_comparacao_de_novidades():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("BUSCA_RAPIDA")]
     assert "gravar_snapshot" in ramo
 
@@ -516,7 +517,7 @@ def test_a_consulta_avisa_quando_a_origem_e_incerta():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert 'movimentacoes_origem"] == "varredura"' in fonte
     assert "CONFIRA no portal" in fonte
 

@@ -12,6 +12,7 @@ from justica_mcp.pje import (
     BOTAO_PESQUISAR, CAMPO_NUMERO, ConsultaPJeIndisponivel, buscar_publico,
     endereco_da_consulta_publica, linhas_do_resultado,
 )
+from conftest import fonte_da_consulta
 
 # Numero valido pelo digito verificador da resolucao nº. 65/2008, montado
 # para teste: nao e processo de cliente.
@@ -1347,7 +1348,7 @@ def test_a_consulta_rola_ANTES_de_ler():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert fonte.index("percorrer_a_linha_do_tempo(aba)") < fonte.index(
         "ler_a_linha_do_tempo(aba)")
 
@@ -1359,7 +1360,7 @@ def test_o_arquivo_gravado_diz_se_a_leitura_e_completa():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert '"linha_do_tempo_completa"' in fonte
 
 
@@ -1380,7 +1381,7 @@ def test_o_download_so_e_pedido_com_a_linha_do_tempo_COMPLETA():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     trecho = fonte.split("_baixar_autos_do_pje")[0][-2500:]
     assert 'not percurso["completa"]' in trecho
     assert "pela metade" in trecho
@@ -1391,7 +1392,7 @@ def test_sem_documento_na_linha_do_tempo_nada_e_pedido():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "primeiro is None" in fonte
 
 
@@ -1402,7 +1403,7 @@ def test_o_download_do_pje_e_opcional():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "--documentos integra" in fonte
 
 
@@ -1778,7 +1779,7 @@ def test_quem_chama_entrega_o_prazo_de_arquivo_pedido_na_linha_de_comando():
 
     from justica_mcp import portal
 
-    fonte = inspect.getsource(portal.consultar_processo)
+    fonte = fonte_da_consulta()
     assert "prazo_do_arquivo=segundos_download" in fonte
 
 
