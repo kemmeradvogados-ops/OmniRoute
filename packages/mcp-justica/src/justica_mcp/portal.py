@@ -7423,6 +7423,7 @@ def consultar_processo(
     # laco virava `UnboundLocalError` e derrubava a corrida depois da
     # autenticacao, com a credencial ja gasta. Nenhum teste pegou porque
     # nenhum deles executava aquele trecho.
+    processos_adicionais: Any = (),
     linha_do_resultado: int = 1,
     paginas_a_pular: Any = (),
     perfil: Optional[str] = None,
@@ -7445,11 +7446,16 @@ def consultar_processo(
     """
     from .core.cnj import NumeroCNJInvalido, parse_numero
 
+    # TODOS os numeros sao conferidos ANTES de abrir o navegador. Descobrir na
+    # quarta consulta que o terceiro numero tem digito verificador errado
+    # custaria a corrida inteira, e a corrida ja custou a autenticacao.
     try:
-        numero = parse_numero(numero_processo)
+        numeros = [parse_numero(bruto) for bruto
+                   in [numero_processo] + list(processos_adicionais or ())]
     except NumeroCNJInvalido as exc:
         print(f"  {exc}", file=sys.stderr)
         return 1
+    numero = numeros[0]
 
     # A recusa vem ANTES de autenticar, e essa ordem e o ponto. Ate aqui, pedir
     # consulta num sistema sem adaptador autenticava primeiro, gastava uma
@@ -7482,16 +7488,14 @@ def consultar_processo(
     print("  ter enderecos diferentes, e o nome da chave no .env nao garante "
           "qual e qual.")
 
-    def depois(pagina, guarda, estado_local, identidade):
-        print(f"\n  CONSULTA DO PROCESSO {numero.formatado}")
+    def um_processo(pagina, guarda, estado_local, identidade, numero):
+        """Escolhe o caminho do portal e corre UM processo.
 
-        # Cada sistema tem a sua forma de chegar ao processo, e a diferenca nao
-        # e cosmetica: o eproc tem barra de busca rapida em toda tela, o e-SAJ
-        # tem duas telas de consulta, uma por grau, com o numero partido em dois
-        # campos. Tratar tudo como eproc foi possivel enquanto so havia eproc.
-        #
-        # Daqui em diante cada caminho mora na sua propria funcao, no nivel do
-        # modulo. Esta funcao so escolhe qual chamar.
+        Cada sistema tem a sua forma de chegar ao processo, e a diferenca nao
+        e cosmetica: o eproc tem barra de busca rapida em toda tela, o e-SAJ
+        tem duas telas de consulta, uma por grau, com o numero partido em dois
+        campos. Tratar tudo como eproc foi possivel enquanto so havia eproc.
+        """
         if identidade.sistema == "esaj":
             return _consultar_esaj(
                 pagina, guarda, estado_local, identidade, numero=numero,
@@ -7512,6 +7516,51 @@ def consultar_processo(
         return _consultar_eproc(
             pagina, guarda, estado_local, identidade, numero=numero,
             documentos=documentos, segundos=segundos)
+
+    def depois(pagina, guarda, estado_local, identidade):
+        """Corre os processos pedidos, todos na MESMA sessao autenticada.
+
+        A economia nao e pequena. Ate 24/10/2026 cada processo custava uma
+        autenticacao, mesmo sendo do mesmo portal e logo em seguida: o
+        navegador fechava e tudo recomecava. Dez processos custavam dez
+        autenticacoes, num teto que conta por hora e que, com credencial
+        compartilhada, e do escritorio inteiro.
+
+        Falha num processo NAO derruba os seguintes. Ela e dita, contada e o
+        laco segue: numa corrida de dez, perder o restante porque o terceiro
+        nao abriu seria trocar nove resultados por um erro. O codigo de saida
+        no fim diz se houve alguma falha, para quem roda por script.
+        """
+        quantos = len(numeros)
+        falharam: list = []
+        for posicao, cada in enumerate(numeros, start=1):
+            if posicao > 1:
+                print("\n" + "-" * LARGURA)
+                print(f"  PROCESSO {posicao} de {quantos}, na mesma sessao. "
+                      "Nenhuma autenticacao nova.")
+                print("-" * LARGURA)
+            print(f"\n  CONSULTA DO PROCESSO {cada.formatado}")
+            try:
+                codigo = um_processo(pagina, guarda, estado_local, identidade,
+                                     cada)
+            except Exception as exc:
+                # O que derrubaria a corrida inteira vira falha DESTE processo.
+                # A primeira linha diz o essencial; o resto e despejo de log.
+                primeira = str(exc).strip().splitlines()[:1]
+                detalhe = primeira[0][:160] if primeira else "sem mensagem"
+                print(f"\n  [FALHOU] {cada.formatado}: "
+                      f"{type(exc).__name__}: {detalhe}")
+                codigo = 1
+            if codigo:
+                falharam.append(cada.formatado)
+        if quantos > 1:
+            print("\n" + "=" * LARGURA)
+            print(f"  {quantos - len(falharam)} de {quantos} processo(s) "
+                  "concluido(s), com UMA autenticacao.")
+            for formatado in falharam:
+                print(f"    FALHOU: {formatado}")
+            print("=" * LARGURA)
+        return 1 if falharam else 0
 
     return autenticar(
         url, tribunal, sistema, confirmado=confirmado, perfil=perfil,
@@ -7550,7 +7599,9 @@ def _do_ambiente(args) -> None:
         print(f"Endereco vindo do .env para {config.rotulo}.")
     if getattr(args, "perfil", "ausente") is None and config.perfil:
         args.perfil = config.perfil
-    if getattr(args, "processo", "ausente") is None:
+    # `--processo` e repetivel, entao chega como lista. Vazia ou ausente, o
+    # processo de teste do .env entra como a unica entrada.
+    if getattr(args, "processo", "ausente") in (None, []):
         # Quando o portal tem processo de teste dos dois graus, `--grau 2` diz
         # qual usar. Sem indicacao fica o de primeiro grau, que e o caso comum.
         grau = getattr(args, "grau", 1) or 1
@@ -7558,7 +7609,7 @@ def _do_ambiente(args) -> None:
         if escolhido is None and grau == 2:
             escolhido = config.processo_teste
         if escolhido:
-            args.processo = escolhido
+            args.processo = [escolhido]
             print(f"Processo vindo do .env para {config.rotulo} "
                   f"({'2º' if grau == 2 else '1º'} grau).")
 

@@ -206,6 +206,25 @@ Uma conta que vale fazer antes de escolher: guardar custa **uma** autenticação
 e depois a equipe lê quantas vezes quiser. Não guardar custa uma autenticação
 por vez que alguém precisar do processo de novo.
 
+### Vários processos de uma vez
+
+Se os processos forem **do mesmo portal**, peça todos juntos:
+
+- "Baixe os autos desses três processos."
+
+Eles correm na mesma sessão, com **uma autenticação só**. Dez processos do
+mesmo tribunal custam uma, e não dez.
+
+Duas regras:
+
+**Processos de portais diferentes não entram juntos.** O conector recusa antes
+de começar, em vez de gastar a autenticação para falhar na tela errada. Peça
+um pedido por portal.
+
+**Falha em um não derruba os outros.** O que falhou é dito no fim, pelo
+número, e os demais seguem. Numa corrida de dez, perder nove por causa de um
+seria o pior desfecho possível.
+
 Para acompanhar:
 
 - "Como está o download que você pediu."

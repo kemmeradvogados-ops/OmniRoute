@@ -231,8 +231,11 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--grau", type=int, choices=(1, 2), default=1,
                     help="qual processo de teste usar quando --processo e omitido; "
                          "o grau do processo informado e deduzido do proprio numero")
-    cp.add_argument("--processo", default=None,
-                    help="numero no padrao da numeracao unica; quando omitido, vem do .env "
+    cp.add_argument("--processo", action="append", default=None,
+                    help="numero no padrao da numeracao unica. PODE REPETIR: "
+                         "varios processos do mesmo portal correm na MESMA "
+                         "sessao, com uma autenticacao so. Quando omitido, vem "
+                         "do .env "
                          "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_PROCESSO_TESTE)")
     cp.add_argument("--campo-usuario", default=None)
     cp.add_argument("--campo-senha", default=None)
@@ -447,8 +450,11 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            pedidos = (args.processo if isinstance(args.processo, list)
+                       else [args.processo])
             return portal.consultar_processo(
-                args.url, args.tribunal, args.sistema, args.processo,
+                args.url, args.tribunal, args.sistema, pedidos[0],
+                processos_adicionais=tuple(pedidos[1:]),
                 campo_usuario=args.campo_usuario, campo_senha=args.campo_senha,
                 campo_senha_oculto=args.campo_senha_oculto, botao_entrar=args.botao_entrar,
                 campo_codigo=args.campo_codigo, botao_validar=args.botao_validar,

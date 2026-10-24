@@ -251,3 +251,118 @@ def test_as_duas_ferramentas_novas_respeitam_onde_ler():
     trecho = fonte.split("async def justica_cobertura_do_processo")[1].split(
         "async def justica_ler_peca")[0]
     assert trecho.count("_na_pasta(") == 2
+
+
+# --------------------------------------------------------------------------
+# Varios processos numa autenticacao so
+# --------------------------------------------------------------------------
+
+
+def test_todos_os_numeros_sao_conferidos_antes_de_abrir_o_navegador(capsys):
+    """Descobrir na quarta consulta que o terceiro numero esta errado custaria
+    a corrida inteira, e ela ja gastou a autenticacao."""
+    from justica_mcp import portal
+
+    codigo = portal.consultar_processo(
+        "https://x.jus.br/", "TJRJ", "pje", "0809090-88.2023.8.19.0001",
+        processos_adicionais=("0000000-00.0000.0.00.0000",))
+    assert codigo == 1
+    assert "igito verificador" in capsys.readouterr().err
+
+
+def test_o_laco_corre_todos_e_nao_para_no_primeiro_erro():
+    """Numa corrida de dez, perder o restante porque o terceiro nao abriu
+    seria trocar nove resultados por um erro."""
+    import ast
+    import inspect
+    import textwrap
+
+    from justica_mcp import portal
+
+    fonte = textwrap.dedent(inspect.getsource(portal.consultar_processo))
+    arvore = ast.parse(fonte)
+    laco = next(n for n in ast.walk(arvore)
+                if isinstance(n, ast.FunctionDef) and n.name == "depois")
+    corpo = ast.unparse(laco)
+    assert "for posicao, cada in enumerate(numeros" in corpo
+    # A falha de um vira registro, e nao `raise`.
+    assert "falharam.append" in corpo
+    assert "except Exception as exc" in corpo
+    # E nao ha `return` dentro do laco, que encerraria a corrida.
+    for no in ast.walk(laco):
+        if isinstance(no, ast.For):
+            assert not [s for s in ast.walk(no) if isinstance(s, ast.Return)], \
+                "um return dentro do laco encerraria os processos seguintes"
+
+
+def test_o_codigo_de_saida_denuncia_qualquer_falha():
+    """Quem roda por script precisa saber que um dos dez nao veio."""
+    import ast
+    import inspect
+    import textwrap
+
+    from justica_mcp import portal
+
+    fonte = textwrap.dedent(inspect.getsource(portal.consultar_processo))
+    laco = next(n for n in ast.walk(ast.parse(fonte))
+                if isinstance(n, ast.FunctionDef) and n.name == "depois")
+    assert "return 1 if falharam else 0" in ast.unparse(laco)
+
+
+def test_a_opcao_de_processo_e_repetivel_na_linha_de_comando():
+    import inspect
+
+    from justica_mcp import cli
+
+    fonte = inspect.getsource(cli.main)
+    assert 'action="append"' in fonte
+    assert "processos_adicionais=tuple(pedidos[1:])" in fonte
+
+
+def test_sem_processo_nenhum_o_do_env_entra_como_unico():
+    """`--processo` repetivel chega como lista, e o padrao do .env tem de
+    entrar na mesma forma, senao o primeiro caractere do numero viraria o
+    processo inteiro."""
+    from justica_mcp import portal
+
+    class _Args:
+        url = "https://x.jus.br/"
+        tribunal = "TJRJ"
+        sistema = "pje"
+        perfil = None
+        processo = None
+        grau = 1
+
+    args = _Args()
+
+    class _Config:
+        url = "https://x.jus.br/"
+        perfil = None
+        processo_teste = "0809090-88.2023.8.19.0001"
+        processo_teste_2g = None
+        rotulo = "TJRJ / pje"
+
+    import justica_mcp.portal as modulo
+
+    original = modulo.config_portal
+    modulo.config_portal = lambda t, s: _Config()
+    try:
+        modulo._do_ambiente(args)
+    finally:
+        modulo.config_portal = original
+    assert args.processo == ["0809090-88.2023.8.19.0001"]
+
+
+def test_o_conector_recusa_processos_de_portais_diferentes():
+    """Guarda de fonte: eles exigem sessoes diferentes, e aceitar faria a
+    corrida gastar a autenticacao para falhar na tela errada."""
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    assert "portais_diferentes" in fonte
+    assert "sistema_do_outro != sistema" in fonte
+    # E a conferencia acontece ANTES de o trabalho comecar.
+    assert fonte.index("sistema_do_outro != sistema") < fonte.index(
+        'MURAL.comecar("download dos autos"')

@@ -1175,7 +1175,10 @@ def test_processo_vem_do_ambiente_quando_nao_veio_no_comando(monkeypatch, capsys
     monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_PROCESSO_TESTE", "0000001-02.2020.8.19.0001")
     args = Namespace(tribunal="TJRJ", sistema="pje", url=None, perfil=None, processo=None)
     _do_ambiente(args)
-    assert args.processo == "0000001-02.2020.8.19.0001"
+    # Lista, e nao texto: `--processo` e repetivel desde 24/10/2026, e o
+    # padrao do .env entra na mesma forma. Texto solto faria o primeiro
+    # caractere virar o processo inteiro.
+    assert args.processo == ["0000001-02.2020.8.19.0001"]
     assert "Processo vindo do .env" in capsys.readouterr().out
 
 
@@ -1195,7 +1198,10 @@ def test_endereco_completo_mas_processo_ausente_ainda_consulta_o_ambiente(monkey
     monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_PROCESSO_TESTE", "0000001-02.2020.8.19.0001")
     args = Namespace(tribunal="TJRJ", sistema="pje", url="https://x/", perfil="P", processo=None)
     _do_ambiente(args)
-    assert args.processo == "0000001-02.2020.8.19.0001"
+    # Lista, e nao texto: `--processo` e repetivel desde 24/10/2026, e o
+    # padrao do .env entra na mesma forma. Texto solto faria o primeiro
+    # caractere virar o processo inteiro.
+    assert args.processo == ["0000001-02.2020.8.19.0001"]
 
 
 # --------------------------------------------------------------------------
@@ -7531,8 +7537,12 @@ def test_nenhum_parametro_da_consulta_vira_local_da_funcao_aninhada():
 def test_a_escolha_da_linha_chega_por_fechamento_e_nao_por_acaso():
     from justica_mcp import portal
 
+    # A escolha chega por fechamento, agora pela funcao que despacha UM
+    # processo: `depois` virou o laco e chama aquela.
+    um = _codigo_aninhado(portal.consultar_processo, "um_processo")
     depois = _codigo_aninhado(portal.consultar_processo, "depois")
-    assert "linha_do_resultado" in depois.co_freevars
+    assert "linha_do_resultado" in um.co_freevars
+    assert "linha_do_resultado" not in um.co_varnames
     assert "linha_do_resultado" not in depois.co_varnames
 
 

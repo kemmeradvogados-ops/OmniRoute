@@ -172,6 +172,14 @@ class BaixarAutosInput(NumeroInput):
         default=None, ge=60, le=7200,
         description="Quanto esperar pelo ARQUIVO. Minimo e padrao do programa: 300.",
     )
+    tambem: list = Field(
+        default_factory=list,
+        max_length=20,
+        description=("Outros processos DO MESMO PORTAL para correr na mesma "
+                     "sessao. Todos juntos custam UMA autenticacao, em vez de "
+                     "uma por processo. Processo de portal diferente nao entra "
+                     "aqui: ele exige outra sessao."),
+    )
 
 
 # ----------------------------- registro -----------------------------
@@ -760,6 +768,23 @@ def registrar(mcp: Any) -> None:
             tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
             sistema = (await resolver_sistema(numero, _estado)).sistema
             config_portal(tribunal.codigo, sistema)
+            # Os outros processos sao conferidos AQUI, antes de o navegador
+            # abrir. Descobrir na quarta consulta que o terceiro numero e de
+            # outro portal custaria a corrida inteira, e ela ja gastou a
+            # autenticacao.
+            outros = []
+            for bruto in params.tambem:
+                outro = parse_numero(bruto)
+                sistema_do_outro = (await resolver_sistema(outro, _estado)).sistema
+                if sistema_do_outro != sistema:
+                    return _erro(
+                        f"{outro.formatado} tramita no {sistema_do_outro}, e "
+                        f"{numero.formatado} no {sistema}.",
+                        "portais_diferentes",
+                        "Processos de portais diferentes exigem sessoes "
+                        "diferentes. Peca um pedido por portal.",
+                    )
+                outros.append(outro)
         except NumeroCNJInvalido as exc:
             return _erro(str(exc), "numero_invalido")
         except TribunalForaDoEscopo as exc:
@@ -771,7 +796,10 @@ def registrar(mcp: Any) -> None:
 
         # Um trabalho por processo. Dois ao mesmo tempo gastariam duas
         # tentativas, abririam dois navegadores e escreveriam na mesma pasta.
-        emCurso = MURAL.em_curso_para(numero.formatado)
+        emCurso = next(
+            (MURAL.em_curso_para(cada.formatado)
+             for cada in [numero] + outros
+             if MURAL.em_curso_para(cada.formatado) is not None), None)
         if emCurso is not None:
             return _erro(
                 f"Ja ha um download em curso para {numero.formatado}.",
@@ -797,10 +825,15 @@ def registrar(mcp: Any) -> None:
             argumentos.append("--aceito-o-termo")
         if not params.guardar:
             argumentos.append("--sem-guardar")
+        for outro in outros:
+            argumentos += ["--processo", outro.formatado]
         if params.segundos_download:
             argumentos += ["--segundos-download", str(params.segundos_download)]
 
-        trabalho = MURAL.comecar("download dos autos", numero.formatado, argumentos)
+        rotulo = numero.formatado
+        if outros:
+            rotulo = f"{numero.formatado} e mais {len(outros)}"
+        trabalho = MURAL.comecar("download dos autos", rotulo, argumentos)
         _estado.registrar(
             acao="baixar_autos_pedido", tribunal=tribunal.codigo, sistema=sistema,
             numero=numero.formatado, resultado=trabalho.identificador,
@@ -813,6 +846,8 @@ def registrar(mcp: Any) -> None:
             "sistema": sistema,
             "estado": trabalho.estado,
             "onde_vai_ficar": ONDE_ACERVO if params.guardar else ONDE_LEITURA,
+            "processos": [cada.formatado for cada in [numero] + outros],
+            "autenticacoes": 1,
             "aviso": (
                 "O pedido comecou. Isso leva de minutos a horas conforme o "
                 "portal e o tamanho do processo. NAO chame esta ferramenta de "
