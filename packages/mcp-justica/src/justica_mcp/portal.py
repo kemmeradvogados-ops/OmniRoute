@@ -2656,6 +2656,116 @@ def repor_config(*, confirmar: bool = False, copia: Optional[str] = None) -> int
     return 0
 
 
+def _quando_tocado(pasta) -> Optional[float]:
+    """Quando o arquivo mais novo da pasta foi escrito."""
+    mais_novo = None
+    try:
+        for arquivo in pasta.iterdir():
+            if not arquivo.is_file():
+                continue
+            quando = arquivo.stat().st_mtime
+            if mais_novo is None or quando > mais_novo:
+                mais_novo = quando
+    except OSError:
+        return None
+    if mais_novo is None:
+        try:
+            return pasta.stat().st_mtime
+        except OSError:
+            return None
+    return mais_novo
+
+
+DIAS_PADRAO_DA_LIMPEZA = 30
+
+
+def limpar_leituras(*, dias: int = DIAS_PADRAO_DA_LIMPEZA,
+                    confirmar: bool = False) -> int:
+    """Mostra o que ha na pasta de leituras e apaga o que passou do prazo.
+
+    A pasta de leituras guarda os autos lidos SEM GUARDAR: ficam na maquina,
+    fora do Google Drive, nao entram no indice e nao servem a mais ninguem.
+    Ninguem vai apagar aquilo por conta propria, e processo grande passa de
+    sessenta megabytes. Sem este comando, o disco enche em silencio.
+
+    Sem `--confirmar` nao apaga nada. A pasta e de arquivo de processo, e
+    apagar por engano ali e estrago que nenhum comando desfaz. O acervo da
+    banca NAO e tocado aqui, em hipotese alguma: este comando so enxerga a
+    pasta de leituras.
+    """
+    import shutil
+    import time as _tempo
+
+    from .core.acervo import pasta_de_leituras, processos_guardados
+
+    raiz = pasta_de_leituras()
+    print("=" * LARGURA)
+    print("PASTA DE LEITURAS".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Pasta: {raiz}")
+    print("Ela guarda os autos lidos SEM GUARDAR. O acervo da banca nao e "
+          "tocado aqui.")
+    if not raiz.is_dir():
+        print("\n  A pasta nao existe. Nada a fazer.")
+        return 0
+
+    anterior = os.environ.get("JUSTICA_PASTA_COPIAS")
+    os.environ["JUSTICA_PASTA_COPIAS"] = str(raiz)
+    try:
+        achados = processos_guardados()
+    finally:
+        if anterior is None:
+            os.environ.pop("JUSTICA_PASTA_COPIAS", None)
+        else:
+            os.environ["JUSTICA_PASTA_COPIAS"] = anterior
+
+    if not achados:
+        print("\n  Nenhum processo lido sem guardar. Nada a fazer.")
+        return 0
+
+    limite = _tempo.time() - max(0, int(dias)) * 86400
+    total_bytes = sum(p["bytes"] for p in achados)
+    velhos: list = []
+    print(f"\n  {len(achados)} processo(s), {total_bytes / 1_048_576:.1f} MB "
+          "no total.")
+    print(f"  Prazo: apagar o que nao e tocado ha mais de {dias} dia(s).\n")
+    for processo in achados:
+        pasta = raiz / processo["digitos"]
+        # A idade sai do ARQUIVO mais novo da pasta, e nao da pasta. A data da
+        # pasta nao muda quando um arquivo dentro dela e reescrito, e usa-la
+        # apagaria copia recente por causa de uma pasta antiga. E o mesmo
+        # criterio da listagem, de proposito: dois criterios diferentes para a
+        # mesma pergunta davam respostas diferentes.
+        tocado = _quando_tocado(pasta)
+        if tocado is None:
+            continue
+        idade = int((_tempo.time() - tocado) / 86400)
+        marca = "APAGAR" if tocado < limite else "manter"
+        if tocado < limite:
+            velhos.append(pasta)
+        print(f"    [{marca}] {processo['numero']}  "
+              f"{processo['bytes'] / 1_048_576:.1f} MB, {idade} dia(s)")
+
+    if not velhos:
+        print("\n  Nada passou do prazo.")
+        return 0
+    if not confirmar:
+        print(f"\n  ENSAIO: nada foi apagado. {len(velhos)} pasta(s) seriam "
+              "removidas.")
+        print("  Para aplicar, repita com --confirmar.")
+        return 0
+
+    apagadas = 0
+    for pasta in velhos:
+        try:
+            shutil.rmtree(pasta)
+            apagadas += 1
+        except OSError as exc:
+            print(f"    Nao consegui apagar {pasta.name}: {type(exc).__name__}.")
+    print(f"\n  {apagadas} pasta(s) removida(s) da pasta de leituras.")
+    return 0
+
+
 def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
     """Refaz o indice de folhas de um processo a partir dos arquivos na pasta.
 

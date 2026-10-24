@@ -441,6 +441,78 @@ def _faixas(numeros: list) -> list:
     return saida
 
 
+def processos_guardados(teto: int = 200) -> list:
+    """Os processos que ha na raiz das copias, com o tamanho de cada um.
+
+    Nasceu de uma limitacao boba e real: para perguntar qualquer coisa ao
+    conector era preciso saber o numero do processo de cor. A pasta sabe.
+
+    Nao abre PDF nenhum: le o indice quando ha, e conta arquivos quando nao
+    ha. Abrir todos os arquivos de todos os processos para contar folha
+    tornaria a listagem lenta justamente quando o acervo cresce, que e quando
+    ela passa a ser util.
+    """
+    raiz = pasta_de_copias()
+    if not raiz.is_dir():
+        return []
+    achados: list = []
+    for pasta in sorted(raiz.iterdir()):
+        try:
+            if not pasta.is_dir():
+                continue
+        except OSError:
+            continue
+        digitos = pasta.name
+        if not (digitos.isdigit() and len(digitos) == 20):
+            continue
+        arquivos = [a for a in pasta.glob("*.pdf") if a.is_file()]
+        bytes_totais = 0
+        modificado = None
+        for arquivo in arquivos:
+            try:
+                dados = arquivo.stat()
+            except OSError:
+                continue
+            bytes_totais += dados.st_size
+            if modificado is None or dados.st_mtime > modificado:
+                modificado = dados.st_mtime
+        folhas = None
+        indice_bruto = pasta / NOME_INDICE
+        if indice_bruto.is_file():
+            try:
+                folhas = json.loads(
+                    indice_bruto.read_text(encoding="utf-8")).get("folhas_totais")
+            except (OSError, json.JSONDecodeError, AttributeError):
+                folhas = None
+        achados.append({
+            "numero": formatar_numero(digitos),
+            "digitos": digitos,
+            "arquivos": len(arquivos),
+            "folhas_no_indice": folhas,
+            "bytes": bytes_totais,
+            "modificado_em": (
+                datetime.fromtimestamp(modificado, tz=timezone.utc).isoformat(
+                    timespec="seconds") if modificado else None),
+        })
+        if len(achados) >= teto:
+            break
+    achados.sort(key=lambda p: p["modificado_em"] or "", reverse=True)
+    return achados
+
+
+def formatar_numero(digitos: str) -> str:
+    """Os vinte digitos na forma da numeracao unica, sem validar nada.
+
+    Aqui nao se confere digito verificador: o nome da pasta ja existe, e
+    recusar a listagem por causa dele esconderia do advogado uma pasta que
+    esta la.
+    """
+    if len(digitos) != 20 or not digitos.isdigit():
+        return digitos
+    return (f"{digitos[:7]}-{digitos[7:9]}.{digitos[9:13]}."
+            f"{digitos[13]}.{digitos[14:16]}.{digitos[16:]}")
+
+
 def cobertura_do_acervo(indice: "Indice") -> dict:
     """Que paginas do processo a pasta cobre, o que cobre duas vezes e o que falta.
 

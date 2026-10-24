@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "justica-mcp",
   "display_name": "Justiça (tribunais brasileiros)",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Acesso somente leitura a processos judiciais brasileiros: base nacional, Diário de Justiça Eletrônico, portais dos tribunais e leitura das peças já baixadas.",
   "long_description": "Camada padronizadora de acesso processual.\n\nSem credencial e sem portal: ficha do processo, movimentos e publicações do Diário de Justiça Eletrônico Nacional, pela base nacional do Conselho Nacional de Justiça. Instantâneo e sem risco.\n\nA partir do disco: a lista das peças já gravadas de um processo e o texto de cada uma, sem abrir o portal e sem gastar tentativa de autenticação. É por aqui que a análise acontece.\n\nCom credencial: consulta autenticada no Portal de Serviços do Tribunal de Justiça do Estado do Rio de Janeiro e no eproc, e o DOWNLOAD DOS AUTOS em qualquer dos quatro portais. O download é pedido e corre em separado, porque leva de minutos a horas: o portal gera o arquivo quando se pede. Há uma ferramenta própria para perguntar em que pé ele está.\n\nO download tem duas formas, e o advogado escolhe: guardando no acervo da banca, no Google Drive, de onde a equipe inteira lê de graça depois, ou sem guardar, numa pasta local que não entra no índice e pode ser apagada. Guardar é o certo para processo que o escritório vai trabalhar; não guardar serve para o que se consulta uma vez.\n\nO que NÃO faz, de propósito: não dá ciência de intimação e não inicia prazo; não escreve nada em sistema de tribunal; não manda dado do cliente para fora da máquina.\n\nCada consulta ou download autenticado consome uma tentativa no tribunal, e tentativas seguidas bloqueiam o acesso.",
   "author": {
@@ -116,6 +116,14 @@
     {
       "name": "justica_situacao_do_download",
       "description": "Em que pé está um download pedido, com o relato linha a linha."
+    },
+    {
+      "name": "justica_cobertura_do_processo",
+      "description": "Que folhas a pasta cobre e QUAIS FALTAM. Consulte antes de concluir que uma peça não existe nos autos."
+    },
+    {
+      "name": "justica_processos_guardados",
+      "description": "Os processos que já existem na pasta, do mais recente ao mais antigo, com tamanho e folhas."
     }
   ],
   "compatibility": {

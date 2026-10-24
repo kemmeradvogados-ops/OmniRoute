@@ -559,6 +559,90 @@ def registrar(mcp: Any) -> None:
         except Exception as exc:
             return _tratar(exc)
 
+    @mcp.tool(name="justica_cobertura_do_processo",
+              annotations=somente_leitura("Cobertura da pasta do processo"))
+    async def justica_cobertura_do_processo(params: PecasInput) -> str:
+        """Que folhas do processo a pasta cobre, e QUAIS FALTAM.
+
+        Consulte esta ferramenta ANTES de concluir qualquer coisa sobre a
+        ausencia de uma peca. A pasta pode estar incompleta, e a lista de
+        pecas sozinha nao mostra isso: ela diz o que ha, nunca o que falta.
+
+        Na corrida de 21/10/2026, a primeira a ler o indice completo de um
+        processo, vieram 338 dos 340 documentos listados, cobrindo 1.783 das
+        1.897 paginas. Quem lesse so a lista de pecas naquele dia concluiria
+        que o processo tem 1.783 folhas, e estaria errado por 114.
+
+        `faixas_que_faltam` e o campo que decide. Com ele vazio, a pasta cobre
+        tudo o que ja foi baixado sem buraco no meio. Com faixas nele, ha
+        folhas que a pasta NAO tem, e dizer que uma peca nao existe nos autos
+        sem antes conferir o indice no portal seria afirmar o que nao se sabe.
+
+        `sem_pagina` lista arquivos cujo nome nao traz a pagina inicial, como
+        a integral baixada de uma vez. Eles contam no acervo, mas nao entram
+        na conta de cobertura por faixa.
+        """
+        try:
+            from .core.acervo import carregar_indice, cobertura_do_acervo
+
+            numero = parse_numero(params.numero)
+            with _na_pasta(params.onde):
+                indice = carregar_indice(numero.apenas_digitos, numero.formatado)
+                dados = cobertura_do_acervo(indice)
+            dados["onde"] = params.onde
+            dados["processo"] = numero.formatado
+            faltam = dados.get("faixas_que_faltam") or []
+            dados["conclusao"] = (
+                "A pasta cobre as folhas sem buraco. Ausencia de uma peca aqui "
+                "ainda pode significar que ela nunca foi baixada, e nao que "
+                "nao exista nos autos."
+                if not faltam else
+                f"ATENCAO: ha {len(faltam)} faixa(s) de folhas que a pasta NAO "
+                "tem. Nao conclua que uma peca nao existe nos autos sem "
+                "conferir o indice no portal."
+            )
+            _estado.registrar(
+                acao="cobertura_do_processo", solicitante=params.solicitante,
+                tribunal="", numero=numero.formatado,
+                resultado=f"{len(faltam)} faixa(s) faltando")
+            return _json(dados)
+        except Exception as exc:
+            return _tratar(exc)
+
+    @mcp.tool(name="justica_processos_guardados",
+              annotations=somente_leitura("Processos na pasta de copias"))
+    async def justica_processos_guardados(onde: str = ONDE_ACERVO,
+                                          limite: int = 50) -> str:
+        """Os processos que ja existem na pasta, do mais recente ao mais antigo.
+
+        Serve para quando o advogado nao tem o numero a mao: em vez de pedir
+        que ele digite, liste e pergunte qual. Nao abre o portal, nao
+        autentica e nao le conteudo nenhum.
+
+        `onde` vale "acervo", que e a pasta do escritorio no Google Drive, ou
+        "leitura", que e a pasta local do que foi lido sem guardar.
+
+        `folhas_no_indice` pode vir vazio: significa que aquele processo ainda
+        nao tem indice, e nao que esteja vazio. A contagem de arquivos vale
+        sempre.
+        """
+        try:
+            from .core.acervo import processos_guardados
+
+            with _na_pasta(onde):
+                achados = processos_guardados()
+            cortados = achados[:max(1, min(limite, 200))]
+            _estado.registrar(acao="processos_guardados", tribunal="",
+                              resultado=f"{len(achados)} processo(s)")
+            return _json({
+                "onde": onde,
+                "total": len(achados),
+                "mostrados": len(cortados),
+                "processos": cortados,
+            })
+        except Exception as exc:
+            return _tratar(exc)
+
     @mcp.tool(name="justica_ler_peca",
               annotations=somente_leitura("Ler o texto de uma peca"))
     async def justica_ler_peca(params: LerPecaInput) -> str:

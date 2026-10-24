@@ -90,6 +90,15 @@ def main(argv: list[str] | None = None) -> int:
     ri.add_argument("--confirmar", action="store_true",
                     help="sem isto e ensaio: mostra o que faria e nao altera nada")
 
+    ll = sub.add_parser(
+        "leituras",
+        help="mostra o que ha na pasta de leituras e apaga o que passou do prazo",
+    )
+    ll.add_argument("--dias", type=int, default=30,
+                    help="apagar o que nao e tocado ha mais de N dias. Padrao: 30")
+    ll.add_argument("--confirmar", action="store_true",
+                    help="sem isto e ensaio: mostra o que faria e nao apaga nada")
+
     m = sub.add_parser(
         "mapear",
         help="le a tela de entrada de cada portal do .env e grava um mapa por portal",
@@ -319,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         # `estrutura` le um arquivo ja gravado: nao tem tribunal, nao tem
         # sistema e nao abre navegador nenhum.
         if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente",
+                                "leituras",
                                 "repor-config", "estrutura", "telas", "tela",
                                 "pecas", "peca"):
             portal._do_ambiente(args)
@@ -391,6 +401,9 @@ def main(argv: list[str] | None = None) -> int:
 
             return mostrar_tela(args.arquivo, args.parte, args.contem,
                                 args.teto, args.rotulos)
+        if args.comando == "leituras":
+            return portal.limpar_leituras(dias=args.dias,
+                                          confirmar=args.confirmar)
         if args.comando == "reindexar":
             return portal.reindexar(args.processo, confirmar=args.confirmar)
         if args.comando == "mapear":
