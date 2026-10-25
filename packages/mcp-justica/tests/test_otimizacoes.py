@@ -528,3 +528,19 @@ def test_a_recusa_diz_o_que_fazer_e_quais_sistemas_existem():
     assert "sistema_indeterminado" in fonte
     assert "Pergunte ao advogado e repita com `sistema`" in fonte
     assert "Configurados para este tribunal" in fonte
+
+
+def test_o_diagnostico_nao_tenta_rodar_a_suite_inteira():
+    """Guarda de fonte: em 25/10/2026 o diagnostico acusou [FALHA] por tempo
+    limite numa suite que estava verde. Diagnostico que grita falha onde nao
+    ha manda procurar defeito inexistente, e custa o tempo de quem procura."""
+    import inspect
+
+    from justica_mcp import diagnostico
+
+    fonte = inspect.getsource(diagnostico)
+    assert "amostra rapida" in fonte
+    assert "A suite completa passa de" in fonte
+    # E nao passa a pasta de testes inteira ao pytest.
+    assert 'str(raiz / "tests")]' not in fonte
+    assert 'rapidos = [' in fonte

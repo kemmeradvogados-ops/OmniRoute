@@ -86,20 +86,37 @@ def checar_ambiente() -> None:
 def rodar_testes() -> None:
     titulo("2. TESTES OFFLINE (nao dependem de rede)")
     raiz = Path(__file__).resolve().parents[2]
+    # A suite inteira passa de sete minutos, e o diagnostico nao e o lugar de
+    # roda-la: em 25/10/2026 ele acusou [FALHA] por tempo limite numa suite
+    # que estava verde. Diagnostico que grita falha onde nao ha e pior que
+    # diagnostico que nao roda nada, porque manda procurar defeito inexistente.
+    #
+    # O que interessa aqui e se o pacote esta instalado e sao: alguns arquivos
+    # rapidos respondem isso. A suite completa e trabalho de quem desenvolve,
+    # com `pytest` na mao.
+    rapidos = [str(raiz / "tests" / nome) for nome in (
+        "test_cnj.py", "test_acervo.py", "test_conector.py", "test_resolver.py",
+    ) if (raiz / "tests" / nome).is_file()]
+    if not rapidos:
+        item("testes rapidos", "nenhum arquivo encontrado em tests/", False)
+        return
     try:
         r = subprocess.run(
-            [sys.executable, "-m", "pytest", str(raiz / "tests"), "-q", "--no-header"],
-            capture_output=True, text=True, timeout=300, cwd=raiz,
+            [sys.executable, "-m", "pytest", *rapidos, "-q", "--no-header"],
+            capture_output=True, text=True, timeout=180, cwd=raiz,
         )
         saida = (r.stdout or "") + (r.stderr or "")
         ultima = [l for l in saida.strip().splitlines() if l.strip()][-1] if saida.strip() else "(sem saida)"
-        item("resultado", ultima, r.returncode == 0)
+        item("amostra rapida", ultima, r.returncode == 0)
+        print(f"         {len(rapidos)} arquivo(s). A suite completa passa de "
+              "sete minutos e nao roda aqui: use `pytest` direto.")
         if r.returncode != 0:
             print("\n".join(saida.splitlines()[-25:]))
     except FileNotFoundError:
         item("pytest", "nao instalado. Rode: pip install -e '.[dev]'", False)
     except subprocess.TimeoutExpired:
-        item("pytest", "estourou o tempo limite", False)
+        item("amostra rapida", "nem a amostra terminou em 180s, o que e sinal "
+                               "de instalacao com problema", False)
 
 
 # --------------------------------------------------------------------------
