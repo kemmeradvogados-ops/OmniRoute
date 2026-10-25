@@ -100,6 +100,14 @@ PASTAS_CONFERIDAS = ("src", "tests", "docs", "conector")
 FINAIS_CONFERIDOS = (".py", ".md", ".json", ".mjs", ".txt")
 
 # Numeros FICTICIOS declarados. Nenhum pertence a processo de cliente.
+# Declarar aqui NAO torna um numero ficticio: declarar diz que alguem
+# CONFERIU que ele e ficticio. Em 25/10/2026 dois numeros reais de
+# processo de cliente estavam nesta lista, e por isso o guarda os deixava
+# passar num repositorio publico. Digito verificador valido nao prova
+# nada: os ficticios daqui tambem tem digito valido, de proposito, para
+# que `parse_numero` os aceite. A unica conferencia que vale e olhar se o
+# numero esta no acervo do escritorio. Na duvida, troque em vez de
+# declarar: trocar custa um sed, e o numero que vaza nao volta.
 NUMEROS_DECLARADOS = {
     "00000000000000000000",
     "00000000000000000001",
@@ -110,12 +118,16 @@ NUMEROS_DECLARADOS = {
     "00000017820208260100",
     "00000018620138190078",
     "00000018820198190001",
+    "00000018820198260100",
     "00000019920264025101",
     "00000019920268190001",
+    "00000028820198190001",
+    "00000038820198190001",
+    "00000049420218190002",
+    "00000057620254025101",
     "00001230000000000000",
     "00111111120158190001",
     "00222222220168190002",
-    "00450259320218190002",
     "00699003119995010009",
     "00961025220188190001",
     "08090908820238190001",
@@ -124,7 +136,6 @@ NUMEROS_DECLARADOS = {
     "20817221720268260000",
     "50000019120264020000",
     "50012345420234025101",
-    "50684566820254025101",
     "90040295020258230000",
     "99999999920998190001",
     "99999999920999990000",

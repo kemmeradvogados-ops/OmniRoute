@@ -40,7 +40,7 @@ class _Elemento:
 
 
 class _Baixado:
-    suggested_filename = "0045025-93.2021.8.19.0002.pdf"
+    suggested_filename = "0000004-94.2021.8.19.0002.pdf"
 
     def __init__(self):
         self.gravado_em = None
@@ -167,7 +167,7 @@ def test_as_escolhas_sao_achadas_pelo_texto_exato():
 
 def test_o_caminho_completo_grava_o_arquivo(tmp_path):
     tela, guarda = _Visualizador(), _Guarda()
-    arquivo = baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
+    arquivo = baixar_integra(tela, guarda, tmp_path, "0000004", segundos=5)
     assert arquivo.startswith(str(tmp_path))
     assert tela.cliques == [BOTAO_DE_DOWNLOAD, ESCOLHA_INTEGRAL]
 
@@ -176,21 +176,21 @@ def test_a_escolha_e_sempre_a_integral_nunca_a_dos_marcados(tmp_path):
     """Um PDF parcial guardado como integra e pior que arquivo nenhum, porque
     ninguem volta a conferir o que ja esta na pasta."""
     tela, guarda = _Visualizador(), _Guarda()
-    baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
+    baixar_integra(tela, guarda, tmp_path, "0000004", segundos=5)
     assert ESCOLHA_MARCADOS not in tela.cliques
 
 
 def test_sem_a_escolha_integral_o_caminho_para(tmp_path):
     tela, guarda = _Visualizador(integral=False), _Guarda()
     with pytest.raises(DownloadIndisponivel, match="Carregados"):
-        baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
+        baixar_integra(tela, guarda, tmp_path, "0000004", segundos=5)
     assert ESCOLHA_MARCADOS not in tela.cliques
 
 
 def test_a_recusa_explica_por_que_nao_usa_os_marcados(tmp_path):
     tela, guarda = _Visualizador(integral=False), _Guarda()
     with pytest.raises(DownloadIndisponivel) as erro:
-        baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
+        baixar_integra(tela, guarda, tmp_path, "0000004", segundos=5)
     recado = str(erro.value)
     assert "so o que foi marcado" in recado
     assert "pior que arquivo nenhum" in recado
@@ -199,7 +199,7 @@ def test_a_recusa_explica_por_que_nao_usa_os_marcados(tmp_path):
 def test_sem_o_botao_da_barra_nada_e_clicado(tmp_path):
     tela, guarda = _Visualizador(tem_botao=False), _Guarda()
     with pytest.raises(DownloadIndisponivel, match="nao esta na barra"):
-        baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
+        baixar_integra(tela, guarda, tmp_path, "0000004", segundos=5)
     assert tela.cliques == []
 
 
@@ -208,7 +208,7 @@ def test_processo_grande_que_nao_baixa_diz_o_que_fazer(tmp_path):
     de uma vez."""
     tela, guarda = _Visualizador(entrega_arquivo=False), _Guarda()
     with pytest.raises(DownloadIndisponivel) as erro:
-        baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
+        baixar_integra(tela, guarda, tmp_path, "0000004", segundos=5)
     recado = str(erro.value)
     assert "nao baixa de uma vez" in recado
     # E a corrida gasta traz o indice junto, para que a proxima ja saiba
@@ -223,7 +223,7 @@ def test_processo_grande_que_nao_baixa_diz_o_que_fazer(tmp_path):
 
 def test_a_trava_autoriza_so_os_dois_cliques_deste_caminho(tmp_path):
     tela, guarda = _Visualizador(), _Guarda()
-    baixar_integra(tela, guarda, tmp_path, "0045025", segundos=5)
+    baixar_integra(tela, guarda, tmp_path, "0000004", segundos=5)
     assert guarda.autorizados == [
         f'[aria-label="{BOTAO_DE_DOWNLOAD}"]', f"texto={ESCOLHA_INTEGRAL}"]
     # A autorizacao nomeia os dois, e nenhum terceiro botao da caixa.
@@ -257,7 +257,7 @@ from justica_mcp.dcp import (  # noqa: E402
     partes_do_numero, quadro_da_consulta,
 )
 
-PROCESSO = "0045025-93.2021.8.19.0002"
+PROCESSO = "0000004-94.2021.8.19.0002"
 LOGIN = "https://www3.tjrj.jus.br/idserverjus-front/#/login?indGet=true&sgSist=X"
 
 
@@ -274,7 +274,7 @@ def test_sem_endereco_de_login_nao_ha_consulta():
 def test_o_numero_e_dividido_em_dois_campos():
     """O primeiro leva sequencial, digito e ano juntos; o segundo so a origem.
     Entre eles o portal escreve `.8.19.` e nao pergunta nada."""
-    assert partes_do_numero(parse_numero(PROCESSO)) == ("0045025-93.2021", "0002")
+    assert partes_do_numero(parse_numero(PROCESSO)) == ("0000004-94.2021", "0002")
 
 
 def test_numero_de_outro_tribunal_e_recusado_antes_de_digitar():
@@ -474,7 +474,7 @@ def test_a_busca_preenche_os_dois_campos_e_pesquisa():
     quadro = _QuadroDaConsulta()
     portal = _PortalDeServicos(quadro)
     buscar(portal, _Guarda(), parse_numero(PROCESSO), LOGIN, 5)
-    assert quadro.inicio.valor == "0045025-93.2021"
+    assert quadro.inicio.valor == "0000004-94.2021"
     assert quadro.origem.valor == "0002"
     assert quadro.cliques[-1] == BOTAO_PESQUISAR
 
@@ -505,7 +505,7 @@ def test_campo_que_so_aceita_teclado_nao_derruba_a_busca():
     aqui desistir custaria o login inteiro."""
     quadro = _QuadroDaConsulta(aceita=False)
     buscar(_PortalDeServicos(quadro), _Guarda(), parse_numero(PROCESSO), LOGIN, 5)
-    assert quadro.inicio.valor == "0045025-93.2021"
+    assert quadro.inicio.valor == "0000004-94.2021"
     assert quadro.cliques[-1] == BOTAO_PESQUISAR
 
 
@@ -1435,13 +1435,13 @@ def test_a_recusa_nao_leva_parametro_de_aba():
     """E no parametro que viajam identificador de cliente e numero de processo."""
     from justica_mcp.dcp import ConsultaIndisponivel, conferir_janela_do_portal
 
-    origem = _AbaComEndereco("https://www.tjrj.jus.br/busca?processo=0045025&parte=Fulano")
+    origem = _AbaComEndereco("https://www.tjrj.jus.br/busca?processo=0000004&parte=Fulano")
     origem.context = _ContextoDeAbas([origem])
 
     try:
         conferir_janela_do_portal(None, origem, segundos=1)
     except ConsultaIndisponivel as erro:
-        assert "0045025" not in str(erro)
+        assert "0000004" not in str(erro)
         assert "Fulano" not in str(erro)
     else:
         raise AssertionError("seguiu com a aba de origem")
@@ -1932,7 +1932,7 @@ def test_a_marcacao_do_componente_e_relatada_e_limpa():
         def evaluate(self, _c):
             return ('<app-dropdown id="dropdownPerfil" class="ng-star-inserted">'
                     '\n   <input placeholder="Selecione perfil do usuario">'
-                    ' 0045025-93.2021.8.19.0002</app-dropdown>')
+                    ' 0000004-94.2021.8.19.0002</app-dropdown>')
 
     class _Tela:
         def query_selector(self, seletor):
@@ -1942,7 +1942,7 @@ def test_a_marcacao_do_componente_e_relatada_e_limpa():
     assert "app-dropdown" in lido
     assert "ng-star-inserted" in lido
     # Numero de processo nao viaja em relato, nem dentro de marcacao.
-    assert "0045025" not in lido
+    assert "0000004" not in lido
 
 
 def test_a_marcacao_diz_quando_o_componente_nao_existe():
@@ -2077,10 +2077,10 @@ def test_o_valor_diferente_e_contado_e_nao_impresso():
 
     class _Caixa:
         def evaluate(self, _c):
-            return "0045025-93.2021.8.19.0002"
+            return "0000004-94.2021.8.19.0002"
 
     lido = valor_da_caixa_frente_ao_pedido(_Caixa(), "Advogado")
-    assert "0045025" not in lido
+    assert "0000004" not in lido
     assert "25 caractere(s)" in lido
 
 
@@ -3887,7 +3887,7 @@ def test_a_peca_pedida_pela_pagina_e_a_unica_marcada(tmp_path):
     from justica_mcp.dcp import baixar_uma_peca
 
     tela = _VisualizadorComIndice([3, 93, 97, 99])
-    arquivo = baixar_uma_peca(tela, _Guarda(), tmp_path, "0045025", 93,
+    arquivo = baixar_uma_peca(tela, _Guarda(), tmp_path, "0000004", 93,
                               segundos=2)
 
     assert tela.downloads == 1
@@ -3900,7 +3900,7 @@ def test_pagina_que_nao_existe_no_indice_e_recusada_com_a_lista(tmp_path):
 
     tela = _VisualizadorComIndice([3, 93, 97])
     with pytest.raises(DownloadIndisponivel) as erro:
-        baixar_uma_peca(tela, _Guarda(), tmp_path, "0045025", 500, segundos=2)
+        baixar_uma_peca(tela, _Guarda(), tmp_path, "0000004", 500, segundos=2)
 
     recado = str(erro.value)
     assert "Nenhum documento comeca na pagina 500" in recado
@@ -3914,7 +3914,7 @@ def test_duas_pecas_na_mesma_pagina_param_em_vez_de_chutar(tmp_path):
 
     tela = _VisualizadorComIndice([3, 93, 93])
     with pytest.raises(DownloadIndisponivel, match="2 documentos comecam"):
-        baixar_uma_peca(tela, _Guarda(), tmp_path, "0045025", 93, segundos=2)
+        baixar_uma_peca(tela, _Guarda(), tmp_path, "0000004", 93, segundos=2)
     assert tela.downloads == 0
 
 
@@ -3924,7 +3924,7 @@ def test_os_lotes_saem_na_ordem_e_sem_repetir_documento(tmp_path):
     from justica_mcp.dcp import baixar_em_lotes
 
     tela = _VisualizadorComIndice([1, 50, 100, 400, 450, 900])
-    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025",
+    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0000004",
                                tamanho=300, segundos=2)
 
     assert tela.downloads == 3
@@ -3942,7 +3942,7 @@ def test_um_lote_que_falha_nao_derruba_os_que_deram_certo(tmp_path):
     # O documento do meio nao aceita marcacao.
     tela.itens[1].marca.aceita_documento = False
 
-    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025",
+    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0000004",
                                tamanho=300, segundos=2)
 
     assert len(arquivos) == 2
@@ -3954,7 +3954,7 @@ def test_sem_nenhum_lote_gravado_o_comando_recusa(tmp_path):
 
     tela = _VisualizadorComIndice([1, 400], entrega=False)
     with pytest.raises(DownloadIndisponivel, match="Nenhum lote foi gravado"):
-        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2)
+        baixar_em_lotes(tela, _Guarda(), tmp_path, "0000004", 300, segundos=2)
 
 
 def test_o_indice_vazio_para_antes_de_marcar_qualquer_coisa(tmp_path):
@@ -3962,7 +3962,7 @@ def test_o_indice_vazio_para_antes_de_marcar_qualquer_coisa(tmp_path):
 
     tela = _VisualizadorComIndice([])
     with pytest.raises(DownloadIndisponivel, match="nao apareceu em 2s"):
-        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2,
+        baixar_em_lotes(tela, _Guarda(), tmp_path, "0000004", 300, segundos=2,
                         segundos_do_indice=2)
     assert tela.downloads == 0
 
@@ -4023,7 +4023,7 @@ def test_o_nome_do_arquivo_de_lote_carrega_a_faixa_de_paginas(tmp_path):
     from justica_mcp.dcp import baixar_em_lotes
 
     tela = _VisualizadorComIndice([1, 400])
-    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025",
+    arquivos = baixar_em_lotes(tela, _Guarda(), tmp_path, "0000004",
                                tamanho=300, segundos=2)
 
     assert all("lote" in a and "paginas" in a for a in arquivos)
@@ -4186,7 +4186,7 @@ def test_os_lotes_funcionam_com_a_caixa_JA_aberta(tmp_path):
     guarda = _Guarda()
     abrir_caixa_de_selecao(tela, guarda)  # como faz o reconhecimento
 
-    arquivos = baixar_em_lotes(tela, guarda, tmp_path, "0045025", 300,
+    arquivos = baixar_em_lotes(tela, guarda, tmp_path, "0000004", 300,
                                segundos=2)
     assert len(arquivos) == 3
 
@@ -4265,10 +4265,10 @@ def test_um_lote_so_traz_as_MESMAS_paginas_que_traria_no_conjunto(tmp_path):
     paginas = [1, 50, 100, 400, 450, 900]
 
     todos = _VisualizadorComIndice(paginas)
-    baixar_em_lotes(todos, _Guarda(), tmp_path, "0045025", 300, segundos=2)
+    baixar_em_lotes(todos, _Guarda(), tmp_path, "0000004", 300, segundos=2)
 
     sozinho = _VisualizadorComIndice(paginas)
-    baixar_em_lotes(sozinho, _Guarda(), tmp_path, "0045025", 300, segundos=2,
+    baixar_em_lotes(sozinho, _Guarda(), tmp_path, "0000004", 300, segundos=2,
                     apenas=2)
 
     assert todos.marcados_por_download[1] == sozinho.marcados_por_download[0]
@@ -4282,7 +4282,7 @@ def test_o_primeiro_lote_e_o_de_numero_1():
 
     tela = _VisualizadorComIndice([1, 50, 400])
     with tempfile.TemporaryDirectory() as pasta:
-        baixar_em_lotes(tela, _Guarda(), pasta, "0045025", 300, segundos=2,
+        baixar_em_lotes(tela, _Guarda(), pasta, "0000004", 300, segundos=2,
                         apenas=1)
     assert tela.marcados_por_download == [[1, 50]]
 
@@ -4292,7 +4292,7 @@ def test_lote_que_nao_existe_para_e_diz_quantos_ha(tmp_path):
 
     tela = _VisualizadorComIndice([1, 400])
     with pytest.raises(DownloadIndisponivel, match="tem 2 lote"):
-        baixar_em_lotes(tela, _Guarda(), tmp_path, "0045025", 300, segundos=2,
+        baixar_em_lotes(tela, _Guarda(), tmp_path, "0000004", 300, segundos=2,
                         apenas=9)
     assert tela.downloads == 0
 

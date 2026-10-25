@@ -179,9 +179,9 @@ def test_cria_a_pasta_do_processo_quando_nao_existe(tmp_path, monkeypatch):
     copiasse nada nao deixava pasta nenhuma, e o advogado procuraria no Drive
     um lugar que nunca foi criado."""
     monkeypatch.setenv(VARIAVEL_PASTA, str(tmp_path))
-    pasta = garantir_pasta("50684566820254025101")
+    pasta = garantir_pasta("00000057620254025101")
     assert pasta.is_dir()
-    assert pasta.name == "50684566820254025101"
+    assert pasta.name == "00000057620254025101"
     assert pasta.parent == tmp_path
 
 
@@ -491,18 +491,18 @@ def test_erro_de_leitura_nunca_vira_indice_vazio(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Path, "is_file", recusa_sempre)
     with pytest.raises(AcervoIndisponivel):
-        _acervo.carregar_indice("50684566820254025101", "5068456-68.2025.4.02.5101")
+        _acervo.carregar_indice("00000057620254025101", "0000005-76.2025.4.02.5101")
 
 
 def test_indice_corrompido_continua_seguindo_como_vazio(monkeypatch, tmp_path):
     """Conteudo ilegivel e outra coisa, e a decisao antiga continua valendo: o
     JSON quebrado nao pode travar a copia, e a gravacao o refaz."""
     monkeypatch.setattr(_acervo, "pasta_de_copias", lambda: tmp_path)
-    pasta = tmp_path / "50684566820254025101"
+    pasta = tmp_path / "00000057620254025101"
     pasta.mkdir()
     (pasta / _acervo.NOME_INDICE).write_text("{isso nao e json", encoding="utf-8")
 
-    indice = _acervo.carregar_indice("50684566820254025101", "5068456-68.2025.4.02.5101")
+    indice = _acervo.carregar_indice("00000057620254025101", "0000005-76.2025.4.02.5101")
     assert indice.vazio
 
 

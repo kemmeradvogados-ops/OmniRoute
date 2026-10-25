@@ -60,7 +60,7 @@ def test_origem_com_unidade_e_primeira_instancia():
 
 
 def test_unidade_de_origem_diferente_continua_primeira_instancia():
-    n = parse_numero("5068456-68.2025.4.02.5101")
+    n = parse_numero("0000005-76.2025.4.02.5101")
     assert n.grau == 1
 
 

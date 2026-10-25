@@ -157,7 +157,7 @@ def test_acha_assuntos_pelos_rotulos_das_colunas():
 # ---------------- conjunto ----------------
 
 def test_totais_somam_os_documentos_de_todos_os_eventos():
-    dados = extrair_processo(_pagina(), "5068456-68.2025.4.02.5101")
+    dados = extrair_processo(_pagina(), "0000005-76.2025.4.02.5101")
     assert dados["totais"] == {
         "eventos": 2, "partes": 2, "assuntos": 1, "documentos_listados": 2,
     }

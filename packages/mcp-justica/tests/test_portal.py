@@ -6009,7 +6009,7 @@ def test_o_parametro_nao_entra_na_lista_de_abas():
     from justica_mcp.portal import abas_abertas
 
     class _Aba:
-        url = "https://www3.tjrj.jus.br/consulta?processo=0045025&parte=Fulano"
+        url = "https://www3.tjrj.jus.br/consulta?processo=0000004&parte=Fulano"
 
         def is_closed(self):
             return False
@@ -6107,9 +6107,9 @@ def test_o_parametro_sai_do_endereco_impresso():
 
     limpo = endereco_sem_dado(
         "https://www3.tjrj.jus.br/consultaprocessual/#/detalhes"
-        "?numProcesso=00450259320218190002&parte=Fulano")
+        "?numProcesso=00000049420218190002&parte=Fulano")
     assert limpo == "https://www3.tjrj.jus.br/consultaprocessual/#/detalhes"
-    assert "0045025" not in limpo
+    assert "0000004" not in limpo
     assert "Fulano" not in limpo
 
 
@@ -6129,8 +6129,8 @@ def test_o_numero_no_caminho_tambem_sai():
     nao resolveria nada."""
     from justica_mcp.portal import endereco_sem_dado
 
-    limpo = endereco_sem_dado("https://x/autos/0045025-93.2021.8.19.0002/ver")
-    assert "0045025" not in limpo
+    limpo = endereco_sem_dado("https://x/autos/0000004-94.2021.8.19.0002/ver")
+    assert "0000004" not in limpo
     assert "<numero de processo>" in limpo
 
 
