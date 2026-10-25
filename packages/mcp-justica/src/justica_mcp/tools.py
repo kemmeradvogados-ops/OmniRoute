@@ -608,15 +608,39 @@ def registrar(mcp: Any) -> None:
                     "e mostra so o comeco, entao a ausencia de uma peca "
                     "DENTRO dele nao prova nada. Convem baixar de novo."
                 )
-            dados["conclusao"] = (
-                "A pasta cobre as folhas sem buraco. Ausencia de uma peca aqui "
-                "ainda pode significar que ela nunca foi baixada, e nao que "
-                "nao exista nos autos."
-                if not faltam else
-                f"ATENCAO: ha {len(faltam)} faixa(s) de folhas que a pasta NAO "
-                "tem. Nao conclua que uma peca nao existe nos autos sem "
-                "conferir o indice no portal."
-            )
+            # A conclusao e a frase que alguem vai ler rapido e repetir. Ela
+            # nao pode afirmar cobertura quando NADA foi medido, e foi
+            # exatamente o que fez em 25/10/2026: disse "a pasta cobre as
+            # folhas sem buraco" num processo cujo unico arquivo tinha ficado
+            # de fora da conta. Lista de faixas faltantes vazia por nao haver
+            # o que comparar nao e o mesmo que nada faltando.
+            medidas = dados.get("pecas") or []
+            if not medidas:
+                dados["conclusao"] = (
+                    "NAO DA PARA MEDIR a cobertura por faixa: nenhum arquivo "
+                    "desta pasta traz a pagina inicial no nome. A lista de "
+                    "faixas faltantes veio vazia por nao haver o que "
+                    "comparar, e NAO porque nada falte. Arquivo unico, como a "
+                    "integra baixada de uma vez, cai sempre neste caso."
+                )
+            elif faltam:
+                dados["conclusao"] = (
+                    f"ATENCAO: ha {len(faltam)} faixa(s) de folhas que a "
+                    "pasta NAO tem. Nao conclua que uma peca nao existe nos "
+                    "autos sem conferir o indice no portal."
+                )
+            else:
+                dados["conclusao"] = (
+                    f"A pasta cobre as folhas {dados.get('primeira')} a "
+                    f"{dados.get('ultima')} sem buraco. Isso NAO quer dizer "
+                    "que cubra o processo inteiro: pode haver folhas antes da "
+                    "primeira e depois da ultima, e ausencia de uma peca aqui "
+                    "ainda pode significar que ela nunca foi baixada."
+                )
+            if cortados:
+                dados["conclusao"] = (
+                    "ARQUIVO CORTADO NA PASTA. " + dados["conclusao"]
+                )
             _estado.registrar(
                 acao="cobertura_do_processo", solicitante=params.solicitante,
                 tribunal="", numero=numero.formatado,

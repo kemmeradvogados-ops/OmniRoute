@@ -237,7 +237,7 @@ def test_a_ferramenta_de_cobertura_diz_a_conclusao_em_palavras():
 
     fonte = inspect.getsource(tools.registrar)
     assert "justica_cobertura_do_processo" in fonte
-    assert "nao conclua que uma peca nao existe nos autos" in fonte.lower()
+    assert "nao conclua que uma peca nao existe nos" in fonte.lower()
     assert "faixas_que_faltam" in fonte
 
 
@@ -451,3 +451,22 @@ def test_o_download_recusa_indexar_arquivo_cortado():
     assert "chegou CORTADO" in fonte
     assert fonte.index("_cortado(baixado)") < fonte.index(
         "indice.avaliar_repeticao(baixado)")
+
+
+def test_a_conclusao_nao_afirma_cobertura_quando_nada_foi_medido():
+    """Guarda de fonte: em 25/10/2026 a conclusao disse "a pasta cobre as
+    folhas sem buraco" num processo cujo unico arquivo ficou de fora da conta.
+    Lista de faixas faltantes vazia por nao haver o que comparar nao e o mesmo
+    que nada faltando, e a conclusao e a frase que alguem le rapido e
+    repete."""
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    assert "NAO DA PARA MEDIR a cobertura por faixa" in fonte
+    assert "NAO porque nada falte" in fonte
+    assert 'medidas = dados.get("pecas") or []' in fonte
+    # E quando ha medida, a frase nao promete o processo inteiro.
+    assert "NAO quer dizer" in fonte
+    assert "pode haver folhas antes da" in fonte
