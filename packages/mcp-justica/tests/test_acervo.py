@@ -504,3 +504,63 @@ def test_indice_corrompido_continua_seguindo_como_vazio(monkeypatch, tmp_path):
 
     indice = _acervo.carregar_indice("50684566820254025101", "5068456-68.2025.4.02.5101")
     assert indice.vazio
+
+
+# --------------------------------------------------------------------------
+# Ordem da numeracao: folha errada e pior do que folha nenhuma
+# --------------------------------------------------------------------------
+
+def test_integra_partida_e_numerada_na_sequencia_das_partes(tmp_path):
+    """Estrago real de 25/10/2026: a parte 1 foi baixada de novo, ficou com a
+    hora mais recente e o indice passou a numerar a parte 2 como fls. 1."""
+    import os
+
+    from justica_mcp.core.acervo import Indice, planejar_reindexacao
+
+    um = _pdf(tmp_path / "integra-parte1-A_PARTE_1.pdf", 2)
+    dois = _pdf(tmp_path / "integra-parte2-B_PARTE_2.pdf", 5)
+    tres = _pdf(tmp_path / "integra-parte3-C_PARTE_3.pdf", 3)
+    os.utime(dois, (1000, 1000))
+    os.utime(tres, (2000, 2000))
+    os.utime(um, (9000, 9000))  # rebaixada hoje: a mais nova das tres
+
+    plano = planejar_reindexacao(Indice(numero="1", pasta=tmp_path))
+    assert [m["arquivo"].name for m in plano["manter"]] == [
+        um.name, dois.name, tres.name
+    ]
+    assert [(m["folha_inicial"], m["folha_final"]) for m in plano["manter"]] == [
+        (1, 2), (3, 7), (8, 10)
+    ]
+    assert plano["total"] == 10
+
+
+def test_peca_ja_numerada_no_indice_nao_muda_de_lugar(tmp_path):
+    """O numero dela pode ja estar citado em peca protocolada."""
+    import os
+
+    from justica_mcp.core.acervo import Indice, planejar_reindexacao
+
+    primeiro = _pdf(tmp_path / "doc-sentenca.pdf", 4)
+    os.utime(primeiro, (9000, 9000))
+    indice = Indice(numero="1", pasta=tmp_path)
+    indice.acrescentar(primeiro, "documento", evento="9")
+
+    depois = _pdf(tmp_path / "doc-acordao.pdf", 2)
+    os.utime(depois, (1000, 1000))  # hora antiga, mas chegou depois
+
+    plano = planejar_reindexacao(indice)
+    assert [m["arquivo"].name for m in plano["manter"]] == [
+        "doc-sentenca.pdf", "doc-acordao.pdf"
+    ]
+    assert [(m["folha_inicial"], m["folha_final"]) for m in plano["manter"]] == [
+        (1, 4), (5, 6)
+    ]
+
+
+def test_a_parte_so_e_reconhecida_no_nome_que_o_programa_escreve(tmp_path):
+    from justica_mcp.core.acervo import parte_da_integra
+
+    assert parte_da_integra("integra-parte3-X_PARTE_3.PDF") == 3
+    assert parte_da_integra("integra-parte12-X.pdf") == 12
+    assert parte_da_integra("PROCESSO_PARTE_2.PDF") is None
+    assert parte_da_integra("doc-evento-9.pdf") is None

@@ -675,6 +675,60 @@ def relatar_a_cobertura(cobertura: dict, teto: int = 12) -> list:
     return linhas
 
 
+FORMA_DA_PARTE = re.compile(r"^integra-parte(\d+)-", re.IGNORECASE)
+
+
+def parte_da_integra(nome: str) -> Optional[int]:
+    """O numero da parte quando o arquivo e pedaco de uma integra partida.
+
+    So reconhece o nome que o proprio programa escreve (`integra-parte3-...`),
+    nunca o nome que veio do portal: portal nomeia como quer, e adivinhar
+    ordem a partir do nome dele e adivinhar numero de folha.
+    """
+    achado = FORMA_DA_PARTE.match(nome)
+    return int(achado.group(1)) if achado else None
+
+
+def ordem_da_numeracao(arquivos: list, ja_indexados: list) -> list:
+    """A ordem em que os arquivos recebem folha.
+
+    Nasceu de um estrago real: em 25/10/2026 a parte 1 de uma integra de tres
+    partes foi baixada de novo, ficou com a hora de hoje e, como a ordem era a
+    hora do arquivo, o indice passou a numerar parte2 como fls. 1/2084 e parte1
+    como fls. 2156/2237. O total continuou certo, 2237 folhas, e por isso a
+    conferencia de cobertura nao acusava nada: so a ordem estava errada. Citar
+    "fls. 100" nessa copia apontaria para a peca errada, e folha errada em peca
+    protocolada nao se desfaz.
+
+    Duas regras, nesta ordem:
+
+    1. Peca que o indice antigo ja numerou nao muda de lugar. O numero dela
+       pode ja ter sido citado em peca protocolada, e so por isso a hora do
+       arquivo perde para a posicao no indice. Arquivo novo entra depois dos
+       que o indice ja conhecia, na ordem de chegada.
+    2. Integra partida e numerada na sequencia das partes, no lugar da parte
+       que chegou primeiro. Parte 2 nunca vem antes da parte 1, qualquer que
+       seja a hora dos arquivos.
+    """
+    posicao = {nome: i for i, nome in enumerate(ja_indexados)}
+
+    def chegada(arquivo) -> tuple:
+        if arquivo.name in posicao:
+            return (0, posicao[arquivo.name], 0.0, arquivo.name)
+        return (1, 0, arquivo.stat().st_mtime, arquivo.name)
+
+    partes = [a for a in arquivos if parte_da_integra(a.name) is not None]
+    ancora_das_partes = min((chegada(a) for a in partes), default=None)
+
+    def chave(arquivo) -> tuple:
+        numero = parte_da_integra(arquivo.name)
+        if numero is None:
+            return (chegada(arquivo), 0, chegada(arquivo))
+        return (ancora_das_partes, numero, chegada(arquivo))
+
+    return sorted(arquivos, key=chave)
+
+
 def planejar_reindexacao(indice: "Indice") -> dict:
     """Monta o plano de refazer o indice a partir dos arquivos que existem.
 
@@ -687,9 +741,12 @@ def planejar_reindexacao(indice: "Indice") -> dict:
     escritorio antes de qualquer coisa acontecer.
 
     Regras:
-      - arquivos de conteudo identico sao uma copia so; fica o mais antigo,
-        que e o que ja pode ter sido citado, e os outros saem;
-      - a numeracao e refeita na ordem de chegada dos que ficam;
+      - arquivos de conteudo identico sao uma copia so; fica o que ja estava
+        indexado (e portanto ja pode ter sido citado) e, entre dois nao
+        indexados, o mais antigo; os outros saem;
+      - a ordem da numeracao e a de `ordem_da_numeracao`, nao a hora do
+        arquivo: peca que ja tem folha no indice nao muda de lugar, e integra
+        partida e numerada na sequencia das partes;
       - o que o indice antigo sabia sobre um arquivo que fica (se e integra ou
         documento, o evento, o rotulo) e preservado, porque isso nao esta no
         PDF e seria perdido para sempre.
@@ -697,12 +754,12 @@ def planejar_reindexacao(indice: "Indice") -> dict:
     if not indice.pasta.is_dir():
         return {"manter": [], "apagar": [], "total": 0}
 
-    arquivos = sorted(
-        (a for a in indice.pasta.iterdir()
-         if a.is_file() and a.suffix.lower() == ".pdf"),
-        key=lambda a: (a.stat().st_mtime, a.name),
-    )
     antigos = {Path(i.arquivo).name: i for i in indice.itens}
+    arquivos = ordem_da_numeracao(
+        [a for a in indice.pasta.iterdir()
+         if a.is_file() and a.suffix.lower() == ".pdf"],
+        [Path(i.arquivo).name for i in indice.itens],
+    )
 
     manter: list[dict] = []
     apagar: list[dict] = []

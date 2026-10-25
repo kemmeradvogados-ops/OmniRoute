@@ -2785,6 +2785,8 @@ def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
         print(f"Numero de processo invalido: {exc}", file=sys.stderr)
         return 1
 
+    from pathlib import Path
+
     indice = carregar_indice(numero.apenas_digitos, numero.formatado)
     print("=" * LARGURA)
     print("REINDEXACAO DO ACERVO".center(LARGURA))
@@ -2795,7 +2797,18 @@ def reindexar(numero_bruto: str, *, confirmar: bool = False) -> int:
         print("\n  A pasta nao existe. Nada a fazer.", file=sys.stderr)
         return 1
 
-    print(f"Indice atual: {len(indice.itens)} item(ns), {indice.ultima_folha} folha(s).\n")
+    print(f"Indice atual: {len(indice.itens)} item(ns), {indice.ultima_folha} folha(s).")
+    # A lista do que ESTA la, e nao so do que vai ficar. Sem as duas, nao da
+    # para ver que a ordem mudou: em 25/10/2026 uma integra de tres partes
+    # trocou de ordem no ensaio e o total continuou o mesmo, 2237 folhas, o
+    # que escondeu a troca.
+    if indice.itens:
+        print("\n  COMO O INDICE ESTA:")
+        for item in indice.itens:
+            faixa = (f"fls. {item.folha_inicial}/{item.folha_final}"
+                     if item.folha_inicial else "folhas nao contadas")
+            print(f"    {Path(item.arquivo).name}  {faixa}  [{item.tipo}]")
+    print()
     plano = planejar_reindexacao(indice)
 
     if plano["apagar"]:
