@@ -141,6 +141,44 @@ def pdfs_fora_do_indice(indice: "Indice") -> list[str]:
     )
 
 
+# Quantos bytes do FIM se olha atras da marca de encerramento. A norma do PDF
+# admite lixo depois dela, e leitor nenhum reclama enquanto ela aparecer perto
+# do fim. Dois kilobytes cobrem com folga o que os geradores de verdade poem
+# ali.
+FOLGA_DA_MARCA_DE_FIM = 2048
+
+MARCA_DE_FIM_DO_PDF = b"%%EOF"
+
+
+def parece_truncado(arquivo: Path) -> Optional[bool]:
+    """O arquivo parece ter sido cortado no meio do download?
+
+    Conferir so o COMECO nao basta, e isto custou um achado em 25/10/2026: a
+    guarda que impedia pagina de erro de entrar no acervo olhava a marca
+    `%PDF-` nas primeiras linhas, e download interrompido tem essa marca
+    tambem. O que ele nao tem e a marca de encerramento no fim.
+
+    O sinal que levantou a suspeita foi o tamanho: 5.242.880 bytes, cinco
+    mebibytes exatos. Tamanho redondo assim e assinatura de transferencia
+    cortada em limite de bloco, nao de documento.
+
+    Devolve `None` quando nao da para saber, e nao `False`: dizer que esta
+    inteiro sem ter conferido seria pior que admitir a duvida.
+    """
+    try:
+        if not arquivo.is_file():
+            return None
+        tamanho = arquivo.stat().st_size
+        if tamanho <= 0:
+            return True
+        with open(arquivo, "rb") as leitura:
+            leitura.seek(max(0, tamanho - FOLGA_DA_MARCA_DE_FIM))
+            fim = leitura.read()
+    except OSError:
+        return None
+    return MARCA_DE_FIM_DO_PDF not in fim
+
+
 def contar_paginas(arquivo: Path) -> Optional[int]:
     """Paginas de um PDF. Devolve None quando nao da para saber.
 
@@ -524,16 +562,21 @@ def cobertura_do_acervo(indice: "Indice") -> dict:
     if not indice.pasta.is_dir():
         return {"existe": False, "pecas": [], "sem_pagina": [], "contidas": [],
                 "folhas_repetidas": 0, "distintas": 0, "faltam": [],
-                "faixas_que_faltam": [], "primeira": None, "ultima": None}
+                "faixas_que_faltam": [], "primeira": None, "ultima": None,
+                "truncados": []}
 
     pecas: list = []
     sem_pagina: list = []
+    truncados: list = []
     for arquivo in sorted(indice.pasta.glob("*.pdf")):
         try:
             if not arquivo.is_file() or arquivo.stat().st_size <= 0:
                 continue
         except OSError:
             continue
+        if parece_truncado(arquivo):
+            truncados.append({"arquivo": arquivo.name,
+                              "bytes": arquivo.stat().st_size})
         inicio = pagina_do_nome(arquivo.name)
         folhas = contar_paginas(arquivo)
         if inicio is None or not folhas:
@@ -566,7 +609,8 @@ def cobertura_do_acervo(indice: "Indice") -> dict:
             "contidas": contidas, "folhas_repetidas": repetidas,
             "distintas": len(cobertas), "faltam": faltam,
             "faixas_que_faltam": _faixas(faltam),
-            "primeira": primeira, "ultima": ultima}
+            "primeira": primeira, "ultima": ultima,
+            "truncados": truncados}
 
 
 def relatar_a_cobertura(cobertura: dict, teto: int = 12) -> list:
@@ -583,6 +627,15 @@ def relatar_a_cobertura(cobertura: dict, teto: int = 12) -> list:
         f"cobrindo {cobertura['distintas']} pagina(s) distinta(s) do processo "
         f"(da {cobertura['primeira']} a {cobertura['ultima']})."
     ]
+    if cobertura.get("truncados"):
+        linhas.append(
+            f"CORTADO: {len(cobertura['truncados'])} arquivo(s) nao tem a "
+            "marca de fim do PDF e podem ser download interrompido.")
+        for item in cobertura["truncados"][:teto]:
+            linhas.append(f"  {item['arquivo']} ({item['bytes']} byte(s))")
+        linhas.append(
+            "  Nada foi apagado. Confira e baixe de novo o que estiver "
+            "incompleto: PDF cortado abre e mostra so o comeco.")
     if cobertura["sem_pagina"]:
         linhas.append(
             f"{len(cobertura['sem_pagina'])} arquivo(s) sem pagina legivel no "

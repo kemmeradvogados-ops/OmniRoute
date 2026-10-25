@@ -383,3 +383,71 @@ def test_a_situacao_explica_o_que_e_perfil_definido():
     assert "sobre_perfil_definido" in fonte
     assert "a tentativa ja foi gasta" in fonte
     assert "DESDE O ULTIMO" in fonte
+
+
+# --------------------------------------------------------------------------
+# Download cortado, que comeca com a marca de PDF e nao termina
+# --------------------------------------------------------------------------
+
+
+def test_arquivo_sem_a_marca_de_fim_e_tratado_como_cortado(tmp_path):
+    """Conferir so o COMECO nao basta: download interrompido tem `%PDF-`
+    tambem. O que ele nao tem e a marca de encerramento."""
+    from justica_mcp.core.acervo import parece_truncado
+
+    inteiro = tmp_path / "inteiro.pdf"
+    inteiro.write_bytes(b"%PDF-1.4" + b"x" * 500 + b"\n%%EOF\n")
+    cortado = tmp_path / "cortado.pdf"
+    cortado.write_bytes(b"%PDF-1.4" + b"x" * 5000)
+    assert parece_truncado(inteiro) is False
+    assert parece_truncado(cortado) is True
+
+
+def test_arquivo_vazio_conta_como_cortado(tmp_path):
+    from justica_mcp.core.acervo import parece_truncado
+
+    vazio = tmp_path / "vazio.pdf"
+    vazio.write_bytes(b"")
+    assert parece_truncado(vazio) is True
+
+
+def test_sem_poder_conferir_a_resposta_e_duvida_e_nao_negativa(tmp_path):
+    """Dizer que esta inteiro sem ter conferido seria pior que admitir a
+    duvida."""
+    from justica_mcp.core.acervo import parece_truncado
+
+    assert parece_truncado(tmp_path / "nao-existe.pdf") is None
+
+
+def test_lixo_depois_da_marca_de_fim_nao_acusa_corte(tmp_path):
+    """A norma admite bytes depois do encerramento, e leitor nenhum reclama."""
+    from justica_mcp.core.acervo import parece_truncado
+
+    arquivo = tmp_path / "com-sobra.pdf"
+    arquivo.write_bytes(b"%PDF-1.4" + b"x" * 300 + b"%%EOF" + b"\x00" * 200)
+    assert parece_truncado(arquivo) is False
+
+
+def test_a_cobertura_acusa_o_arquivo_cortado(acervo):
+    from justica_mcp.core.acervo import carregar_indice, cobertura_do_acervo
+
+    pasta = acervo / UM
+    pasta.mkdir(parents=True)
+    (pasta / "doc-pagina1-cortado.pdf").write_bytes(b"%PDF-1.4" + b"x" * 900)
+    dados = cobertura_do_acervo(carregar_indice(UM, formatar_numero(UM)))
+    assert len(dados["truncados"]) == 1
+    assert dados["truncados"][0]["arquivo"] == "doc-pagina1-cortado.pdf"
+
+
+def test_o_download_recusa_indexar_arquivo_cortado():
+    """Guarda de fonte: indexar um PDF cortado como integra faria quem o lesse
+    concluir que o processo acaba onde o download parou."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._baixar_autos_do_pje)
+    assert "_cortado(baixado)" in fonte
+    assert "chegou CORTADO" in fonte
+    assert fonte.index("_cortado(baixado)") < fonte.index(
+        "indice.avaliar_repeticao(baixado)")

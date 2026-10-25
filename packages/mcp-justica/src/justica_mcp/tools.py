@@ -600,6 +600,14 @@ def registrar(mcp: Any) -> None:
             dados["onde"] = params.onde
             dados["processo"] = numero.formatado
             faltam = dados.get("faixas_que_faltam") or []
+            cortados = dados.get("truncados") or []
+            if cortados:
+                dados["atencao_arquivos_cortados"] = (
+                    f"{len(cortados)} arquivo(s) nao tem a marca de fim do "
+                    "PDF e podem ser download interrompido. PDF cortado abre "
+                    "e mostra so o comeco, entao a ausencia de uma peca "
+                    "DENTRO dele nao prova nada. Convem baixar de novo."
+                )
             dados["conclusao"] = (
                 "A pasta cobre as folhas sem buraco. Ausencia de uma peca aqui "
                 "ainda pode significar que ela nunca foi baixada, e nao que "

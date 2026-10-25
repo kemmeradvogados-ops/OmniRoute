@@ -6319,6 +6319,22 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
     # evento de download e a pasta do navegador. O acervo e o que o escritorio
     # vai ler depois: entrar nele arquivo que nao e PDF, com nome de autos, e
     # pior do que nao entrar nada.
+    from .core.acervo import parece_truncado as _cortado
+
+    if _cortado(baixado):
+        # Comeca com a marca de PDF e nao termina com a de fim. Indexar isso
+        # seria registrar como integra um arquivo que abre mostrando so o
+        # comeco, e quem o lesse depois concluiria que o processo acaba ali.
+        print(f"    O arquivo chegou CORTADO: nao tem a marca de fim do PDF. "
+              f"NAO indexei, e ele ficou em {baixado.name}")
+        print("    para voce conferir. Baixe de novo.")
+        estado_local.registrar(
+            acao="download_dos_autos_do_pje", tribunal=identidade.tribunal,
+            sistema=identidade.sistema, numero=numero.formatado,
+            resultado="chegou arquivo cortado, nao indexado",
+        )
+        return
+
     if not _arquivo_e_pdf(baixado):
         print(f"    O arquivo que chegou NAO e PDF. NAO indexei, e ele ficou "
               f"em {baixado.name}")
