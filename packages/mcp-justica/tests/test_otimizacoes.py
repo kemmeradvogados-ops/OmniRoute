@@ -366,3 +366,20 @@ def test_o_conector_recusa_processos_de_portais_diferentes():
     # E a conferencia acontece ANTES de o trabalho comecar.
     assert fonte.index("sistema_do_outro != sistema") < fonte.index(
         'MURAL.comecar("download dos autos"')
+
+
+def test_a_situacao_explica_o_que_e_perfil_definido():
+    """Dado que chega sem explicacao vira resposta hesitante.
+
+    Em 25/10/2026 o modelo respondeu, em voz alta, "nao posso verificar o que
+    esse campo significa na pratica", sobre um campo do nosso proprio
+    servidor. A explicacao custa tres linhas.
+    """
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    assert "sobre_perfil_definido" in fonte
+    assert "a tentativa ja foi gasta" in fonte
+    assert "DESDE O ULTIMO" in fonte

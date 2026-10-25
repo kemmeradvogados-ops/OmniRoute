@@ -131,7 +131,25 @@ auditoria. Com credencial compartilhada, o portal do tribunal não distingue
 quem consultou. Se for preciso saber quem fez determinado acesso, a resposta
 está na máquina de quem fez, pela ferramenta `justica_auditoria_recente`.
 
-## 5. O que dá para pedir ao Claude
+## 5. Como chamar: diga **extensão**, não conector
+
+Detalhe pequeno que faz diferença na prática, observado em 25/10/2026: pedir
+"use o **conector** Justiça" não funcionou, e pedir "use a **extensão**
+Justiça" funcionou na mesma hora.
+
+A razão é que o aplicativo do Claude chama de **conector** o que se liga por
+endereço de internet, como o Gmail e o Google Drive, e de **extensão** o que
+roda na sua máquina, que é o nosso caso. Usar a palavra certa poupa uma volta.
+
+Na dúvida, diga apenas o que você quer, sem nomear nada:
+
+- "Quais peças existem no processo tal?"
+
+O Claude escolhe a ferramenta sozinho. Nomear só ajuda quando ele não escolheu.
+
+---
+
+## 6. O que dá para pedir ao Claude
 
 ### Sem gastar nada, a qualquer hora
 
@@ -240,7 +258,7 @@ aceite é ato do advogado, nunca do programa.
 
 ---
 
-## 6. O que o conector não faz, e por quê
+## 7. O que o conector não faz, e por quê
 
 | Não faz | Por quê |
 | --- | --- |
@@ -251,7 +269,7 @@ aceite é ato do advogado, nunca do programa.
 
 ---
 
-## 7. Quando alguma coisa não funciona
+## 8. Quando alguma coisa não funciona
 
 **O conector não aparece na lista do Claude.** Confira se você usa o
 aplicativo para computador e não o navegador. Depois, Configurações →
@@ -279,7 +297,7 @@ sua credencial. Essa decisão é do responsável, não sua.
 
 ---
 
-## 8. Atualizar
+## 9. Atualizar
 
 Quando houver versão nova, rode o mesmo instalador outra vez. Ele atualiza o
 código e **não toca** no seu `.env` nem nas suas credenciais.

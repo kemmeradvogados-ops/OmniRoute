@@ -713,6 +713,27 @@ def registrar(mcp: Any) -> None:
             "observacao": ("Cada consulta autenticada consome uma tentativa. O teto "
                            "existe para o acesso do advogado nao ser bloqueado pelo "
                            "portal apos tentativas seguidas."),
+            # Campo que o modelo nao tinha como interpretar, e sobre o qual
+            # respondia "nao posso verificar o que significa". Dado que chega
+            # sem explicacao vira resposta hesitante, e a explicacao custa tres
+            # linhas.
+            "sobre_perfil_definido": (
+                "O perfil e a inscricao na Ordem ou o tipo de usuario que o "
+                "portal pergunta DEPOIS de autenticar: o eproc pergunta qual "
+                "inscricao usar quando ha mais de uma, e o Portal de Servicos "
+                "do Rio de Janeiro pergunta o tipo de usuario. "
+                "`perfil_definido: false` NAO impede a consulta, mas, no "
+                "portal que pergunta, a corrida para na tela de escolha DEPOIS "
+                "de a credencial ter sido enviada, e a tentativa ja foi gasta. "
+                "Com o perfil definido na configuracao, a corrida escolhe "
+                "sozinha e segue. Nem todo portal pergunta: em 23/10/2026 o "
+                "PJe do Rio de Janeiro nao perguntou e o eproc da Justica "
+                "Federal da 2a Regiao perguntou."
+            ),
+            "tetos_por_sistema": ("O teto conta tentativas DESDE O ULTIMO "
+                                  "SUCESSO: um login que da certo zera o "
+                                  "contador, porque bloqueio de conta vem de "
+                                  "falhas consecutivas e nao de trabalho."),
         })
 
     @mcp.tool(
