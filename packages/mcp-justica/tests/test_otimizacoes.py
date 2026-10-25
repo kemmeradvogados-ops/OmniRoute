@@ -470,3 +470,61 @@ def test_a_conclusao_nao_afirma_cobertura_quando_nada_foi_medido():
     # E quando ha medida, a frase nao promete o processo inteiro.
     assert "NAO quer dizer" in fonte
     assert "pode haver folhas antes da" in fonte
+
+
+# --------------------------------------------------------------------------
+# Tribunal com mais de um sistema ativo
+# --------------------------------------------------------------------------
+
+
+def test_o_advogado_pode_dizer_o_sistema_quando_o_programa_nao_sabe():
+    """O Tribunal de Justica do Rio de Janeiro esta em migracao e tem tres
+    sistemas ativos. O resolvedor responde `indeterminado`, o que e honesto, e
+    ate 25/10/2026 nao havia como contornar: a ferramenta recusava com uma
+    mensagem sobre portal nao configurado, que apontava para o lugar errado."""
+    from justica_mcp.tools import _sistema_pedido_ou_resolvido
+
+    class _Resolucao:
+        sistema = "indeterminado"
+        motivo = "tres sistemas ativos em migracao"
+
+    sistema, duvida = _sistema_pedido_ou_resolvido(None, "pje", _Resolucao())
+    assert sistema == "pje"
+    assert duvida is None
+
+
+def test_sem_o_advogado_dizer_o_programa_admite_que_nao_sabe():
+    from justica_mcp.tools import _sistema_pedido_ou_resolvido
+
+    class _Resolucao:
+        sistema = "indeterminado"
+        motivo = "tres sistemas ativos"
+
+    sistema, duvida = _sistema_pedido_ou_resolvido(None, None, _Resolucao())
+    assert sistema is None
+    assert "tres sistemas" in duvida
+
+
+def test_o_que_o_programa_descobre_sozinho_continua_valendo():
+    from justica_mcp.tools import _sistema_pedido_ou_resolvido
+
+    class _Resolucao:
+        sistema = "eproc"
+        motivo = ""
+
+    assert _sistema_pedido_ou_resolvido(None, None, _Resolucao())[0] == "eproc"
+    # E o que o advogado diz tem precedencia sobre o palpite.
+    assert _sistema_pedido_ou_resolvido(None, "pje", _Resolucao())[0] == "pje"
+
+
+def test_a_recusa_diz_o_que_fazer_e_quais_sistemas_existem():
+    """Guarda de fonte: recusa que nao diz o caminho obriga o modelo a
+    adivinhar, e ele adivinhou errado em 25/10/2026."""
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    assert "sistema_indeterminado" in fonte
+    assert "Pergunte ao advogado e repita com `sistema`" in fonte
+    assert "Configurados para este tribunal" in fonte

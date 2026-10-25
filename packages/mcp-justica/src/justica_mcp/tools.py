@@ -140,8 +140,39 @@ def _na_pasta(onde: str):
             os.environ[VARIAVEL_PASTA] = antes
 
 
+CAMPO_SISTEMA = Field(
+    default=None,
+    description=("Qual sistema do tribunal: 'pje', 'eproc', 'dcp' ou 'esaj'. "
+                 "Deixe em branco para o programa descobrir. Diga quando ele "
+                 "responder que nao sabe: o Tribunal de Justica do Rio de "
+                 "Janeiro esta em migracao e tem tres sistemas ativos, e o "
+                 "advogado sabe em qual o processo dele corre."),
+)
+
+
+def _sistema_pedido_ou_resolvido(numero, pedido, resolucao):
+    """O sistema que o advogado disse, ou o que o programa descobriu.
+
+    O resolvedor responde `indeterminado` quando o tribunal tem mais de um
+    sistema ativo e nao ha regra que decida, o que e honesto e e o caso do
+    Tribunal de Justica do Rio de Janeiro. Ate 25/10/2026 nao havia como
+    contornar isso: a ferramenta recusava o pedido com uma mensagem sobre
+    portal nao configurado, que apontava para o lugar errado.
+    """
+    escolhido = (pedido or "").strip().lower()
+    if escolhido:
+        return escolhido, None
+    if resolucao.sistema and resolucao.sistema != "indeterminado":
+        return resolucao.sistema, None
+    return None, (resolucao.motivo or "")
+
+
 class PecasInput(NumeroInput):
     onde: str = CAMPO_ONDE
+
+
+class ConsultaAutenticadaInput(NumeroInput):
+    sistema: Optional[str] = CAMPO_SISTEMA
 
 
 class BaixarAutosInput(NumeroInput):
@@ -172,6 +203,7 @@ class BaixarAutosInput(NumeroInput):
         default=None, ge=60, le=7200,
         description="Quanto esperar pelo ARQUIVO. Minimo e padrao do programa: 300.",
     )
+    sistema: Optional[str] = CAMPO_SISTEMA
     tambem: list = Field(
         default_factory=list,
         max_length=20,
@@ -436,7 +468,8 @@ def registrar(mcp: Any) -> None:
             open_world_hint=True,
         ),
     )
-    async def justica_consultar_processo_autenticado(params: NumeroInput) -> str:
+    async def justica_consultar_processo_autenticado(
+            params: ConsultaAutenticadaInput) -> str:
         """Consulta o processo no portal do tribunal, com a credencial do advogado.
 
         Traz o que a base nacional NAO tem. Somente leitura: nao abre
@@ -478,7 +511,15 @@ def registrar(mcp: Any) -> None:
             tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
             LimiteTentativas.do_ambiente(_estado).exigir_folga()
 
-            sistema = (await resolver_sistema(numero, _estado)).sistema
+            sistema, duvida = _sistema_pedido_ou_resolvido(
+                numero, params.sistema, await resolver_sistema(numero, _estado))
+            if sistema is None:
+                return _erro(
+                    f"Nao da para saber em qual sistema do {tribunal.codigo} "
+                    f"o processo {numero.formatado} corre.",
+                    "sistema_indeterminado",
+                    f"Pergunte ao advogado e repita com `sistema`. {duvida}".strip(),
+                )
             if sistema not in SISTEMAS_AUTENTICADOS:
                 return _erro(
                     f"Consulta autenticada ainda nao implementada para {sistema!r}.",
@@ -819,7 +860,21 @@ def registrar(mcp: Any) -> None:
         try:
             numero = parse_numero(params.numero)
             tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
-            sistema = (await resolver_sistema(numero, _estado)).sistema
+            sistema, duvida = _sistema_pedido_ou_resolvido(
+                numero, params.sistema, await resolver_sistema(numero, _estado))
+            if sistema is None:
+                configurados = sorted(
+                    c.sistema for c in portais_configurados()
+                    if c.tribunal == tribunal.codigo)
+                return _erro(
+                    f"Nao da para saber em qual sistema do {tribunal.codigo} "
+                    f"o processo {numero.formatado} corre.",
+                    "sistema_indeterminado",
+                    "Pergunte ao advogado e repita com `sistema`. "
+                    f"Configurados para este tribunal: "
+                    f"{', '.join(configurados) or 'nenhum'}. "
+                    f"{duvida}".strip(),
+                )
             config_portal(tribunal.codigo, sistema)
             # Os outros processos sao conferidos AQUI, antes de o navegador
             # abrir. Descobrir na quarta consulta que o terceiro numero e de
@@ -828,8 +883,10 @@ def registrar(mcp: Any) -> None:
             outros = []
             for bruto in params.tambem:
                 outro = parse_numero(bruto)
-                sistema_do_outro = (await resolver_sistema(outro, _estado)).sistema
-                if sistema_do_outro != sistema:
+                sistema_do_outro, _ = _sistema_pedido_ou_resolvido(
+                    outro, params.sistema,
+                    await resolver_sistema(outro, _estado))
+                if sistema_do_outro is not None and sistema_do_outro != sistema:
                     return _erro(
                         f"{outro.formatado} tramita no {sistema_do_outro}, e "
                         f"{numero.formatado} no {sistema}.",
