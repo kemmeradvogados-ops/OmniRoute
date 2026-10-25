@@ -185,11 +185,20 @@ async def resolver_sistema(
     *,
     ignorar_cache: bool = False,
     documento_datajud: Optional[dict] = None,
+    nota_da_base_nacional: Optional[str] = None,
 ) -> SistemaResolvido:
     """Resolve o sistema do processo.
 
     `documento_datajud` e o `_source` ja obtido da base nacional. Passa-lo
     evita uma segunda ida a rede quando quem chama ja consultou o processo.
+
+    `nota_da_base_nacional` e o que QUEM CHAMOU sabe sobre essa consulta e o
+    resolvedor nao tem como saber: se a chave esta configurada, se a chamada
+    falhou, se nao ha ficha. Sem ela, um 'indeterminado' nao distingue "a base
+    nacional nao sabe" de "a base nacional nem foi perguntada", e em
+    25/10/2026 cinco processos voltaram indeterminados sem que desse para
+    saber qual dos dois era. Diagnostico que nao distingue causa custa
+    tentativa autenticada para descobrir o que era de graca.
     """
     tribunal: Tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
     candidatos = [s.value for s in tribunal.sistemas_candidatos]
@@ -237,6 +246,7 @@ async def resolver_sistema(
             )
 
     # 3. base nacional: evidencia oficial, porem possivelmente atrasada
+    nota = nota_da_base_nacional
     if documento_datajud is not None:
         do_datajud = sistema_de_documento(documento_datajud, tribunal)
         if do_datajud is not None and do_datajud.sistema != Sistema.INDETERMINADO.value:
@@ -244,6 +254,11 @@ async def resolver_sistema(
                 _chave_cache(numero), do_datajud.model_dump(), VALIDADE_RESOLUCAO
             )
             return do_datajud
+        if do_datajud is None:
+            nota = ("a base nacional tem ficha deste processo, mas ela nao traz "
+                    "o campo do sistema")
+        else:
+            nota = do_datajud.motivo
 
     # 4. regra de migracao
     ano = int(numero.ano)
@@ -269,10 +284,12 @@ async def resolver_sistema(
         origem_da_resolucao="indeterminado",
         candidatos=candidatos,
         confianca=Confianca.BAIXA,
+        base_nacional=nota or "sem informacao sobre a consulta a base nacional",
         motivo=(
             f"Sem sonda autenticada disponivel para {tribunal.codigo} e sem regra de "
-            f"migracao aplicavel ao ano {ano}. Ordem de sondagem sugerida: "
-            f"{', '.join(candidatos)}. {tribunal.observacao}"
+            f"migracao aplicavel ao ano {ano}. Base nacional: "
+            f"{nota or 'sem informacao sobre a consulta'}. Ordem de sondagem "
+            f"sugerida: {', '.join(candidatos)}. {tribunal.observacao}"
         ),
     )
     estado.gravar_cache(_chave_cache(numero), indeterminado.model_dump(), VALIDADE_INDETERMINADO)

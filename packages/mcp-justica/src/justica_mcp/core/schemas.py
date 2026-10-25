@@ -67,6 +67,15 @@ class SistemaResolvido(BaseModel):
         default_factory=list, description="Ordem de sondagem restante, quando indeterminado."
     )
     confianca: Confianca = Confianca.MEDIA
+    base_nacional: Optional[str] = Field(
+        default=None,
+        description=("O que a base nacional do Conselho Nacional de Justica "
+                     "respondeu sobre este processo: se nao foi consultada, se "
+                     "nao tem ficha, se a ficha nao traz o sistema. Sem isto, "
+                     "'indeterminado' nao distingue falta de informacao de "
+                     "falta de consulta, e a diferenca custa tentativa "
+                     "autenticada para descobrir o que era de graca."),
+    )
     motivo: Optional[str] = None
 
 

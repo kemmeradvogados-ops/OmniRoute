@@ -72,3 +72,39 @@ async def test_sondagem_tem_prioridade_sobre_regra_de_migracao(estado, monkeypat
     assert r.sistema == "pje"
     assert r.origem_da_resolucao == "sondagem"
     assert r.confianca.value == "alta"
+
+
+# --------------------------------------------------------------------------
+# O indeterminado tem que dizer o que a base nacional respondeu
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_indeterminado_diz_que_a_base_nacional_nao_foi_consultada(estado):
+    """Sem isto, 'indeterminado' nao distingue falta de informacao de falta de
+    consulta, e o advogado gasta tentativa autenticada para descobrir o que
+    era de graca."""
+    r = await resolver_sistema(
+        _num("0000001-88.2019.8.19.0001"), estado, ignorar_cache=True,
+        nota_da_base_nacional="nao foi consultada: a chave nao esta configurada",
+    )
+    assert r.sistema == "indeterminado"
+    assert "chave nao esta configurada" in r.base_nacional
+    assert "chave nao esta configurada" in r.motivo
+
+
+@pytest.mark.asyncio
+async def test_indeterminado_diz_quando_a_ficha_nao_traz_o_sistema(estado):
+    r = await resolver_sistema(
+        _num("0000001-88.2019.8.19.0001"), estado, ignorar_cache=True,
+        documento_datajud={"numeroProcesso": "x"},  # ficha sem o campo sistema
+        nota_da_base_nacional="consultada",
+    )
+    assert r.sistema == "indeterminado"
+    assert "nao traz" in r.base_nacional
+
+
+@pytest.mark.asyncio
+async def test_sem_nota_o_indeterminado_admite_que_nao_sabe(estado):
+    r = await resolver_sistema(
+        _num("0000001-88.2019.8.19.0001"), estado, ignorar_cache=True)
+    assert "sem informacao" in r.base_nacional

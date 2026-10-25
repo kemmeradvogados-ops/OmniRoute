@@ -270,15 +270,29 @@ def registrar(mcp: Any) -> None:
             numero = parse_numero(params.numero)
             tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
             documento = None
-            if _datajud.configurado:
+            # A nota diz QUAL dos casos aconteceu. Sem ela, um 'indeterminado'
+            # nao distingue "a base nacional nao sabe" de "a base nacional nem
+            # foi perguntada", e a diferenca manda o advogado gastar tentativa
+            # autenticada para descobrir o que era de graca (25/10/2026, cinco
+            # processos indeterminados sem causa declarada).
+            nota = None
+            if not _datajud.configurado:
+                nota = ("nao foi consultada: a chave de acesso a base nacional "
+                        "nao esta configurada no .env")
+            else:
                 try:
                     documento = await _datajud.buscar_documento(numero, tribunal)
-                except Exception:
+                    if documento is None:
+                        nota = "consultada, e ela nao tem ficha deste processo"
+                except Exception as exc:
                     # A base nacional e um reforco aqui, nao um requisito: sem
                     # ela o resolvedor cai na pista de migracao normalmente.
                     documento = None
+                    nota = (f"a consulta falhou ({type(exc).__name__}). Confira "
+                            "a chave de acesso e a rede")
             resolvido = await resolver_sistema(
-                numero, _estado, documento_datajud=documento
+                numero, _estado, documento_datajud=documento,
+                nota_da_base_nacional=nota,
             )
             _estado.registrar(acao="resolver_sistema", solicitante=params.solicitante,
                               tribunal=tribunal.codigo, sistema=resolvido.sistema,
