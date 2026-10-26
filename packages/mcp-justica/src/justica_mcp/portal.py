@@ -7130,21 +7130,21 @@ def _consultar_pje(pagina, guarda, estado_local, identidade, *, numero,
     return 0
 
 
-def _consultar_eproc(pagina, guarda, estado_local, identidade, *, numero,
-                     documentos, segundos) -> int:
-    """O caminho do eproc, pela barra de busca rapida, que existe em toda tela.
+def buscar_no_eproc(pagina, guarda, numero, segundos) -> tuple:
+    """Digita o numero na busca rapida do eproc e envia. So isso.
 
-    E tambem o caminho padrao: portal novo que tenha busca rapida cai aqui.
+    Extraida de `_consultar_eproc` em 25/10/2026 para a sonda de sistema
+    poder reusa-la: a busca e identica, o que muda e o que se faz com a tela
+    depois. Devolve (enviada, porque), e nao imprime nem decide nada, porque
+    quem sonda relata diferente de quem consulta.
     """
     atual = pagina.url
     campo = elemento_visivel(pagina, BUSCA_RAPIDA)
     if campo is None:
-        print("  [FALHA] Campo de busca rapida nao encontrado na tela.")
-        return 1
+        return False, "Campo de busca rapida nao encontrado na tela."
     botao = elemento_visivel(pagina, BOTAO_BUSCA)
     if botao is None:
-        print("  [FALHA] Botao de busca nao encontrado na tela.")
-        return 1
+        return False, "Botao de busca nao encontrado na tela."
 
     # Autorizacao estreita: so a busca, so nesta tela. O formulario de
     # cadastro que divide a pagina continua inteiramente barrado.
@@ -7161,19 +7161,31 @@ def _consultar_eproc(pagina, guarda, estado_local, identidade, *, numero,
     campo.fill(numero.formatado)
     conferido = campo.evaluate("e => (e.value || '').length")
     if not conferido:
-        print("  [ABORTADO] O numero nao entrou no campo. Nada foi enviado.")
-        return 1
+        return False, "O numero nao entrou no campo. Nada foi enviado."
 
     guarda.pode_executar(Acao.CLICAR, BOTAO_BUSCA, url=atual)
-    estado_local.registrar(
-        acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
-        sistema=identidade.sistema, numero=numero.formatado, resultado="enviada",
-    )
     botao.click()
     try:
         pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
     except Exception:
         pass
+    return True, "busca enviada"
+
+
+def _consultar_eproc(pagina, guarda, estado_local, identidade, *, numero,
+                     documentos, segundos) -> int:
+    """O caminho do eproc, pela barra de busca rapida, que existe em toda tela.
+
+    E tambem o caminho padrao: portal novo que tenha busca rapida cai aqui.
+    """
+    estado_local.registrar(
+        acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+        sistema=identidade.sistema, numero=numero.formatado, resultado="enviada",
+    )
+    enviada, porque = buscar_no_eproc(pagina, guarda, numero, segundos)
+    if not enviada:
+        print(f"  [FALHA] {porque}")
+        return 1
 
     final = pagina.url
     print(f"  Endereco: {final}")

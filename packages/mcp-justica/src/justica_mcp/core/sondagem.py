@@ -207,7 +207,19 @@ def _gravar(estado: Estado, numero: NumeroCNJ, linha: LinhaDaSondagem, ordem: li
     e resolucao respondem a mesma pergunta, e dois caches com a mesma pergunta
     e prazos diferentes se contradizem em silencio.
     """
+    from . import historico_sistemas
     from .resolver import VALIDADE_RESOLUCAO, _chave_cache
+
+    # O historico fica na pasta compartilhada: esta sondagem economiza a
+    # tentativa de todos os outros advogados da banca, nao so a de quem rodou.
+    try:
+        historico_sistemas.registrar(
+            numero.apenas_digitos, numero.formatado, linha.sistema,
+            origem="sondagem no portal")
+    except OSError:
+        # Pasta compartilhada indisponivel nao pode derrubar a sondagem que ja
+        # foi paga: o resultado continua valendo nesta corrida e no cache local.
+        pass
 
     resolvido = SistemaResolvido(
         sistema=linha.sistema,

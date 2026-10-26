@@ -221,6 +221,35 @@ async def resolver_sistema(
                 ),
             )
 
+    # 1.5 historico da banca: sondagem que ALGUEM ja pagou, aqui ou noutra
+    # maquina. Vem antes da sonda porque e de graca e a sonda custa tentativa
+    # autenticada; vem depois do cache porque o cache e mais fresco. A data da
+    # confirmacao entra na resposta e limita a confianca: migracao move
+    # processo, e registro antigo pode estar apontando para o portal errado.
+    if not ignorar_cache:
+        from . import historico_sistemas
+
+        guardado = historico_sistemas.consultar(numero.apenas_digitos)
+        if guardado:
+            dias = historico_sistemas.dias_desde(guardado)
+            fresco = historico_sistemas.recente(guardado)
+            quando = guardado.get("confirmado_em", "data nao registrada")
+            idade = f"ha {dias} dia(s)" if dias is not None else "em data incerta"
+            return SistemaResolvido(
+                sistema=guardado["sistema"],
+                origem_da_resolucao="historico_da_banca",
+                candidatos=candidatos,
+                confianca=Confianca.MEDIA if fresco else Confianca.BAIXA,
+                motivo=(
+                    f"O escritorio confirmou este processo em "
+                    f"{guardado['sistema']} {idade} ({quando}), por "
+                    f"{guardado.get('origem', 'origem nao registrada')}."
+                    + ("" if fresco else
+                       " Confirmacao antiga: o processo pode ter migrado desde"
+                       " entao. Sonde de novo antes de agir sobre prazo.")
+                ),
+            )
+
     # 2. sondagem (Fase 2)
     for sistema in tribunal.sistemas_candidatos:
         sonda = _SONDAS.get((tribunal.codigo, sistema))

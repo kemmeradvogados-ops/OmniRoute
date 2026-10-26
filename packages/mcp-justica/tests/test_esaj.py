@@ -207,7 +207,9 @@ def test_a_consulta_despacha_pelo_sistema_e_nao_trata_tudo_como_eproc():
     assert 'identidade.sistema == "esaj"' in fonte
     assert "buscar as buscar_esaj" in fonte
     # e o caminho do eproc continua sendo o outro ramo, nao foi removido
-    assert "BUSCA_RAPIDA" in fonte
+    # A busca rapida saiu para `buscar_no_eproc` em 25/10/2026, para a
+    # sonda de sistema poder reusa-la. O ramo continua sendo o outro.
+    assert "buscar_no_eproc" in fonte
 
 
 # --------------------------------------------------------------------------
@@ -392,7 +394,7 @@ def test_a_consulta_grava_o_arquivo_e_nao_despeja_na_tela():
     from justica_mcp import portal
 
     fonte = fonte_da_consulta()
-    ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("BUSCA_RAPIDA")]
+    ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("buscar_no_eproc")]
     assert "_gravar_consulta" in ramo
     assert "Nao o cole em conversa nenhuma" in ramo
     assert 'dados["movimentacoes"][:5]' in ramo   # so as cinco mais recentes
@@ -417,7 +419,7 @@ def test_a_consulta_alimenta_a_comparacao_de_novidades():
     from justica_mcp import portal
 
     fonte = fonte_da_consulta()
-    ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("BUSCA_RAPIDA")]
+    ramo = fonte[fonte.index('identidade.sistema == "esaj"'):fonte.index("buscar_no_eproc")]
     assert "gravar_snapshot" in ramo
 
 
