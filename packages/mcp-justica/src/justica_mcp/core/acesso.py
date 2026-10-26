@@ -35,10 +35,40 @@ class ConfigPortal:
     # Portais separam as telas de primeiro e de segundo grau, entao exercitar
     # um portal exige um processo de cada. O e-SAJ e o caso confirmado.
     processo_teste_2g: Optional[str] = None
+    # ENDERECO DO SEGUNDO GRAU, quando o tribunal o mantem separado. No
+    # Tribunal de Justica do Rio de Janeiro sao instalacoes distintas:
+    # `eproc1g` e `eproc2g`, `pje/1g` e `pje/2g`. O e-SAJ, ao contrario, troca
+    # so a tela dentro do mesmo endereco, e por isso nao precisa desta chave.
+    #
+    # Importa porque o NUMERO NAO DIZ A INSTANCIA ATUAL: recurso processado
+    # nos autos principais, como a apelacao, segue com o campo de origem da
+    # primeira instancia (Resolucao nº. 65/2008, artigo 3º, § 2º). Procurar so
+    # no primeiro grau devolve "nao encontrado" para processo que subiu, e
+    # isso se confunde com processo inexistente. Entre 25 e 26/10/2026 quatro
+    # varreduras procuraram dois processos apenas em primeira instancia,
+    # porque nenhum endereco de segundo grau estava configurado.
+    url_2g: Optional[str] = None
+    perfil_2g: Optional[str] = None
 
     @property
     def rotulo(self) -> str:
         return f"{self.tribunal} / {self.sistema}"
+
+    def url_do_grau(self, grau: int) -> Optional[str]:
+        """O endereco daquele grau, ou None quando nao ha um proprio.
+
+        Primeiro grau e sempre `url`. Segundo grau e `url_2g` quando houver;
+        None quando nao houver, e None aqui significa "nao da para procurar no
+        segundo grau deste sistema", nunca "o processo nao esta la".
+        """
+        if grau == 2:
+            return self.url_2g
+        return self.url
+
+    def perfil_do_grau(self, grau: int) -> Optional[str]:
+        if grau == 2 and self.url_2g:
+            return self.perfil_2g or self.perfil
+        return self.perfil
 
 
 def _chave(tribunal: str, sistema: str, sufixo: str) -> str:
@@ -103,6 +133,10 @@ def config_portal(tribunal: str, sistema: str) -> ConfigPortal:
         processo_teste_2g=os.environ.get(
             _chave(tribunal, sistema, "PROCESSO_TESTE_2G"), ""
         ).strip() or None,
+        url_2g=os.environ.get(
+            _chave(tribunal, sistema, "2G_URL"), "").strip() or None,
+        perfil_2g=os.environ.get(
+            _chave(tribunal, sistema, "2G_PERFIL"), "").strip() or None,
     )
 
 

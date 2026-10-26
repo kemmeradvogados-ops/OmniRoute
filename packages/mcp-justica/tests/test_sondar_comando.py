@@ -14,9 +14,23 @@ from justica_mcp import portal
 
 @dataclass
 class _Config:
+    """Dublê da configuração do portal. Espelha `ConfigPortal` no que a
+    sondagem usa, inclusive o endereço por grau: sem `url_2g`, só o primeiro
+    grau é varrido, que é o caso comum do .env de hoje."""
+
     url: str = "https://portal.exemplo"
     perfil: str = None
     rotulo: str = "portal de teste"
+    url_2g: str = None
+    perfil_2g: str = None
+
+    def url_do_grau(self, grau):
+        return self.url_2g if grau == 2 else self.url
+
+    def perfil_do_grau(self, grau):
+        if grau == 2 and self.url_2g:
+            return self.perfil_2g or self.perfil
+        return self.perfil
 
 
 UM = "0000001-16.2019.8.19.0001"
@@ -322,3 +336,82 @@ def test_a_varredura_liga_a_gravacao_de_telas_sozinha(portais, monkeypatch):
                         lambda *a, **k: Resposta(True, "simulado"))
     portal.sondar_sistemas([UM], confirmado=True)
     assert os.environ.get("JUSTICA_GRAVAR_TELAS")
+
+
+# --------------------------------------------------------------------------
+# Primeiro e segundo grau sao portais diferentes
+#
+# O numero NAO diz a instancia atual: recurso processado nos autos principais,
+# como a apelacao, sobe com o mesmo numero (Resolucao nº. 65/2008, artigo 3º,
+# § 2º). Entre 25 e 26/10/2026 quatro varreduras procuraram dois processos so
+# em primeira instancia, porque nenhum endereco de segundo grau estava no
+# .env, e devolveram "nao achado" sem nunca ter olhado la.
+# --------------------------------------------------------------------------
+
+def test_sem_endereco_de_segundo_grau_so_o_primeiro_e_varrido(
+        portais, monkeypatch, capsys):
+    """E o .env de hoje: um endereco por sistema, todos de primeiro grau. O
+    custo nao muda, e o relatorio diz que o segundo grau ficou de fora."""
+    logins: list = []
+    monkeypatch.setattr(portal, "autenticar", _autenticador(logins, None))
+
+    from justica_mcp.sondas import Resposta
+
+    monkeypatch.setattr("justica_mcp.sondas.procurar",
+                        lambda *a, **k: Resposta(True, "simulado"))
+    portal.sondar_sistemas([UM], confirmado=True)
+    saida = capsys.readouterr().out
+    assert logins == ["eproc"]
+    assert "SEM 2o GRAU: eproc" in saida
+    assert "_EPROC_2G_URL" in saida
+
+
+def test_com_endereco_de_segundo_grau_o_outro_grau_vira_etapa(
+        monkeypatch, capsys):
+    monkeypatch.setenv("JUSTICA_ACESSO_AUTENTICADO", "1")
+    monkeypatch.setattr(
+        "justica_mcp.core.acesso.config_portal",
+        lambda t, s: _Config(url_2g="https://portal.exemplo/2g")
+        if s == "eproc" else _Config())
+    from justica_mcp.sondas import Preparo, Resposta
+
+    monkeypatch.setattr(
+        "justica_mcp.sondas.preparar",
+        lambda sistema, pagina, guarda, perfil, segundos:
+            Preparo(pagina, True, "simulado"))
+    enderecos: list = []
+
+    def autenticar(url, tribunal, sistema, *, apos_autenticar=None, **k):
+        enderecos.append((sistema, url))
+        if apos_autenticar is not None:
+            apos_autenticar(_Pagina(), _Guarda(), _Estado(), _Identidade(tribunal))
+        return 0
+
+    monkeypatch.setattr(portal, "autenticar", autenticar)
+    monkeypatch.setattr("justica_mcp.sondas.procurar",
+                        lambda *a, **k: Resposta(False, "simulado"))
+    portal.sondar_sistemas([UM], confirmado=True)
+    # Todos os sistemas em primeiro grau e, depois, o eproc em segundo, que e
+    # o unico com endereco proprio.
+    assert enderecos == [
+        ("eproc", "https://portal.exemplo"),
+        ("pje", "https://portal.exemplo"),
+        ("dcp", "https://portal.exemplo"),
+        ("eproc", "https://portal.exemplo/2g"),
+    ]
+
+
+def test_o_relatorio_avisa_quando_so_o_primeiro_grau_foi_olhado(
+        portais, monkeypatch, capsys):
+    """Nao dizer isto faria "nao achado em primeiro grau" parecer "nao
+    existe", que e o pior desfecho deste programa."""
+    monkeypatch.setattr(portal, "autenticar", _autenticador([], None))
+
+    from justica_mcp.sondas import Resposta
+
+    monkeypatch.setattr("justica_mcp.sondas.procurar",
+                        lambda *a, **k: Resposta(False, "ausencia confirmada"))
+    portal.sondar_sistemas([UM], confirmado=True)
+    saida = capsys.readouterr().out
+    assert "SO EM PRIMEIRO GRAU" in saida
+    assert "nao diz a instancia atual" in saida

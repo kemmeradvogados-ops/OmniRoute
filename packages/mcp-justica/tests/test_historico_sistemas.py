@@ -131,7 +131,7 @@ def test_a_sondagem_alimenta_o_historico_da_banca(pasta, tmp_path):
     novo por ninguem."""
     from justica_mcp.core.sondagem import sondar_em_lote
 
-    def sonda(sistema, numeros):
+    def sonda(sistema, grau, numeros):
         return {n.apenas_digitos: sistema.value == "eproc" for n in numeros}
 
     n = _num(UM)

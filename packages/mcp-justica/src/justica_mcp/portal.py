@@ -7715,11 +7715,41 @@ def sondar_sistemas(
     if not configurados:
         print("\nNenhum sistema configurado para sondar.", file=sys.stderr)
         return 1
-    print(f"Custo maximo: {len(configurados)} autenticacao(oes), "
+    # AS ETAPAS SAO (SISTEMA, GRAU), e nao so sistema: primeiro e segundo grau
+    # sao instalacoes diferentes, com autenticacao propria cada uma. Comeca
+    # pelo grau que os NUMEROS indicam, que e a hipotese mais barata, e so
+    # depois vai ao outro, porque o numero nao diz a instancia atual: recurso
+    # nos autos principais sobe com o mesmo numero (Resolucao nº. 65/2008,
+    # artigo 3º, § 2º). Entre 25 e 26/10/2026 quatro varreduras procuraram dois
+    # processos so em primeira instancia, por nao haver endereco de segundo
+    # grau no .env, e devolveram "nao achado" sem nunca ter olhado la.
+    indicados = sorted({cada.grau for cada in numeros})
+    ordem_dos_graus = indicados + [g for g in (1, 2) if g not in indicados]
+    etapas: list = []
+    sem_segundo_grau: list = []
+    for grau in ordem_dos_graus:
+        for candidato in achado.sistemas_candidatos:
+            config = configurados.get(candidato.value)
+            if config is None:
+                continue
+            if config.url_do_grau(grau):
+                etapas.append((candidato, grau))
+            elif grau == 2:
+                sem_segundo_grau.append(candidato.value)
+
+    for nome in sem_segundo_grau:
+        print(f"  SEM 2o GRAU: {nome} nao tem endereco de segundo grau no "
+              f".env. Para configurar: "
+              f"JUSTICA_PORTAL_{codigo_do_tribunal.upper()}_{nome.upper()}"
+              "_2G_URL=https://...")
+    print(f"Custo maximo: {len(etapas)} autenticacao(oes) "
+          f"({', '.join(f'{s.value} {g}g' for s, g in etapas)}), "
           "independentemente de quantos processos.")
 
-    def sonda(sistema, pendentes):
+    def sonda(sistema, grau, pendentes):
         config = configurados[sistema.value]
+        endereco = config.url_do_grau(grau)
+        perfil_do_grau = config.perfil_do_grau(grau)
         respostas: dict = {}
 
         def depois(pagina, guarda, estado_local, identidade):
@@ -7729,7 +7759,7 @@ def sondar_sistemas(
             # publica do tribunal. Em 26/10/2026 a sonda pulou esse passo e as
             # quatro buscas estouraram, gastando a autenticacao inteira.
             preparo = _sondas.preparar(
-                sistema.value, pagina, guarda, config.perfil, segundos)
+                sistema.value, pagina, guarda, perfil_do_grau, segundos)
             if not preparo.pronto:
                 print(f"      [PAROU] A sessao nao ficou pronta: "
                       f"{preparo.detalhe}")
@@ -7742,11 +7772,11 @@ def sondar_sistemas(
 
             quantos = len(pendentes)
             for posicao, cada in enumerate(pendentes, start=1):
-                print(f"\n  [{sistema.value}] {posicao} de {quantos}: "
-                      f"{cada.formatado}")
+                print(f"\n  [{sistema.value} {grau}o grau] {posicao} de "
+                      f"{quantos}: {cada.formatado}")
                 resposta = _sondas.procurar(
-                    sistema.value, pagina, guarda, cada, config.url, segundos,
-                    config.perfil)
+                    sistema.value, pagina, guarda, cada, endereco, segundos,
+                    perfil_do_grau)
                 respostas[cada.apenas_digitos] = resposta.valor
                 marca = {True: "ACHADO", False: "nao esta aqui",
                          None: "nao confirmado"}[resposta.valor]
@@ -7758,12 +7788,12 @@ def sondar_sistemas(
             return 0
 
         print("\n" + "-" * LARGURA)
-        print(f"  ABRINDO {sistema.value.upper()}: uma autenticacao para "
-              f"{len(pendentes)} processo(s).")
+        print(f"  ABRINDO {sistema.value.upper()}, {grau}o GRAU: uma "
+              f"autenticacao para {len(pendentes)} processo(s).")
         print("-" * LARGURA)
         autenticar(
-            config.url, codigo_do_tribunal, sistema.value,
-            confirmado=confirmado, perfil=config.perfil, oculto=oculto,
+            endereco, codigo_do_tribunal, sistema.value,
+            confirmado=confirmado, perfil=perfil_do_grau, oculto=oculto,
             segundos=segundos, espera_humana=espera_humana,
             cofre=cofre, estado=estado, apos_autenticar=depois,
         )
@@ -7772,7 +7802,7 @@ def sondar_sistemas(
     try:
         relato = sondar_em_lote(
             numeros, estado or Estado(), sonda,
-            sistemas=list(configurados),
+            etapas=etapas,
             conferir_segundo_grau=conferir_segundo_grau,
         )
     except ProcessosDeTribunaisDiferentes as exc:

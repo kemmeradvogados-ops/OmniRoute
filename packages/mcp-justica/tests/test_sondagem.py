@@ -34,7 +34,7 @@ TRES = "0000003-88.2019.8.19.0001"
 
 def _sonda(mapa, registro=None):
     """Sonda falsa: `mapa` diz o que cada sistema responde por numero."""
-    def sonda(sistema, numeros):
+    def sonda(sistema, grau, numeros):
         if registro is not None:
             registro.append((sistema.value, [n.apenas_digitos for n in numeros]))
         return {n.apenas_digitos: mapa.get(sistema.value, {}).get(n.formatado)
@@ -51,7 +51,7 @@ def test_todos_achados_no_eproc_custam_uma_autenticacao(estado):
         _sonda({"eproc": {UM: True, DOIS: True}}, visitas),
     )
     assert relato["autenticacoes"] == 1
-    assert relato["sistemas_abertos"] == ["eproc"]
+    assert relato["sistemas_abertos"] == ["eproc 1g"]
     assert [v[0] for v in visitas] == ["eproc"]
     assert all(l["sistema"] == "eproc" for l in relato["linhas"])
     assert all(l["confianca"] == "alta" for l in relato["linhas"])
@@ -95,7 +95,7 @@ def test_sem_conferir_segundo_grau_para_no_primeiro_achado(estado):
     )
     linha = relato["linhas"][0]
     assert linha["sistema"] == "pje"
-    assert relato["sistemas_abertos"] == ["eproc", "pje"]
+    assert relato["sistemas_abertos"] == ["eproc 1g", "pje 1g"]
     # O achado no PJe avisa que pode haver segundo grau noutro sistema.
     assert "segundo grau" in linha["observacao"]
 

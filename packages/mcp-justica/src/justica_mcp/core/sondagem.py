@@ -54,7 +54,7 @@ from .tribunais import Sistema, Tribunal, identificar_tribunal
 # Recebe o sistema e a lista de numeros pendentes; devolve, por numero em
 # apenas digitos, True (o sistema reconheceu), False (nao reconheceu) ou None
 # (nao deu para ver). Quem implementa autentica UMA vez e procura todos.
-SondaEmLote = Callable[[Sistema, list[NumeroCNJ]], dict[str, Optional[bool]]]
+SondaEmLote = Callable[[Sistema, int, list[NumeroCNJ]], dict[str, Optional[bool]]]
 
 # SINCRONA, e isto nao e detalhe de estilo. A biblioteca que dirige o
 # navegador recusa a sua interface sincrona dentro de um laco assincrono
@@ -75,6 +75,10 @@ class LinhaDaSondagem:
 
     numero: str
     por_sistema: dict = field(default_factory=dict)
+    # Em quais graus cada sistema foi procurado. Sem isto, "nao achado no
+    # eproc" nao distingue "procurado nos dois graus" de "procurado so no
+    # primeiro", e a diferenca e justamente a do recurso que subiu.
+    graus_vistos: dict = field(default_factory=dict)
     sistema: Optional[str] = None
     confianca: str = Confianca.BAIXA.value
     observacao: str = ""
@@ -133,11 +137,27 @@ def _conclusao(linha: LinhaDaSondagem, ordem: list, conferiu_tudo: bool) -> None
     naos = [s for s in ordem if linha.por_sistema.get(s) is False]
     linha.sistema = None
     linha.confianca = Confianca.BAIXA.value
+    if not naos:
+        linha.observacao = "Nenhum sistema foi sondado."
+        return
+    so_primeiro = [s for s in naos
+                   if linha.graus_vistos.get(s) and 2 not in linha.graus_vistos[s]]
     linha.observacao = (
         f"Sondado em {', '.join(naos)} e nenhum reconheceu o processo. "
         "Confira a transcricao do numero e se o escritorio tem acesso a ele "
         "neste tribunal."
-    ) if naos else "Nenhum sistema foi sondado."
+    )
+    if so_primeiro:
+        # O numero nao diz a instancia atual: apelacao segue com o campo de
+        # origem da primeira instancia. Nao dizer isto faria "nao achado" em
+        # primeiro grau parecer "nao existe".
+        linha.observacao += (
+            f" ATENCAO: {', '.join(so_primeiro)} foi procurado SO EM PRIMEIRO "
+            "GRAU. O numero nao diz a instancia atual, e recurso processado "
+            "nos autos principais sobe com o mesmo numero. Configure o "
+            "endereco de segundo grau no .env e sonde de novo antes de "
+            "concluir que o processo nao esta la."
+        )
 
 
 def sondar_em_lote(
@@ -145,7 +165,7 @@ def sondar_em_lote(
     estado: Estado,
     sonda: SondaEmLote,
     *,
-    sistemas: Optional[list] = None,
+    etapas: Optional[list] = None,
     conferir_segundo_grau: bool = False,
     gravar_cache: bool = True,
 ) -> dict:
@@ -167,30 +187,49 @@ def sondar_em_lote(
         )
 
     tribunal: Tribunal = identificar_tribunal(numeros[0].chave_segmento_tribunal)
-    # `sistemas` restringe a varredura sem mudar a ORDEM, que e a do tribunal.
-    # Serve para deixar de fora o sistema cujo endereco nao esta no .env: sem
-    # isso ele contaria como autenticacao aberta e o relatorio mentiria sobre
-    # o custo da corrida.
-    a_varrer = ([s for s in tribunal.sistemas_candidatos if s.value in sistemas]
-                if sistemas is not None else list(tribunal.sistemas_candidatos))
-    ordem = [s.value for s in a_varrer]
+    # Cada ETAPA e um par (sistema, grau), porque primeiro e segundo grau sao
+    # instalacoes diferentes do mesmo sistema e cada uma cobra a sua propria
+    # autenticacao. Quem chama monta a lista a partir do que o .env declara e
+    # da instancia que o numero indica; sem lista, varre todos os sistemas do
+    # tribunal em primeiro grau, que era o comportamento anterior.
+    #
+    # O numero NAO diz a instancia atual: recurso processado nos autos
+    # principais segue com o campo de origem da primeira instancia (Resolucao
+    # nº. 65/2008, artigo 3º, § 2º). Por isso o segundo grau existe como etapa
+    # propria, e nao como deducao do numero.
+    a_varrer = (list(etapas) if etapas is not None
+                else [(s, 1) for s in tribunal.sistemas_candidatos])
+    ordem = []
+    for sistema, _grau in a_varrer:
+        if sistema.value not in ordem:
+            ordem.append(sistema.value)
     linhas = {n.apenas_digitos: LinhaDaSondagem(numero=n.formatado) for n in numeros}
     por_digitos = {n.apenas_digitos: n for n in numeros}
     pendentes = list(por_digitos)
     abertos: list = []
 
-    for posicao, sistema in enumerate(a_varrer):
+    for posicao, (sistema, grau) in enumerate(a_varrer):
         if not pendentes:
             break
-        abertos.append(sistema.value)
-        respostas = sonda(sistema, [por_digitos[d] for d in pendentes])
+        abertos.append(f"{sistema.value} {grau}g")
+        respostas = sonda(sistema, grau, [por_digitos[d] for d in pendentes])
         ultimo = posicao == len(a_varrer) - 1
         ainda: list = []
         for digitos in pendentes:
             resposta = respostas.get(digitos)
-            linhas[digitos].por_sistema[sistema.value] = resposta
+            linha = linhas[digitos]
+            # A pergunta e em qual SISTEMA o processo corre, nao em qual grau,
+            # entao as duas instalacoes do mesmo sistema respondem na mesma
+            # casa. Achar vence nao achar, e nao achar vence nao ter olhado:
+            # uma resposta boa nao pode ser apagada pela etapa seguinte.
+            antes = linha.por_sistema.get(sistema.value, "ausente")
+            if antes is True or (antes is False and resposta is None):
+                pass
+            else:
+                linha.por_sistema[sistema.value] = resposta
+            linha.graus_vistos.setdefault(sistema.value, []).append(grau)
             # Achou: sai da fila, salvo quando o advogado pediu para conferir
-            # o segundo grau e ainda ha sistema por varrer.
+            # o segundo grau e ainda ha etapa por varrer.
             if resposta is True and not (conferir_segundo_grau and not ultimo):
                 continue
             ainda.append(digitos)
