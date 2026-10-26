@@ -88,8 +88,25 @@ if (!existsSync(join(pacote, "pyproject.toml"))) {
 // no ambiente como "", que TEM precedencia sobre o .env. O efeito seria
 // desligar uma chave que ja funcionava, por causa de um campo em branco.
 const ambiente = { ...process.env, PYTHONUNBUFFERED: "1" };
+
+/**
+ * Um valor assim e MOLDE de substituicao que nao foi substituido.
+ *
+ * Conferido em campo em 26/10/2026. O manifesto pede `${user_config.<campo>}`
+ * e o aplicativo troca pelo que o advogado digitou. Com o campo da chave do
+ * DataJud VAZIO, ele nao mandou vazio: mandou o proprio texto do molde.
+ *
+ * Isso e pior que mandar vazio. O valor nao fica em branco, entao o descarte
+ * abaixo nao o pegava; ele vencia o `.env` por precedencia de ambiente e
+ * seguia como credencial ate o Conselho Nacional de Justica, que respondia
+ * 401 como se a chave gravada estivesse errada. A chave estava certa, e
+ * respondia 200 quando enviada por fora. Custou uma noite achar.
+ */
+const moldeNaoSubstituido = (v) => /^\$\{[^}]*\}$/.test(v);
+
 for (const chave of ["DATAJUD_API_KEY", "JUSTICA_PASTA_COPIAS"]) {
-  if (!(ambiente[chave] || "").trim()) delete ambiente[chave];
+  const valor = (ambiente[chave] || "").trim();
+  if (!valor || moldeNaoSubstituido(valor)) delete ambiente[chave];
 }
 delete ambiente.JUSTICA_PYTHON;
 delete ambiente.JUSTICA_PACOTE;

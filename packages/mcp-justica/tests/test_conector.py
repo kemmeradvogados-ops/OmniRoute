@@ -368,3 +368,47 @@ def test_a_linha_de_comando_troca_a_pasta_antes_de_consultar():
     assert "sem_guardar" in fonte
     assert fonte.index("pasta_de_leituras") < fonte.index(
         "return portal.consultar_processo(")
+
+
+# --------------------------------------------------------------------------
+# Molde nao substituido no ambiente do servidor.
+#
+# Conferido em campo em 26/10/2026: com o campo da chave do DataJud VAZIO na
+# extensao, o aplicativo nao mandou vazio, mandou o texto do proprio molde.
+# O valor nao fica em branco, entao o descarte nao o pegava; ele vencia o
+# `.env` por precedencia de ambiente e seguia como credencial, e o servico
+# respondia 401 como se a chave gravada estivesse errada.
+
+def test_o_lancador_descarta_molde_nao_substituido():
+    fonte = (CONECTOR / "server" / "lancador.mjs").read_text(encoding="utf-8")
+    assert "moldeNaoSubstituido" in fonte, (
+        "o lancador precisa descartar `${user_config.<campo>}` que chegou "
+        "literal, e nao apenas valor vazio"
+    )
+
+
+@pytest.mark.parametrize(
+    "valor, descartado",
+    [
+        ("${user_config.chave_do_datajud}", True),
+        ("${qualquer}", True),
+        ("", True),
+        ("   ", True),
+        ("uma-chave-de-verdade", False),
+        # Nao e molde inteiro: nao se descarta um valor que apenas CONTEM
+        # chaves, porque isso poderia ser parte legitima de um caminho.
+        ("abc${y}", False),
+    ],
+)
+def test_a_regra_do_molde_bate_com_a_do_python(valor, descartado):
+    """A mesma decisao existe nos dois lados, e precisa concordar.
+
+    O lancador decide em JavaScript o que descartar; o diagnostico do 401
+    decide em Python o que avisar. Divergindo, o programa descartaria um valor
+    que o diagnostico nao reconhece, ou o contrario, e o operador leria um
+    aviso que nao corresponde ao que aconteceu.
+    """
+    from justica_mcp.core.config import parece_molde_nao_substituido
+
+    vazio = not valor.strip()
+    assert (vazio or parece_molde_nao_substituido(valor)) is descartado
