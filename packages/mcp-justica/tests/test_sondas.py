@@ -65,10 +65,18 @@ def test_sonda_que_quebra_devolve_none_em_vez_de_derrubar(monkeypatch):
         raise RuntimeError("sessao caiu")
 
     monkeypatch.setitem(sondas.PROCURADORES, "dcp", explodir)
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
     r = sondas.procurar("dcp", _Pagina(), None, _num(), "https://x", 5)
     assert r.valor is None
     assert "RuntimeError" in r.detalhe
-    assert "nao foi confirmada" in r.detalhe
+    # A MENSAGEM, e nao so o tipo: ela e o diagnostico. Em 26/10/2026 as
+    # quatro sondas do Portal de Servicos falharam e a saida imprimiu so o
+    # nome da classe, custando uma corrida inteira de diagnostico.
+    assert "sessao caiu" in r.detalhe
+    assert "NAO foi confirmada" in r.detalhe
+    # O caminho da excecao tambem colhe a tela: e o que menos se sabe.
+    assert r.tela_gravada is True
 
 
 def test_dcp_achou_quando_a_lista_traz_o_numero(monkeypatch):
@@ -164,3 +172,21 @@ def test_gravacao_desligada_nao_vira_tela_gravada(monkeypatch):
     r = sondas._nao_confirmado("eproc", _Pagina(), "A tela nao montou.")
     assert r.tela_gravada is False
     assert "A TELA NAO FOI GRAVADA" in r.detalhe
+
+
+def test_a_sonda_do_portal_de_servicos_nao_abre_o_processo(monkeypatch):
+    """Sondar e perguntar se esta la, nao entrar. Abrir a linha do resultado
+    custa tempo, aumenta a superficie de falha e, quando a busca por numero
+    exato devolve mais de uma linha, pode abrir o processo de outra pessoa."""
+    pedidos: list = []
+
+    def buscar(pagina, guarda, numero, url, segundos, linha=1):
+        pedidos.append(linha)
+        return "quadro"
+
+    monkeypatch.setattr("justica_mcp.dcp.buscar", buscar)
+    monkeypatch.setattr("justica_mcp.dcp.esperar_a_lista_de_resultado",
+                        lambda *a, **k: ["linha"])
+    sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5)
+    # Linha zero nao existe: a abertura devolve sem clicar.
+    assert pedidos == [0]

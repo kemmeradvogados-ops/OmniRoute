@@ -112,10 +112,13 @@ def procurar_no_dcp(pagina: Any, guarda: Any, numero: Any, url: str,
 
     # Chega aqui com a sessao JA dentro do portal: ver `preparar_dcp`. Sem
     # aquele preparo esta busca estoura, e foi o que aconteceu em 26/10/2026.
-    # `buscar` abre a consulta, preenche e pesquisa. Ela tambem tenta abrir a
-    # linha; aqui isso nao incomoda, porque abrir a tela do processo e sinal
-    # positivo igualmente valido e nao baixa nada.
-    quadro = buscar(pagina, guarda, numero, url, segundos)
+    #
+    # `linha=0` e deliberado: `buscar` pesquisa e, em seguida, ABRE a linha do
+    # resultado. Sondar nao precisa abrir nada. Pedir a linha zero, que nao
+    # existe, faz a abertura devolver sem clicar, e a lista, que e a unica
+    # coisa que a sonda le, ja esta montada nesse ponto. Menos acao, menos
+    # superficie de falha, e nenhum processo de terceiro aberto a toa.
+    quadro = buscar(pagina, guarda, numero, url, segundos, linha=0)
     achados = esperar_a_lista_de_resultado(
         quadro or quadro_da_consulta(pagina), numero, ESPERA_DA_LISTA)
     if achados:
@@ -277,6 +280,15 @@ def procurar(sistema: str, pagina: Any, guarda: Any, numero: Any, url: str,
     except Exception as exc:
         # Sonda quebrada em um processo nao pode derrubar a varredura inteira:
         # a autenticacao ja foi paga e os demais numeros ainda serao buscados.
-        return Resposta(
-            None, f"A sonda falhou ({type(exc).__name__}). A ausencia nao foi "
-                  "confirmada.")
+        #
+        # A MENSAGEM entra no relato, e nao so o tipo. Em 26/10/2026 as quatro
+        # sondas do Portal de Servicos falharam com `ConsultaIndisponivel` e a
+        # saida imprimiu so o nome da classe: as mensagens deste projeto dizem
+        # o que a tela tinha de errado, e jogar fora a mensagem custou uma
+        # corrida inteira de diagnostico. A tela tambem e gravada aqui, pelo
+        # mesmo motivo: o caminho da excecao e justamente o que menos se sabe.
+        primeira = str(exc).strip().splitlines()[:1]
+        recado = primeira[0][:300] if primeira else "sem mensagem"
+        return _nao_confirmado(
+            sistema, pagina,
+            f"A sonda falhou ({type(exc).__name__}): {recado}")
