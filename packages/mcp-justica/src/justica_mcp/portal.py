@@ -2477,6 +2477,15 @@ def mostrar_ambiente() -> int:
     print("AMBIENTE DO PROGRAMA".center(LARGURA))
     print("=" * LARGURA)
     print("Nenhum valor e impresso aqui: so nomes de chave e caminhos.\n")
+    # A VERSAO VEM PRIMEIRO. Em 26/10/2026 a pasta de trabalho rodava a 0.9.3
+    # enquanto a Area de Trabalho ja tinha a 0.9.4, e descobrir isso exigiu um
+    # comando que inspecionava atributos do codigo-fonte. O caminho entra ao
+    # lado porque e ele que separa "a versao esta velha" de "ha duas
+    # instalacoes e voce atualizou a outra", que foi o caso real.
+    from .core.versao import onde_esta_o_codigo, versao_instalada
+
+    print(f"  Versao instalada: {versao_instalada()}")
+    print(f"  Codigo rodando de:\n    {onde_esta_o_codigo()}\n")
     print(f"  O programa procura a configuracao em:\n    {arquivo}")
 
     if not arquivo.is_file():
