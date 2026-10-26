@@ -415,3 +415,31 @@ def test_o_relatorio_avisa_quando_so_o_primeiro_grau_foi_olhado(
     saida = capsys.readouterr().out
     assert "SO EM PRIMEIRO GRAU" in saida
     assert "nao diz a instancia atual" in saida
+
+
+def test_sistema_sem_segundo_grau_proprio_diz_o_motivo_em_vez_da_chave(
+        monkeypatch, capsys):
+    """O PJe do Tribunal de Justica do Rio de Janeiro nao tem segundo grau, e o
+    Portal de Servicos atende os dois no mesmo endereco (operador, 26/10/2026).
+    Sugerir a chave do .env seria pedir que alguem configure o que nao existe."""
+    monkeypatch.setenv("JUSTICA_ACESSO_AUTENTICADO", "1")
+    monkeypatch.setattr("justica_mcp.core.acesso.config_portal",
+                        lambda t, s: _Config())
+    from justica_mcp.sondas import Preparo, Resposta
+
+    monkeypatch.setattr(
+        "justica_mcp.sondas.preparar",
+        lambda sistema, pagina, guarda, perfil, segundos:
+            Preparo(pagina, True, "simulado"))
+    monkeypatch.setattr(portal, "autenticar", _autenticador([], None))
+    monkeypatch.setattr("justica_mcp.sondas.procurar",
+                        lambda *a, **k: Resposta(True, "simulado"))
+    portal.sondar_sistemas([UM], confirmado=True)
+    saida = capsys.readouterr().out
+    assert "pje nao sera varrido em segundo grau porque o PJe" in saida
+    assert "dcp nao sera varrido em segundo grau porque o Portal" in saida
+    assert "_PJE_2G_URL" not in saida
+    assert "_DCP_2G_URL" not in saida
+    # O eproc nao tem motivo registrado, entao ali a chave continua sendo
+    # sugerida: la o endereco existe e so falta configurar.
+    assert "_EPROC_2G_URL" in saida

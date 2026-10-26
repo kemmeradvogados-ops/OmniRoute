@@ -48,6 +48,39 @@ class Tribunal:
     credencial_disponivel: tuple[Sistema, ...] = field(default_factory=tuple)
 
 
+# Sistemas que NAO tem instalacao propria de segundo grau, por tribunal.
+#
+# Informado pelo operador em 26/10/2026, e importa porque o contrario seria
+# pedir que alguem configure um endereco que nao existe. A sondagem usa isto
+# para dizer o motivo em vez de sugerir uma chave de .env inutil.
+#
+#   PJe do Tribunal de Justica do Rio de Janeiro: nao ha segundo grau.
+#   Portal de Servicos do mesmo tribunal: o endereco e o MESMO nos dois graus.
+#     Ao inserir o numero, quando ha recurso, a busca abre uma tabela com as
+#     possibilidades (apelacao, agravo e outras). Isso explica as corridas de
+#     25 e 26/10/2026 em que a busca devolveu 5, 2 e 1 linha para numeros
+#     exatos: nao eram processos homonimos, eram as pecas do mesmo processo
+#     nos graus e serventias.
+SEM_SEGUNDO_GRAU_PROPRIO: dict = {
+    ("TJRJ", "pje"): "o PJe do Tribunal de Justica do Rio de Janeiro nao tem "
+                     "segundo grau (informado pelo operador em 26/10/2026)",
+    ("TJRJ", "dcp"): "o Portal de Servicos atende os dois graus no MESMO "
+                     "endereco: com recurso, a busca abre uma tabela com as "
+                     "possibilidades (informado pelo operador em 26/10/2026)",
+}
+
+
+def motivo_sem_segundo_grau(tribunal: str, sistema: str) -> str:
+    """Por que este sistema nao tem endereco de segundo grau, ou vazio.
+
+    Vazio significa "ninguem registrou o motivo", e nesse caso quem chama
+    sugere a chave do .env. Com motivo, sugerir a chave seria pedir que
+    alguem configure um endereco que nao existe.
+    """
+    return SEM_SEGUNDO_GRAU_PROPRIO.get(
+        ((tribunal or "").upper(), (sistema or "").lower()), "")
+
+
 # Escopo fechado nas credenciais da planilha da banca.
 TRIBUNAIS: dict[str, Tribunal] = {
     "8.19": Tribunal(

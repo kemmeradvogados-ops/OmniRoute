@@ -26,18 +26,21 @@ class _Pagina:
         return []
 
 
-def test_so_o_pje_tem_assinatura_de_ausencia_conferida():
+def test_so_quem_teve_a_tela_conferida_tem_assinatura_de_ausencia():
     """Cada entrada desta tabela corresponde a uma tela REAL que alguem olhou.
 
-    O PJe ganhou a sua em 26/10/2026, da tela
-    `20261026T021247509-sonda-pje-sem-resultado.json`. Os outros tres seguem
-    vazios porque ninguem viu ainda a tela de "nada encontrado" deles, e
-    enquanto nao virem nao podem responder `False`.
+    O PJe ganhou a sua em 26/10/2026. O eproc ganhou a dele no mesmo dia, e
+    com algo melhor que uma tela: quatro processos que voltaram "nao
+    confirmado" no eproc foram depois localizados no Portal de Servicos, o que
+    prova que aquelas telas eram mesmo o "nada encontrado" dele.
+
+    O Portal de Servicos e o e-SAJ seguem vazios porque ninguem viu a tela de
+    "nada encontrado" deles, e enquanto nao virem nao podem responder `False`.
     """
     assert set(sondas.ASSINATURAS_DE_AUSENCIA) == {"dcp", "pje", "eproc", "esaj"}
     assert sondas.ASSINATURAS_DE_AUSENCIA["pje"]
+    assert sondas.ASSINATURAS_DE_AUSENCIA["eproc"]
     assert sondas.ASSINATURAS_DE_AUSENCIA["dcp"] == ()
-    assert sondas.ASSINATURAS_DE_AUSENCIA["eproc"] == ()
     assert sondas.ASSINATURAS_DE_AUSENCIA["esaj"] == ()
 
 
@@ -160,10 +163,11 @@ def test_esaj_achou_quando_ha_movimentacao(monkeypatch):
     assert "3 movimentacao" in r.detalhe
 
 
-def test_so_a_sonda_do_pje_pode_responder_que_nao_esta_la():
+def test_so_as_sondas_com_tela_conferida_respondem_que_nao_esta_la():
     """Varredura estrutural: `False` so pode sair de onde alguem viu a tela.
 
-    Hoje isso e so `procurar_no_pje`. Se alguem acrescentar um `False` noutra
+    Hoje isso e `procurar_no_pje` e `procurar_no_eproc`. Se alguem
+    acrescentar um `False` noutra
     sonda sem antes olhar a tela daquele portal, este teste cai: afirmar que
     um processo nao esta num sistema onde ninguem olhou e o pior desfecho
     deste programa, porque processo dado como inexistente e prazo perdido.
@@ -172,10 +176,14 @@ def test_so_a_sonda_do_pje_pode_responder_que_nao_esta_la():
 
     for nome, sonda in sondas.PROCURADORES.items():
         fonte = inspect.getsource(sonda)
-        devolve_falso = "Resposta(\n            False" in fonte or \
-                        "Resposta(False" in fonte or "valor=False" in fonte
-        if nome == "pje":
-            assert devolve_falso, "a sonda do PJe deveria confirmar ausencia"
+        # A chamada pode estar quebrada em varias linhas; o que importa e
+        # se `False` aparece como PRIMEIRO argumento de uma `Resposta`.
+        import re
+
+        devolve_falso = bool(re.search(r"Resposta\(\s*(\n\s*)?False", fonte)
+                             or "valor=False" in fonte)
+        if nome in ("pje", "eproc"):
+            assert devolve_falso, f"a sonda de {nome} deveria confirmar ausencia"
         else:
             assert not devolve_falso, (
                 f"a sonda de {nome} responde False sem tela conferida")
@@ -399,3 +407,73 @@ def test_quando_a_volta_falha_a_sonda_avisa_em_vez_de_calar(
                         lambda *a, **k: ["linha"])
     sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5)
     assert "[ATENCAO]" in capsys.readouterr().out
+
+
+def test_eproc_confirma_ausencia_quando_para_no_formulario_sem_resultado(
+        monkeypatch):
+    """As tres condicoes juntas: formulario, numero preenchido, nenhuma
+    tabela. Conferido em 26/10/2026 com quatro processos cujo destino se
+    descobriu depois, todos no Portal de Servicos."""
+    class _Campo:
+        def evaluate(self, *a, **k):
+            return 20
+
+    class _Form(_Pagina):
+        def query_selector(self, seletor):
+            return None  # nenhuma tabela de resultado
+
+    monkeypatch.setattr("justica_mcp.portal.buscar_no_eproc",
+                        lambda *a, **k: (True, "enviada"))
+    monkeypatch.setattr("justica_mcp.extracao.esperar_tela_do_processo",
+                        lambda *a, **k: "nada")
+    monkeypatch.setattr(sondas, "_terminar_a_consulta_do_eproc",
+                        lambda *a, **k: True)
+    monkeypatch.setattr("justica_mcp.portal.elemento_visivel",
+                        lambda pagina, seletor: _Campo())
+    r = sondas.procurar_no_eproc(_Form(), None, _num(), "https://x", 5)
+    assert r.valor is False
+    assert "Ausencia confirmada" in r.detalhe
+
+
+def test_eproc_com_tabela_na_tela_nao_afirma_ausencia(monkeypatch):
+    """Tabela presente e resultado que a sonda nao soube ler, nao ausencia."""
+    class _Campo:
+        def evaluate(self, *a, **k):
+            return 20
+
+    class _ComTabela(_Pagina):
+        def query_selector(self, seletor):
+            return object()
+
+    monkeypatch.setattr("justica_mcp.portal.buscar_no_eproc",
+                        lambda *a, **k: (True, "enviada"))
+    monkeypatch.setattr("justica_mcp.extracao.esperar_tela_do_processo",
+                        lambda *a, **k: "nada")
+    monkeypatch.setattr(sondas, "_terminar_a_consulta_do_eproc",
+                        lambda *a, **k: True)
+    monkeypatch.setattr("justica_mcp.portal.elemento_visivel",
+                        lambda pagina, seletor: _Campo())
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
+    r = sondas.procurar_no_eproc(_ComTabela(), None, _num(), "https://x", 5)
+    assert r.valor is None
+
+
+def test_eproc_com_o_campo_vazio_nao_afirma_ausencia(monkeypatch):
+    """Formulario sem o numero e tela que nem chegou a ser preenchida."""
+    class _Vazio:
+        def evaluate(self, *a, **k):
+            return 0
+
+    monkeypatch.setattr("justica_mcp.portal.buscar_no_eproc",
+                        lambda *a, **k: (True, "enviada"))
+    monkeypatch.setattr("justica_mcp.extracao.esperar_tela_do_processo",
+                        lambda *a, **k: "nada")
+    monkeypatch.setattr(sondas, "_terminar_a_consulta_do_eproc",
+                        lambda *a, **k: True)
+    monkeypatch.setattr("justica_mcp.portal.elemento_visivel",
+                        lambda pagina, seletor: _Vazio())
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
+    r = sondas.procurar_no_eproc(_Pagina(), None, _num(), "https://x", 5)
+    assert r.valor is None

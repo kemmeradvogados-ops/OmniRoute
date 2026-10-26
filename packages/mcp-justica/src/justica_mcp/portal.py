@@ -7737,11 +7737,20 @@ def sondar_sistemas(
             elif grau == 2:
                 sem_segundo_grau.append(candidato.value)
 
+    from .core.tribunais import motivo_sem_segundo_grau
+
     for nome in sem_segundo_grau:
-        print(f"  SEM 2o GRAU: {nome} nao tem endereco de segundo grau no "
-              f".env. Para configurar: "
-              f"JUSTICA_PORTAL_{codigo_do_tribunal.upper()}_{nome.upper()}"
-              "_2G_URL=https://...")
+        # Com motivo registrado, dizer o motivo. Sugerir a chave do .env
+        # seria pedir que alguem configure um endereco que nao existe.
+        motivo = motivo_sem_segundo_grau(codigo_do_tribunal, nome)
+        if motivo:
+            print(f"  SEM 2o GRAU: {nome} nao sera varrido em segundo grau "
+                  f"porque {motivo}.")
+        else:
+            print(f"  SEM 2o GRAU: {nome} nao tem endereco de segundo grau no "
+                  f".env. Para configurar: "
+                  f"JUSTICA_PORTAL_{codigo_do_tribunal.upper()}_{nome.upper()}"
+                  "_2G_URL=https://...")
     print(f"Custo maximo: {len(etapas)} autenticacao(oes) "
           f"({', '.join(f'{s.value} {g}g' for s, g in etapas)}), "
           "independentemente de quantos processos.")

@@ -52,11 +52,23 @@ from typing import Any, Callable, Optional
 # daquele portal: a busca por numero exato que acha devolve a linha com o
 # proprio numero, que e como `achar_link_do_processo` o encontra.
 #
-# EPROC e DCP continuam vazios: ver `procurar_no_eproc` e `procurar_no_dcp`.
+# EPROC, conferida em 26/10/2026 com DESTINO CONHECIDO, que e o que faltava.
+# Quatro processos foram sondados no eproc e voltaram "nao confirmado"; depois
+# os quatro foram localizados no Portal de Servicos, com confianca alta. Logo
+# aquelas telas eram mesmo a de "nada encontrado" do eproc. A assinatura: a
+# busca rapida leva ao formulario de Consulta Processual, o botao Consultar e
+# clicado, e a tela CONTINUA sendo o formulario, com o numero preenchido e sem
+# tabela de resultado alguma.
+#
+# O contraste que fecha o par: o unico dos cinco que esta no eproc levou
+# direto a tela do processo, sem passar pelo formulario. Quatro negativas com
+# destino conhecido e uma positiva.
+#
+# DCP continua vazio: ver `procurar_no_dcp`.
 ASSINATURAS_DE_AUSENCIA: dict[str, tuple] = {
     "dcp": (),
     "pje": ("tabela de resultado montada e nenhum link com o numero",),
-    "eproc": (),
+    "eproc": ("consulta completada no formulario, sem tabela de resultado",),
     "esaj": (),
 }
 
@@ -249,12 +261,56 @@ def procurar_no_eproc(pagina: Any, guarda: Any, numero: Any, url: str,
             return Resposta(
                 True, f"A tela do processo apareceu ({chegou}) depois de "
                       "completar a consulta no formulario.")
+        # AUSENCIA CONFIRMADA. A consulta foi completada: o botao Consultar do
+        # proprio portal foi clicado com o numero no campo. A tela continuar
+        # sendo o formulario, sem tabela de resultado, e o "nada encontrado"
+        # deste portal - conferido em 26/10/2026 com quatro processos cujo
+        # destino se descobriu depois, todos no Portal de Servicos.
+        if _parou_no_formulario_sem_resultado(pagina):
+            return Resposta(
+                False,
+                "A consulta foi completada no formulario e a tela continuou "
+                "sendo o formulario, sem tabela de resultado. Ausencia "
+                "confirmada.")
         return _nao_confirmado(
             "eproc", pagina,
-            "A consulta foi completada no formulario e a tela do processo "
-            "ainda assim nao apareceu.")
+            "A consulta foi completada no formulario e a tela nao e nem a do "
+            "processo nem o formulario conhecido.")
     return _nao_confirmado(
         "eproc", pagina, "A tela do processo nao apareceu no tempo dado.")
+
+
+# A tela de "nada encontrado" do eproc, pelo que a gravacao de 26/10/2026
+# mostrou: titulo ':: eproc - - Consulta Processual ::', `#numNrProcesso`
+# preenchido com os vinte digitos, `#sbmConsultar` a vista e TABELAS (0).
+TITULO_DA_CONSULTA_DO_EPROC = "consulta processual"
+
+
+def _parou_no_formulario_sem_resultado(pagina: Any) -> bool:
+    """Se a tela e o formulario de consulta, com o numero, e sem resultado.
+
+    As tres condicoes juntas, e nao qualquer uma delas: formulario sem o
+    numero seria tela que nem chegou a ser preenchida, e tabela presente seria
+    resultado que a sonda nao soube ler. Afirmar ausencia precisa das tres.
+    """
+    from .portal import elemento_visivel
+
+    campo = elemento_visivel(pagina, CAMPO_DA_CONSULTA_DO_EPROC)
+    botao = elemento_visivel(pagina, BOTAO_DA_CONSULTA_DO_EPROC)
+    if campo is None or botao is None:
+        return False
+    try:
+        escrito = campo.evaluate("e => (e.value || '').length")
+    except Exception:
+        return False
+    if not escrito:
+        return False
+    try:
+        if pagina.query_selector("table") is not None:
+            return False
+    except Exception:
+        return False
+    return True
 
 
 CAMPO_DA_CONSULTA_DO_EPROC = "#numNrProcesso"
