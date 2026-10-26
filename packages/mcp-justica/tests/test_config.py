@@ -287,3 +287,37 @@ def test_so_as_ultimas_copias_ficam(tmp_path, monkeypatch):
     carregar_env(arquivo)
 
     assert len(list(pasta.glob("env-*.txt"))) == COPIAS_DO_ENV_MANTIDAS
+
+
+# --------------------------------------------------------------------------
+# Caractere invisivel no VALOR, nao so no nome.
+#
+# Ate 26/10/2026 a limpeza valia so para o nome da chave. Valor corrompido e
+# pior: a chave do DataJud sai da maquina inteira e volta 401, parecendo
+# credencial invalida, enquanto na tela ela e identica a publicada.
+
+def test_valor_com_caractere_invisivel_e_limpo(tmp_path, monkeypatch):
+    from justica_mcp.core.config import carregar_env
+
+    arquivo = tmp_path / ".env"
+    # Espaco sem quebra no fim e marca de ordem de byte no meio: os dois
+    # chegam sozinhos ao colar de pagina ou ao usar `Add-Content`.
+    arquivo.write_text(
+        "DATAJUD_API_KEY=abc﻿def \n", encoding="utf-8")
+    monkeypatch.delenv("DATAJUD_API_KEY", raising=False)
+    carregar_env(arquivo)
+    import os
+    assert os.environ["DATAJUD_API_KEY"] == "abcdef"
+
+
+def test_valor_normal_nao_e_alterado(tmp_path, monkeypatch):
+    from justica_mcp.core.config import carregar_env
+
+    arquivo = tmp_path / ".env"
+    chave = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
+    arquivo.write_text(f"DATAJUD_API_KEY={chave}\n", encoding="utf-8")
+    monkeypatch.delenv("DATAJUD_API_KEY", raising=False)
+    carregar_env(arquivo)
+    import os
+    assert os.environ["DATAJUD_API_KEY"] == chave
+    assert len(os.environ["DATAJUD_API_KEY"]) == 60

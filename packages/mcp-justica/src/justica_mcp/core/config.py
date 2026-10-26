@@ -44,7 +44,18 @@ def _ler(arquivo: Path) -> str:
 
 
 def limpar_invisiveis(chave: str) -> str:
-    """Tira do NOME da chave os caracteres que nao se veem na tela.
+    """Tira os caracteres que nao se veem na tela, do nome E do valor.
+
+    Ate 26/10/2026 valia so para o NOME, e o valor ficava desprotegido. Isso
+    e pior, nao melhor: nome corrompido quebra na hora, com "portal nao
+    configurado"; valor corrompido vai inteiro para o servidor e volta como
+    401 do outro lado, parecendo credencial errada. A chave na tela e
+    identica a publicada, e nao ha o que conferir a olho.
+
+    A troca: um valor que contivesse de proposito um espaco sem quebra, por
+    exemplo um caminho de pasta com esse caractere no nome, seria alterado.
+    Caminho assim ja esta quebrado de outras formas, e o defeito que isto
+    evita e silencioso.
 
     Conferido em campo em 22 de setembro de 2026: uma chave com um caractere
     invisivel no meio do nome produz a pior especie de defeito. A listagem de
@@ -206,7 +217,7 @@ def carregar_env(caminho: Optional[Path] = None) -> list[str]:
             continue
         chave, _, valor = linha.partition("=")
         chave = limpar_invisiveis(chave.strip())
-        valor = valor.strip().strip('"').strip("'")
+        valor = limpar_invisiveis(valor.strip().strip('"').strip("'"))
         if not chave or not valor:
             continue
         # Ambiente explicito tem precedencia sobre arquivo.
