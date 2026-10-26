@@ -2529,6 +2529,23 @@ def mostrar_ambiente() -> int:
     if not lidas:
         print("    (nenhuma)")
 
+    # O ARQUIVO PODE ESTAR CERTO E O PROGRAMA USAR OUTRA COISA. Ambiente
+    # explicito vence arquivo, de proposito, e isso e invisivel: a chave esta
+    # la, com o valor certo, e mesmo assim a chamada sai com outro valor e
+    # volta 401. Sem esta secao nao havia como ver a diferenca.
+    from .core.config import sobrescritas_pelo_ambiente
+
+    vencidas = sobrescritas_pelo_ambiente()
+    if vencidas:
+        print(f"\n  CHAVES EM QUE O AMBIENTE VENCEU O ARQUIVO ({len(vencidas)}):")
+        for chave, no_arquivo, no_ambiente, aviso in vencidas:
+            print(f"    {chave}: arquivo com {no_arquivo} caractere(s), "
+                  f"ambiente com {no_ambiente}")
+            if aviso:
+                print(f"      ATENCAO: {aviso}")
+        print("  O valor que o programa usa e o do AMBIENTE, nao o do arquivo.")
+        print("  Nenhum valor e mostrado, so o comprimento de cada um.")
+
     from .core.config import linhas_descartadas
 
     descartadas = linhas_descartadas()

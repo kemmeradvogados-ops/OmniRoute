@@ -321,3 +321,55 @@ def test_valor_normal_nao_e_alterado(tmp_path, monkeypatch):
     import os
     assert os.environ["DATAJUD_API_KEY"] == chave
     assert len(os.environ["DATAJUD_API_KEY"]) == 60
+
+
+# --------------------------------------------------------------------------
+# O arquivo pode estar certo e o programa usar outra coisa.
+#
+# Ambiente explicito vence arquivo, de proposito. Isso e invisivel para quem
+# olha o `.env`: a chave esta la, com o valor certo, e mesmo assim a chamada
+# sai com outro valor. Em 26/10/2026 a chave publica do DataJud voltava 401
+# com o arquivo comprovadamente correto, e nao havia como ver a diferenca.
+
+def test_sobrescrita_pelo_ambiente_e_apontada(tmp_path, monkeypatch):
+    from justica_mcp.core.config import sobrescritas_pelo_ambiente
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("DATAJUD_API_KEY=chave-boa-de-60\n", encoding="utf-8")
+    monkeypatch.setenv("DATAJUD_API_KEY", "outra")
+    fora = sobrescritas_pelo_ambiente(arquivo)
+    assert len(fora) == 1
+    chave, no_arquivo, no_ambiente, _ = fora[0]
+    assert chave == "DATAJUD_API_KEY"
+    assert (no_arquivo, no_ambiente) == (len("chave-boa-de-60"), len("outra"))
+
+
+def test_valores_iguais_nao_entram_na_lista(tmp_path, monkeypatch):
+    from justica_mcp.core.config import sobrescritas_pelo_ambiente
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("UMA_CHAVE=igual\n", encoding="utf-8")
+    monkeypatch.setenv("UMA_CHAVE", "igual")
+    assert sobrescritas_pelo_ambiente(arquivo) == []
+
+
+def test_molde_nao_substituido_ganha_aviso_proprio(tmp_path, monkeypatch):
+    from justica_mcp.core.config import sobrescritas_pelo_ambiente
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("DATAJUD_API_KEY=chave-boa\n", encoding="utf-8")
+    monkeypatch.setenv("DATAJUD_API_KEY", "${user_config.chave_do_datajud}")
+    fora = sobrescritas_pelo_ambiente(arquivo)
+    assert "MOLDE" in fora[0][3]
+
+
+def test_a_lista_nunca_carrega_valor(tmp_path, monkeypatch):
+    # Esta secao e impressa num diagnostico que o operador cola em conversa.
+    from justica_mcp.core.config import sobrescritas_pelo_ambiente
+
+    arquivo = tmp_path / ".env"
+    arquivo.write_text("SEGREDO=valor-do-arquivo\n", encoding="utf-8")
+    monkeypatch.setenv("SEGREDO", "valor-do-ambiente")
+    texto = repr(sobrescritas_pelo_ambiente(arquivo))
+    assert "valor-do-arquivo" not in texto
+    assert "valor-do-ambiente" not in texto

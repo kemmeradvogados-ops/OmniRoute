@@ -196,6 +196,66 @@ def linhas_descartadas(caminho: Optional[Path] = None) -> list[tuple[int, str, s
     return descartadas
 
 
+def pares_do_arquivo(caminho: Optional[Path] = None) -> dict:
+    """As chaves e valores do `.env`, sem tocar no ambiente.
+
+    Serve ao diagnostico: `carregar_env` so devolve nomes, e para explicar
+    "o arquivo esta certo mas o programa usa outra coisa" e preciso comparar
+    o que esta no arquivo com o que esta no ambiente.
+    """
+    arquivo = caminho or (raiz_do_pacote() / ".env")
+    if not arquivo.is_file():
+        return {}
+    pares: dict = {}
+    for linha in _ler(arquivo).splitlines():
+        linha = linha.strip().lstrip("\ufeff").strip()
+        if not linha or linha.startswith("#") or "=" not in linha:
+            continue
+        chave, _, valor = linha.partition("=")
+        chave = limpar_invisiveis(chave.strip())
+        valor = limpar_invisiveis(valor.strip().strip('"').strip("'"))
+        if chave and valor:
+            pares[chave] = valor
+    return pares
+
+
+# Um valor assim e molde de substituicao que nao foi substituido. O
+# aplicativo do Claude injeta `${user_config.<campo>}` no ambiente do
+# servidor; quando o campo esta vazio, alguns hospedeiros mandam vazio e
+# outros mandam o texto do molde. O segundo caso e venenoso: o valor nao e
+# vazio, entao nada o descarta, ele vence o arquivo por precedencia e segue
+# para o servico remoto, que responde 401 como se a credencial fosse
+# invalida.
+def parece_molde_nao_substituido(valor: str) -> bool:
+    v = (valor or "").strip()
+    return v.startswith("${") and v.endswith("}")
+
+
+def sobrescritas_pelo_ambiente(caminho: Optional[Path] = None) -> list:
+    """Chaves em que o AMBIENTE vence o arquivo, com um motivo legivel.
+
+    Devolve tuplas `(chave, tamanho_no_arquivo, tamanho_no_ambiente, aviso)`.
+    NUNCA devolve valor: so comprimentos e um aviso, porque isto e impresso
+    num diagnostico que o operador cola em conversa.
+    """
+    import os
+
+    fora = []
+    for chave, do_arquivo in pares_do_arquivo(caminho).items():
+        do_ambiente = os.environ.get(chave)
+        if do_ambiente is None or do_ambiente == do_arquivo:
+            continue
+        aviso = ""
+        if parece_molde_nao_substituido(do_ambiente):
+            aviso = ("o valor do ambiente e um MOLDE nao substituido: o campo "
+                     "da extensao ficou vazio e o aplicativo mandou o texto do "
+                     "molde no lugar de nada")
+        elif not do_ambiente.strip():
+            aviso = "o valor do ambiente esta em branco"
+        fora.append((chave, len(do_arquivo), len(do_ambiente), aviso))
+    return fora
+
+
 def carregar_env(caminho: Optional[Path] = None) -> list[str]:
     """Carrega o `.env` e devolve os NOMES das chaves lidas, nunca os valores."""
     arquivo = caminho or (raiz_do_pacote() / ".env")
