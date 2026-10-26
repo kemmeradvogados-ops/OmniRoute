@@ -75,6 +75,19 @@ def _chave(tribunal: str, sistema: str, sufixo: str) -> str:
     return f"JUSTICA_PORTAL_{tribunal.upper()}_{sistema.upper()}_{sufixo}"
 
 
+# Sufixo das chaves de SEGUNDO GRAU. A varredura do ambiente parte qualquer
+# chave `JUSTICA_PORTAL_<...>_URL` no ultimo sublinhado para achar tribunal e
+# sistema, e por isso `JUSTICA_PORTAL_TJRJ_EPROC_2G_URL` seria lida como
+# tribunal `TJRJ_EPROC`, sistema `2g`. Em 26/10/2026 esse portal fantasma
+# apareceu na listagem do ambiente logo depois de a chave de segundo grau ser
+# criada. O segundo grau NAO e um portal a parte: e outro endereco do mesmo.
+SUFIXO_DO_SEGUNDO_GRAU = "_2G"
+
+
+def _e_chave_de_segundo_grau(miolo: str) -> bool:
+    return miolo.upper().endswith(SUFIXO_DO_SEGUNDO_GRAU)
+
+
 def rotulos_no_ambiente() -> list[str]:
     """Portais que o ambiente declara, lidos SO pelo nome da chave.
 
@@ -87,7 +100,7 @@ def rotulos_no_ambiente() -> list[str]:
     for chave in os.environ:
         if chave.startswith("JUSTICA_PORTAL_") and chave.endswith("_URL"):
             miolo = chave[len("JUSTICA_PORTAL_"):-len("_URL")]
-            if "_" not in miolo:
+            if "_" not in miolo or _e_chave_de_segundo_grau(miolo):
                 continue
             tribunal, _, sistema = miolo.rpartition("_")
             achados.append(f"{tribunal} / {sistema.lower()}")
@@ -146,7 +159,7 @@ def portais_configurados() -> list[ConfigPortal]:
     for chave in os.environ:
         if chave.startswith("JUSTICA_PORTAL_") and chave.endswith("_URL"):
             miolo = chave[len("JUSTICA_PORTAL_"):-len("_URL")]
-            if "_" not in miolo:
+            if "_" not in miolo or _e_chave_de_segundo_grau(miolo):
                 continue
             tribunal, _, sistema = miolo.rpartition("_")
             try:

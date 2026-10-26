@@ -1,5 +1,7 @@
 """Configuracao do acesso autenticado."""
 
+import os
+
 import pytest
 
 from justica_mcp.core.acesso import (
@@ -48,3 +50,52 @@ def test_listagem_nao_expoe_endereco_por_engano(monkeypatch):
     monkeypatch.setenv("JUSTICA_PORTAL_TRF2_EPROC_URL", "https://eproc.exemplo/x")
     rotulos = [c.rotulo for c in portais_configurados()]
     assert "TRF2 / eproc" in rotulos
+
+
+# --------------------------------------------------------------------------
+# A chave de segundo grau nao pode virar um portal a parte
+# --------------------------------------------------------------------------
+
+def test_a_chave_de_segundo_grau_nao_inventa_um_portal(monkeypatch):
+    """Em 26/10/2026, logo depois de a chave de segundo grau ser criada, a
+    listagem do ambiente passou a mostrar um portal `TJRJ_EPROC / 2g`, que
+    nao existe: a varredura parte a chave no ultimo sublinhado. A mesma funcao
+    alimenta a lista de sistemas que a extensao mostra ao advogado, entao o
+    fantasma nao era cosmetico."""
+    from justica_mcp.core.acesso import portais_configurados, rotulos_no_ambiente
+
+    for chave in list(os.environ):
+        if chave.startswith("JUSTICA_PORTAL_"):
+            monkeypatch.delenv(chave, raising=False)
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_EPROC_URL", "https://um/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_EPROC_2G_URL", "https://dois/")
+
+    assert rotulos_no_ambiente() == ["TJRJ / eproc"]
+    assert [c.rotulo for c in portais_configurados()] == ["TJRJ / eproc"]
+
+
+def test_o_segundo_grau_continua_chegando_pela_configuracao(monkeypatch):
+    """Nao basta sumir da listagem: ele tem que continuar sendo lido como o
+    outro endereco do MESMO portal."""
+    from justica_mcp.core.acesso import config_portal
+
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_EPROC_URL", "https://um/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_EPROC_2G_URL", "https://dois/")
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_EPROC_PERFIL", "RJ000000")
+
+    config = config_portal("TJRJ", "eproc")
+    assert config.url_do_grau(1) == "https://um/"
+    assert config.url_do_grau(2) == "https://dois/"
+    # Sem perfil proprio de segundo grau, o do primeiro e reaproveitado.
+    assert config.perfil_do_grau(2) == "RJ000000"
+
+
+def test_sistema_sem_segundo_grau_devolve_nada_e_nao_o_primeiro(monkeypatch):
+    """None aqui significa "nao da para procurar no segundo grau deste
+    sistema", nunca "o processo nao esta la". Devolver o endereco do primeiro
+    grau faria a varredura autenticar duas vezes no mesmo lugar."""
+    from justica_mcp.core.acesso import config_portal
+
+    monkeypatch.delenv("JUSTICA_PORTAL_TJRJ_PJE_2G_URL", raising=False)
+    monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_URL", "https://um/")
+    assert config_portal("TJRJ", "pje").url_do_grau(2) is None
