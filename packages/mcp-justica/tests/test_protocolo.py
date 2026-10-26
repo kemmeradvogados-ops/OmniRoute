@@ -1,14 +1,18 @@
-"""A conferencia da revisao de protocolo.
+"""A conferencia da sonda de era.
 
 Em 26/10/2026 o aplicativo do Claude recusou a extensao nas sessoes do Cowork
-e do Code porque a biblioteca `mcp` so serve a revisao `2026-07-28`. O que
-destrava e uma versao nova da biblioteca, e conferir isso virou comando para
-nao depender de alguem lembrar.
+e do Code. O primeiro diagnostico foi que faltava uma revisao de protocolo a
+publicar, e estava ERRADO: a revisao atual da especificacao e a mesma que
+este servidor serve, e o servidor responde a ela corretamente. O que falha e
+o PRAZO: o aplicativo concede quatro segundos e, na maquina onde isso foi
+investigado, so carregar a biblioteca levava de 2,6s a 4,5s.
 
-O que estes testes guardam, sobretudo: SEM REDE, o programa diz que nao
-conseguiu olhar. Dizer "esta tudo atualizado" quando ninguem conseguiu
-consultar seria afirmar o que nao se verificou.
+Estes testes guardam o veredito contra o retorno daquele erro: ele fala de
+tempo medido, nunca de versao publicada, e nunca afirma causa que ninguem
+mediu.
 """
+
+import json
 
 from justica_mcp.core import protocolo
 
@@ -19,48 +23,97 @@ def test_a_revisao_servida_e_a_da_biblioteca():
     assert protocolo.revisao_servida() == str(LATEST_PROTOCOL_VERSION)
 
 
-def test_versoes_sao_comparadas_por_numero_e_nao_por_letra():
-    # "2.10.0" < "2.3.0" como texto, e e o contrario como versao.
-    assert protocolo._ordenar("2.10.0") > protocolo._ordenar("2.3.0")
-    assert protocolo._ordenar("2.3.0") == protocolo._ordenar("2.3.0")
-    assert protocolo._ordenar("2.3.1") > protocolo._ordenar("2.3.0")
+def test_moderna_e_aperto_de_mao_sao_conjuntos_separados():
+    r = protocolo.revisoes_conhecidas()
+    assert protocolo.revisao_servida() in r["modernas"]
+    assert protocolo.revisao_servida() not in r["com_aperto_de_mao"]
 
 
-def test_sem_rede_nao_vira_esta_atualizado(monkeypatch):
-    monkeypatch.setattr(protocolo, "versao_publicada", lambda segundos=15: None)
+def test_o_pedido_leva_as_duas_chaves_exigidas():
+    # Sem `clientCapabilities` o servidor devolve -32602. Descoberto na marra
+    # ao reproduzir a sonda pela primeira vez, e por isso tem teste.
+    meta = json.loads(protocolo._pedido_de_sonda())["params"]["_meta"]
+    assert meta["io.modelcontextprotocol/protocolVersion"] == protocolo.revisao_servida()
+    assert "io.modelcontextprotocol/clientCapabilities" in meta
+
+
+def _medida(segundos=None, respondeu=True, resposta=None):
+    return {"respondeu": respondeu, "segundos": segundos, "resposta": resposta}
+
+
+def _ok(versoes=("2026-07-28",)):
+    return {"jsonrpc": "2.0", "id": 1,
+            "result": {"supportedVersions": list(versoes)}}
+
+
+def test_rapido_com_folga_diz_que_deveria_funcionar(monkeypatch):
+    monkeypatch.setattr(protocolo, "medir_sonda",
+                        lambda *a, **k: _medida(0.9, resposta=_ok()))
     r = protocolo.relatorio()
-    assert r["versao_publicada"] is None
-    assert "nao consegui" in r["veredito"].lower()
-    assert "atualizad" not in r["veredito"].lower()
+    assert "com folga" in r["veredito"]
+    assert r["versoes_declaradas"] == ["2026-07-28"]
 
 
-def test_versao_mais_nova_convida_a_tentar_sem_prometer(monkeypatch):
-    monkeypatch.setattr(protocolo, "versao_da_biblioteca", lambda: "2.3.0")
-    monkeypatch.setattr(protocolo, "versao_publicada", lambda segundos=15: "2.4.0")
+def test_dentro_do_limite_mas_na_linha_nao_declara_vitoria(monkeypatch):
+    monkeypatch.setattr(protocolo, "medir_sonda",
+                        lambda *a, **k: _medida(3.6, resposta=_ok()))
     r = protocolo.relatorio()
-    assert "VALE TENTAR" in r["veredito"]
-    # Nao promete conserto: so depois de instalar da para ver a revisao.
-    assert "garante que resolve" in r["veredito"]
+    assert "SEM FOLGA" in r["veredito"]
 
 
-def test_ja_na_mais_nova_diz_que_nao_ha_o_que_fazer(monkeypatch):
-    monkeypatch.setattr(protocolo, "versao_da_biblioteca", lambda: "2.3.0")
-    monkeypatch.setattr(protocolo, "versao_publicada", lambda segundos=15: "2.3.0")
+def test_alem_do_limite_explica_que_o_atraso_e_a_causa(monkeypatch):
+    monkeypatch.setattr(protocolo, "medir_sonda",
+                        lambda *a, **k: _medida(5.2, resposta=_ok()))
     r = protocolo.relatorio()
-    assert "ja e a mais nova" in r["veredito"]
+    assert "ALEM" in r["veredito"]
+    assert "chega atrasado, nao fala errado" in r["veredito"]
+    # As conversas comuns nao sao afetadas, e o veredito precisa dizer isso:
+    # sem essa frase a equipe conclui que a extensao esta quebrada.
+    assert "conversas comuns" in r["veredito"]
 
 
-def test_versao_instalada_desconhecida_nao_inventa_comparacao(monkeypatch):
-    monkeypatch.setattr(protocolo, "versao_da_biblioteca",
-                        lambda: "nao determinada")
-    monkeypatch.setattr(protocolo, "versao_publicada", lambda segundos=15: "2.4.0")
+def test_sem_resposta_nao_e_tratado_como_lentidao(monkeypatch):
+    monkeypatch.setattr(protocolo, "medir_sonda",
+                        lambda *a, **k: _medida(None, respondeu=False))
     r = protocolo.relatorio()
-    assert "nao posso comparar" in r["veredito"]
+    assert "defeito de instalacao" in r["veredito"]
+    assert r["segundos"] is None
 
 
-def test_mostrar_nao_explode_e_imprime(capsys, monkeypatch):
-    monkeypatch.setattr(protocolo, "versao_publicada", lambda segundos=15: "2.3.0")
+def test_erro_do_servidor_nao_vira_sucesso(monkeypatch):
+    erro = {"jsonrpc": "2.0", "id": 1,
+            "error": {"code": -32602, "message": "faltou chave"}}
+    monkeypatch.setattr(protocolo, "medir_sonda",
+                        lambda *a, **k: _medida(0.5, resposta=erro))
+    r = protocolo.relatorio()
+    assert "erro" in r["veredito"].lower()
+    assert "com folga" not in r["veredito"]
+
+
+def test_o_veredito_nunca_fala_de_versao_publicada(monkeypatch):
+    # O erro que originou este arquivo. Se alguem reintroduzir a pergunta
+    # errada, este teste cai.
+    monkeypatch.setattr(protocolo, "medir_sonda",
+                        lambda *a, **k: _medida(5.2, resposta=_ok()))
+    texto = protocolo.relatorio()["veredito"].lower()
+    for proibido in ("versao mais nova", "atualizar", "publicad"):
+        assert proibido not in texto
+
+
+def test_mostrar_imprime_e_devolve_zero(capsys, monkeypatch):
+    monkeypatch.setattr(protocolo, "medir_sonda",
+                        lambda *a, **k: _medida(0.9, resposta=_ok()))
     assert protocolo.mostrar() == 0
     saida = capsys.readouterr().out
-    assert "Revisao de protocolo servida" in saida
     assert protocolo.revisao_servida() in saida
+    assert "server/discover" in saida
+
+
+def test_a_sonda_de_verdade_responde_e_declara_a_revisao():
+    """Sem simulacao: sobe o servidor num processo novo e mede."""
+    medida = protocolo.medir_sonda()
+    assert medida["respondeu"], "o servidor nao respondeu a `server/discover`"
+    corpo = medida["resposta"] or {}
+    assert "error" not in corpo, corpo.get("error")
+    versoes = corpo["result"]["supportedVersions"]
+    assert protocolo.revisao_servida() in versoes

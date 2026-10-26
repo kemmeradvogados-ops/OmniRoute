@@ -1,134 +1,202 @@
-"""Qual revisao de protocolo este servidor serve, e se ja ha outra publicada.
+"""Mede o que o aplicativo mede antes de aceitar a extensao nas sessoes
+compartilhadas: o servidor responde a revisao moderna, e responde A TEMPO?
 
-POR QUE ESTE MODULO EXISTE
+O QUE ESTE MODULO JA FOI, E POR QUE MUDOU
 
-Em 26/10/2026 o aplicativo do Claude passou a recusar a extensao nas sessoes
-do Cowork e do Code, com esta linha no registro:
+Nasceu em 26/10/2026 perguntando "ja saiu versao mais nova da biblioteca
+`mcp`?", porque o diagnostico daquele momento era que faltava uma revisao de
+protocolo a publicar. Esse diagnostico estava ERRADO, e a correcao veio de
+medicao:
 
-    connection is serving the 2026-07-28 protocol; the initialize handshake
-    is not accepted
+  1. A revisao atual da especificacao e a `2026-07-28`, a MESMA que este
+     servidor serve. Nao ha revisao a esperar.
+  2. A `2026-07-28` removeu o aperto de mao `initialize`. No lugar dele
+     entrou `server/discover`, alcancavel sem aperto de mao nenhum.
+  3. Este servidor responde a `server/discover` corretamente, declarando
+     `supportedVersions: ["2026-07-28"]`, em cerca de 0,7s em Linux.
+  4. O aplicativo sonda a era com um limite de QUATRO SEGUNDOS, medido em
+     quatro ocorrencias do registro: 4,001s, 4,001s, 4,010s, 4,004s. Quando
+     ninguem responde nesse prazo, ele anota "legacy (sibling did not
+     complete the exchange)" e recusa a extensao nas sessoes do Cowork e do
+     Code.
+  5. Numa maquina Windows do escritorio, so carregar a biblioteca levou de
+     2,6s a 4,5s em medicoes repetidas, contra 0,74s em Linux. O servidor
+     chega atrasado, nao fala errado.
 
-`2026-07-28` e exatamente o `LATEST_PROTOCOL_VERSION` da biblioteca `mcp`
-instalada. Nao e defeito da instalacao de ninguem: falta uma revisao que a
-biblioteca ainda nao publicou. A unica coisa que destrava e uma versao nova
-da biblioteca.
+Entao a pergunta certa nao e sobre versao publicada: e sobre TEMPO ATE A
+PRIMEIRA RESPOSTA, na maquina de quem pergunta. E o que este modulo mede.
 
-O problema seguinte era de PROCESSO, nao de codigo: alguem teria de lembrar
-de conferir o repositorio de pacotes de tempos em tempos. Promessa de
-acompanhar nao e mecanismo, e sessao de conversa acaba. Entao a conferencia
-virou comando: quem quiser saber, pergunta ao programa.
+O QUE ELE NAO FAZ
 
-O QUE ESTE MODULO NAO FAZ
-
-Nao afirma que atualizar RESOLVE. So a versao instalada diz qual revisao ela
-serve, e isso so se sabe depois de instalar. O veredito honesto e "ha versao
-mais nova, vale tentar" ou "ja esta na mais nova que existe", nunca "isto
-conserta".
+Nao afirma a causa da lentidao quando ela aparece. Na maquina onde isso foi
+investigado, o Windows Defender estava desligado e quem varria era outro
+antivirus; trocar de suspeito sem medir seria repetir o erro que originou
+este arquivo.
 """
 
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
+import os
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
 from typing import Optional
 
-ENDERECO_DO_INDICE = "https://pypi.org/pypi/mcp/json"
-SEGUNDOS = 15
+# O limite que o aplicativo concede, medido no registro dele. Nao e numero
+# documentado: e o intervalo observado, sempre o mesmo, entre o nascimento do
+# processo sonda e o veredito "legacy".
+JANELA_DA_SONDA_S = 4.0
 
-# A revisao que o aplicativo recusava nas sessoes do Cowork e do Code, para
-# que o relatorio possa dizer "e esta mesma" em vez de obrigar quem le a
-# comparar strings de cabeca.
-REVISAO_RECUSADA_EM_26_10_2026 = "2026-07-28"
+# Margem para nao declarar vitoria em cima da linha. Uma medicao que da 3,9s
+# numa maquina da 4,2s na proxima.
+FOLGA_S = 1.0
+
+ESPERA_MAXIMA_S = 20.0
 
 
 def revisao_servida() -> str:
-    """A revisao de protocolo que este servidor fala."""
     from mcp.types import LATEST_PROTOCOL_VERSION
 
     return str(LATEST_PROTOCOL_VERSION)
 
 
-def versao_da_biblioteca() -> str:
-    import importlib.metadata as meta
+def revisoes_conhecidas() -> dict:
+    from mcp_types import version as v
 
-    try:
-        return meta.version("mcp")
-    except meta.PackageNotFoundError:
-        return "nao determinada"
+    return {
+        "modernas": list(v.MODERN_PROTOCOL_VERSIONS),
+        "com_aperto_de_mao": list(v.HANDSHAKE_PROTOCOL_VERSIONS),
+    }
 
 
-def versao_publicada(segundos: int = SEGUNDOS) -> Optional[str]:
-    """A versao mais nova no repositorio publico, ou None se nao deu para ver.
+def _pedido_de_sonda() -> str:
+    """O mesmo `server/discover` que a sonda do aplicativo faz.
 
-    None e "nao consegui olhar", nunca "nao ha novidade": a maquina pode estar
-    sem rede, atras de proxy ou com o indice fora do ar, e tratar isso como
-    "esta tudo atualizado" seria afirmar o que ninguem verificou.
+    As duas chaves de `_meta` sao exigidas pela revisao: sem
+    `clientCapabilities` o servidor responde erro -32602, o que foi
+    descoberto na marra ao reproduzir a sonda pela primeira vez.
     """
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "server/discover",
+        "params": {"_meta": {
+            "io.modelcontextprotocol/protocolVersion": revisao_servida(),
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }},
+    })
+
+
+def medir_sonda(python: Optional[str] = None, pacote: Optional[str] = None) -> dict:
+    """Sobe o servidor num processo novo e cronometra a primeira resposta.
+
+    Processo NOVO de proposito: o que interessa e o custo frio, que e o que o
+    aplicativo paga. Medir dentro deste processo, com tudo ja carregado,
+    responderia outra pergunta e daria um numero bonito e inutil.
+    """
+    python = python or sys.executable
+    pacote = pacote or str(Path(__file__).resolve().parents[3])
+
+    inicio = time.monotonic()
+    filho = subprocess.Popen(
+        [python, "-m", "justica_mcp.server"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=pacote, text=True, bufsize=1,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    recebido: list = []
+
+    def ler() -> None:
+        linha = filho.stdout.readline() if filho.stdout else ""
+        if linha:
+            recebido.append((time.monotonic() - inicio, linha.strip()))
+
+    leitor = threading.Thread(target=ler, daemon=True)
+    leitor.start()
     try:
-        with urllib.request.urlopen(ENDERECO_DO_INDICE, timeout=segundos) as r:
-            return str(json.load(r)["info"]["version"])
-    except (urllib.error.URLError, TimeoutError, KeyError, ValueError, OSError):
-        return None
+        if filho.stdin:
+            filho.stdin.write(_pedido_de_sonda() + "\n")
+            filho.stdin.flush()
+        leitor.join(timeout=ESPERA_MAXIMA_S)
+    finally:
+        filho.kill()
+
+    if not recebido:
+        return {"respondeu": False, "segundos": None, "resposta": None}
+
+    segundos, linha = recebido[0]
+    try:
+        corpo = json.loads(linha)
+    except ValueError:
+        corpo = None
+    return {"respondeu": True, "segundos": segundos, "resposta": corpo}
 
 
-def _ordenar(versao: str) -> tuple:
-    """Compara 2.3.0 com 2.10.0 pelos numeros, nao pelas letras."""
-    partes = []
-    for pedaco in versao.split("."):
-        digitos = ""
-        for ch in pedaco:
-            if not ch.isdigit():
-                break
-            digitos += ch
-        partes.append(int(digitos) if digitos else 0)
-    return tuple(partes)
-
-
-def relatorio(segundos: int = SEGUNDOS) -> dict:
-    instalada = versao_da_biblioteca()
-    publicada = versao_publicada(segundos)
+def relatorio(python: Optional[str] = None, pacote: Optional[str] = None) -> dict:
+    medida = medir_sonda(python, pacote)
     revisao = revisao_servida()
+    corpo = medida.get("resposta") or {}
+    declaradas = (corpo.get("result") or {}).get("supportedVersions")
+    erro = corpo.get("error")
 
-    if publicada is None:
-        veredito = ("Nao consegui consultar o repositorio de pacotes. Sem "
-                    "rede, nao da para saber se ha versao mais nova.")
-    elif instalada == "nao determinada":
-        veredito = ("Nao sei qual versao esta instalada, entao nao posso "
-                    f"comparar. A mais nova publicada e {publicada}.")
-    elif _ordenar(publicada) > _ordenar(instalada):
+    if not medida["respondeu"]:
         veredito = (
-            f"Ha versao mais nova da biblioteca ({publicada}, contra "
-            f"{instalada} instalada). VALE TENTAR: rode o instalador de novo "
-            "e confira este comando outra vez. Nao garante que resolve, "
-            "porque so depois de instalar da para ver qual revisao ela serve."
+            "O servidor NAO respondeu a sonda. Isso e defeito de instalacao, "
+            "nao de desempenho: rode o comando `ambiente` e mande a saida ao "
+            "responsavel."
+        )
+    elif erro:
+        veredito = (
+            f"O servidor respondeu com erro: {erro.get('message', erro)}. "
+            "A sonda espera um resultado, nao um erro."
+        )
+    elif medida["segundos"] <= JANELA_DA_SONDA_S - FOLGA_S:
+        veredito = (
+            f"Respondeu em {medida['segundos']:.2f}s, dentro dos "
+            f"{JANELA_DA_SONDA_S:.0f}s que o aplicativo concede, com folga. "
+            "As sessoes do Cowork e do Code deveriam aceitar a extensao."
+        )
+    elif medida["segundos"] <= JANELA_DA_SONDA_S:
+        veredito = (
+            f"Respondeu em {medida['segundos']:.2f}s, dentro dos "
+            f"{JANELA_DA_SONDA_S:.0f}s mas SEM FOLGA. Medicoes repetidas "
+            "variam o bastante para que isso falhe parte das vezes."
         )
     else:
         veredito = (
-            f"A versao instalada ({instalada}) ja e a mais nova publicada. "
-            "Nao ha o que atualizar hoje."
+            f"Respondeu em {medida['segundos']:.2f}s, ALEM dos "
+            f"{JANELA_DA_SONDA_S:.0f}s que o aplicativo concede. E por isso "
+            "que as sessoes do Cowork e do Code recusam a extensao: o "
+            "servidor chega atrasado, nao fala errado. As conversas comuns "
+            "nao tem esse limite e seguem funcionando."
         )
 
     return {
         "revisao_servida": revisao,
-        "versao_instalada": instalada,
-        "versao_publicada": publicada,
-        "e_a_revisao_recusada": revisao == REVISAO_RECUSADA_EM_26_10_2026,
+        "revisoes": revisoes_conhecidas(),
+        "respondeu": medida["respondeu"],
+        "segundos": medida["segundos"],
+        "versoes_declaradas": declaradas,
+        "janela_da_sonda_s": JANELA_DA_SONDA_S,
         "veredito": veredito,
     }
 
 
-def mostrar(segundos: int = SEGUNDOS) -> int:
-    r = relatorio(segundos)
-    print("Revisao de protocolo servida por este servidor:")
-    print(f"  {r['revisao_servida']}")
-    if r["e_a_revisao_recusada"]:
-        print("  (e a revisao que as sessoes do Cowork e do Code recusaram")
-        print("   em 26/10/2026; as conversas comuns aceitam normalmente)")
+def mostrar(python: Optional[str] = None, pacote: Optional[str] = None) -> int:
+    r = relatorio(python, pacote)
+    print(f"Revisao de protocolo servida:  {r['revisao_servida']}")
+    print(f"Revisoes modernas conhecidas:  {', '.join(r['revisoes']['modernas'])}")
     print()
-    print(f"Biblioteca mcp instalada:  {r['versao_instalada']}")
-    publicada = r["versao_publicada"] or "nao consegui consultar"
-    print(f"Mais nova publicada:       {publicada}")
+    if r["respondeu"]:
+        print(f"Resposta a `server/discover`:   {r['segundos']:.2f}s "
+              f"(limite do aplicativo: {r['janela_da_sonda_s']:.0f}s)")
+        if r["versoes_declaradas"]:
+            print(f"Versoes declaradas na resposta: {', '.join(r['versoes_declaradas'])}")
+    else:
+        print("Resposta a `server/discover`:   NENHUMA")
     print()
     print(r["veredito"])
     return 0

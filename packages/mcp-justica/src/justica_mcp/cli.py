@@ -73,12 +73,11 @@ def main(argv: list[str] | None = None) -> int:
         help="diz onde o programa procura a configuracao e o que encontrou la",
     )
 
-    pr = sub.add_parser(
+    sub.add_parser(
         "protocolo",
-        help=("diz qual revisao de protocolo o servidor serve e se ja ha "
-              "versao mais nova da biblioteca"),
+        help=("cronometra a resposta do servidor a sonda de era do "
+              "aplicativo, que concede quatro segundos"),
     )
-    pr.add_argument("--segundos", type=int, default=15)
 
     rc = sub.add_parser(
         "repor-config",
@@ -433,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.comando == "protocolo":
             from .core.protocolo import mostrar as mostrar_protocolo
 
-            return mostrar_protocolo(args.segundos)
+            return mostrar_protocolo()
         if args.comando == "repor-config":
             return portal.repor_config(confirmar=args.confirmar, copia=args.copia)
         if args.comando == "estrutura":
