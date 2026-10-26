@@ -7,10 +7,11 @@ A resposta tem TRES valores, e isso e o coracao do modulo:
     None   nao deu para ver. Tela que nao montou, busca que deu erro, sessao
            que caiu, ou simplesmente processo que nao esta ali. Hoje nao da
            para separar esses casos, e por isso eles nao sao separados.
-    False  o sistema declarou que nao tem este processo. HOJE NUNCA E
-           DEVOLVIDO. Ver abaixo.
+    False  o sistema declarou que nao tem este processo. So e devolvido
+           pelos sistemas cuja tela de "nada encontrado" alguem ja viu, e
+           hoje sao dois: PJE e EPROC. Ver abaixo.
 
-POR QUE `False` AINDA NAO EXISTE
+POR QUE `False` NAO EXISTE EM TODOS OS SISTEMAS
 
 Em todas as corridas de campo deste projeto o processo FOI achado. Ninguem
 nunca buscou, num destes portais, um processo que nao estivesse la, e por
@@ -28,10 +29,12 @@ primeira varredura resolve os processos que forem achados, que e o objetivo,
 e deixa no disco a prova que falta para escrever o reconhecimento do "nao
 achado" contra telas reais. Decidido com o operador em 25/10/2026.
 
-`ASSINATURAS_DE_AUSENCIA` nasce VAZIA, de proposito. Ela so e preenchida
-depois que alguem olhar as telas gravadas. Enquanto estiver vazia, nenhum
-sistema devolve `False`, e o relatorio diz, com todas as letras, que a
-ausencia nao foi confirmada.
+`ASSINATURAS_DE_AUSENCIA` nasceu VAZIA, de proposito, e so cresce quando
+alguem olha uma tela gravada. Em 26/10/2026 entraram as de PJE e EPROC. As de
+DCP (Portal de Servicos) e ESAJ continuam vazias, porque nenhuma corrida
+procurou nesses portais um processo que comprovadamente nao estivesse la.
+Enquanto a entrada de um sistema estiver vazia, ele NUNCA devolve `False`, e
+o relatorio diz, com todas as letras, que a ausencia nao foi confirmada.
 """
 
 from __future__ import annotations
