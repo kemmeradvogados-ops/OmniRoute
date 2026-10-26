@@ -49,7 +49,12 @@ from typing import Callable, Optional
 from .cnj import NumeroCNJ
 from .estado import Estado
 from .schemas import Confianca, SistemaResolvido
-from .tribunais import Sistema, Tribunal, identificar_tribunal
+from .tribunais import (
+    Sistema,
+    Tribunal,
+    identificar_tribunal,
+    nome_do_sistema,
+)
 
 # Recebe o sistema e a lista de numeros pendentes; devolve, por numero em
 # apenas digitos, True (o sistema reconheceu), False (nao reconheceu) ou None
@@ -101,7 +106,9 @@ def _conclusao(linha: LinhaDaSondagem, ordem: list, conferiu_tudo: bool) -> None
     if len(achados) == 1:
         linha.sistema = achados[0]
         linha.confianca = Confianca.ALTA.value
-        linha.observacao = f"O sistema {achados[0]} reconheceu o processo."
+        linha.observacao = (
+            f"O sistema {nome_do_sistema(achados[0])} reconheceu o processo."
+        )
         if achados[0] == Sistema.PJE.value and not conferiu_tudo:
             linha.observacao += (
                 " Se este processo tiver recurso em segunda instancia, o"
@@ -117,7 +124,8 @@ def _conclusao(linha: LinhaDaSondagem, ordem: list, conferiu_tudo: bool) -> None
         linha.sistema = None
         linha.confianca = Confianca.MEDIA.value
         linha.observacao = (
-            f"ATENCAO: reconhecido em mais de um sistema ({', '.join(achados)}). "
+            f"ATENCAO: reconhecido em mais de um sistema "
+            f"({', '.join(nome_do_sistema(a) for a in achados)}). "
             "Pode ser processo migrado cuja copia antiga continua visivel, ou "
             "primeiro e segundo grau em sistemas diferentes. Nao escolhi por "
             "voce: confira qual grau esta onde antes de agir sobre prazo."
@@ -128,7 +136,8 @@ def _conclusao(linha: LinhaDaSondagem, ordem: list, conferiu_tudo: bool) -> None
         linha.sistema = None
         linha.confianca = Confianca.BAIXA.value
         linha.observacao = (
-            f"Nenhum sistema reconheceu, MAS {', '.join(cegos)} nao conseguiu "
+            f"Nenhum sistema reconheceu, MAS "
+            f"{', '.join(nome_do_sistema(c) for c in cegos)} nao conseguiu "
             "responder. Nao achado aqui nao prova que o processo nao esta la: "
             "ninguem olhou. Sonde de novo antes de concluir."
         )
@@ -211,7 +220,7 @@ def sondar_em_lote(
     for posicao, (sistema, grau) in enumerate(a_varrer):
         if not pendentes:
             break
-        abertos.append(f"{sistema.value} {grau}g")
+        abertos.append(f"{nome_do_sistema(sistema)} {grau}g")
         respostas = sonda(sistema, grau, [por_digitos[d] for d in pendentes])
         ultimo = posicao == len(a_varrer) - 1
         ainda: list = []

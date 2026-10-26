@@ -13,7 +13,10 @@ import pytest
 from justica_mcp.core.cnj import parse_numero
 from justica_mcp.core.estado import Estado
 from justica_mcp.core.sondagem import (
-    ProcessosDeTribunaisDiferentes, sondar_em_lote,
+    LinhaDaSondagem,
+    ProcessosDeTribunaisDiferentes,
+    _conclusao,
+    sondar_em_lote,
 )
 from justica_mcp.core.tribunais import Sistema
 
@@ -95,7 +98,11 @@ def test_sem_conferir_segundo_grau_para_no_primeiro_achado(estado):
     )
     linha = relato["linhas"][0]
     assert linha["sistema"] == "pje"
-    assert relato["sistemas_abertos"] == ["eproc 1g", "pje 1g"]
+    # Nome por extenso, nao a chave interna: esta lista vai para o relato
+    # que uma pessoa le.
+    assert relato["sistemas_abertos"] == [
+        "eproc 1g", "Processo Judicial Eletronico 1g",
+    ]
     # O achado no PJe avisa que pode haver segundo grau noutro sistema.
     assert "segundo grau" in linha["observacao"]
 
@@ -112,7 +119,7 @@ def test_nao_consegui_ver_nao_vira_nao_existe(estado):
     assert linha["sistema"] is None
     assert linha["confianca"] == "baixa"
     assert "nao conseguiu responder" in linha["observacao"]
-    assert "pje" in linha["observacao"]
+    assert "Processo Judicial Eletronico" in linha["observacao"]
 
 
 def test_nenhum_sistema_reconheceu_diz_isso_com_todas_as_letras(estado):
@@ -147,3 +154,56 @@ async def test_o_resultado_confirmado_vai_para_o_cache_do_resolvedor(estado):
 def test_lista_vazia_nao_abre_portal_nenhum(estado):
     relato = sondar_em_lote([], estado, _sonda({}))
     assert relato["linhas"] == []
+
+
+# --------------------------------------------------------------------------
+# Nome interno nao vaza para texto que uma PESSOA le.
+#
+# Em 26/10/2026 o relatorio do resolvedor devolveu "DCP" ao advogado, que
+# perguntou o que era. A chave interna e `dcp`; o nome do sistema e Portal de
+# Servicos. Este teste existe para que a proxima chave nova nao repita isso.
+
+from justica_mcp.core.tribunais import NOME_DO_SISTEMA, Sistema, nome_do_sistema
+
+
+def test_todo_sistema_tem_nome_por_extenso():
+    for sistema in Sistema:
+        assert sistema.value in NOME_DO_SISTEMA, (
+            f"o sistema {sistema.value} nao tem nome para pessoa ler"
+        )
+
+
+def test_nome_aceita_enum_e_string():
+    assert nome_do_sistema(Sistema.DCP) == "Portal de Servicos"
+    assert nome_do_sistema("dcp") == "Portal de Servicos"
+    assert nome_do_sistema("pje") == "Processo Judicial Eletronico"
+
+
+def test_desconhecido_volta_como_veio():
+    # Some com a informacao seria pior que devolver um nome feio.
+    assert nome_do_sistema("sistema_que_nao_existe") == "sistema_que_nao_existe"
+
+
+def test_observacao_da_sondagem_usa_o_nome_e_nao_a_chave():
+    linha = LinhaDaSondagem(numero="0000001-88.2019.8.19.0001")
+    linha.por_sistema = {"dcp": True}
+    _conclusao(linha, ["dcp"], conferiu_tudo=True)
+    assert "Portal de Servicos" in linha.observacao
+    assert "dcp" not in linha.observacao
+
+
+def test_observacao_de_sistema_cego_tambem_usa_o_nome():
+    linha = LinhaDaSondagem(numero="0000001-88.2019.8.19.0001")
+    linha.por_sistema = {"dcp": None, "eproc": False}
+    _conclusao(linha, ["eproc", "dcp"], conferiu_tudo=True)
+    assert "Portal de Servicos" in linha.observacao
+    assert "dcp" not in linha.observacao
+
+
+def test_observacao_de_varios_achados_tambem_usa_o_nome():
+    linha = LinhaDaSondagem(numero="0000001-88.2019.8.19.0001")
+    linha.por_sistema = {"dcp": True, "pje": True}
+    _conclusao(linha, ["pje", "dcp"], conferiu_tudo=True)
+    assert "Portal de Servicos" in linha.observacao
+    assert "Processo Judicial Eletronico" in linha.observacao
+    assert "dcp" not in linha.observacao

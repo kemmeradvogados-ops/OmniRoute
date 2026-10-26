@@ -36,6 +36,33 @@ class Sistema(str, Enum):
     INDETERMINADO = "indeterminado"
 
 
+# O nome que uma PESSOA le. As chaves acima sao internas, e uma delas vazou
+# para o relatorio do resolvedor em 26/10/2026: o advogado leu "DCP" e
+# perguntou o que era, com razao. Nome interno em texto de usuario e defeito
+# de interface, nao detalhe. A chave continua sendo a chave; isto e so para
+# texto.
+NOME_DO_SISTEMA: dict[str, str] = {
+    "pje": "Processo Judicial Eletronico",
+    "eproc": "eproc",
+    "esaj": "e-SAJ",
+    "dcp": "Portal de Servicos",
+    "cpe": "Central do Processo Eletronico",
+    "indeterminado": "sistema nao determinado",
+}
+
+
+def nome_do_sistema(sistema) -> str:
+    """O nome por extenso, para texto que alguem vai ler.
+
+    Aceita tanto o `Sistema` quanto a string crua, porque os dois circulam:
+    o resolvedor guarda a string no historico e o sondador carrega o enum.
+    Desconhecido volta como veio, em vez de virar "None": um nome estranho e
+    pior que um nome feio, mas sumir com a informacao e pior que os dois.
+    """
+    chave = getattr(sistema, "value", sistema)
+    return NOME_DO_SISTEMA.get(str(chave), str(chave))
+
+
 @dataclass(frozen=True)
 class Tribunal:
     codigo: str

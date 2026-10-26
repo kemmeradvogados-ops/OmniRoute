@@ -31,7 +31,12 @@ import yaml
 from .cnj import NumeroCNJ
 from .estado import Estado
 from .schemas import Confianca, SistemaResolvido, agora_iso
-from .tribunais import Sistema, Tribunal, identificar_tribunal
+from .tribunais import (
+    Sistema,
+    Tribunal,
+    identificar_tribunal,
+    nome_do_sistema,
+)
 
 # Validade curta de proposito: a migracao reposiciona processos, e um cache
 # longo levaria o agente ao adaptador errado sem sinal nenhum.
@@ -242,7 +247,7 @@ async def resolver_sistema(
                 confianca=Confianca.MEDIA if fresco else Confianca.BAIXA,
                 motivo=(
                     f"O escritorio confirmou este processo em "
-                    f"{guardado['sistema']} {idade} ({quando}), por "
+                    f"{nome_do_sistema(guardado['sistema'])} {idade} ({quando}), por "
                     f"{guardado.get('origem', 'origem nao registrada')}."
                     + ("" if fresco else
                        " Confirmacao antiga: o processo pode ter migrado desde"
@@ -262,7 +267,10 @@ async def resolver_sistema(
                     origem_da_resolucao="sondagem",
                     candidatos=candidatos,
                     confianca=Confianca.ALTA,
-                    motivo=f"O sistema {sistema.value} reconheceu o processo.",
+                    motivo=(
+                        f"O sistema {nome_do_sistema(sistema)} "
+                        "reconheceu o processo."
+                    ),
                 )
                 estado.gravar_cache(
                     _chave_cache(numero), resolvido.model_dump(), VALIDADE_RESOLUCAO
