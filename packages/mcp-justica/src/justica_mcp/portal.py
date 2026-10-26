@@ -7613,6 +7613,174 @@ def consultar_processo(
     )
 
 
+def sondar_sistemas(
+    numeros_brutos: list,
+    *,
+    tribunal: Optional[str] = None,
+    sistemas: Optional[list] = None,
+    conferir_segundo_grau: bool = False,
+    confirmado: bool = False,
+    oculto: bool = False,
+    segundos: int = 45,
+    espera_humana: int = ESPERA_HUMANA_PADRAO,
+    cofre: Optional[Cofre] = None,
+    estado: Optional[Estado] = None,
+) -> int:
+    """Descobre em qual sistema cada processo corre, com UMA autenticacao por
+    sistema e nenhuma por processo.
+
+    O Tribunal de Justica do Rio de Janeiro opera tres sistemas ao mesmo
+    tempo. Descobrir um por um custaria uma tentativa autenticada por
+    processo, de uma janela de dezoito por hora que, com credencial
+    compartilhada, e do escritorio inteiro. Aqui a lista inteira e procurada
+    dentro de cada sessao ja aberta: dez processos custam o mesmo que dois.
+
+    Sistema cuja fila esvaziou NAO e aberto. Se todos forem achados no eproc,
+    que e o primeiro da ordem, a corrida custa uma autenticacao.
+    """
+    import asyncio
+
+    from .core.acesso import (PortalNaoConfigurado, autenticado_habilitado,
+                              config_portal)
+    from .core.cnj import parse_numero
+    from .core.sondagem import (ProcessosDeTribunaisDiferentes,
+                                sondar_em_lote)
+    from .core.tribunais import identificar_tribunal
+    from . import sondas as _sondas
+
+    if not autenticado_habilitado():
+        print("Acesso autenticado desligado. Para habilitar, defina no .env: "
+              "JUSTICA_ACESSO_AUTENTICADO=1", file=sys.stderr)
+        return 1
+
+    # TODOS os numeros sao conferidos ANTES de qualquer navegador abrir. Numero
+    # errado descoberto no meio da corrida ja custou a autenticacao.
+    try:
+        numeros = [parse_numero(bruto) for bruto in numeros_brutos]
+    except ValueError as exc:
+        print(f"Numero de processo invalido: {exc}", file=sys.stderr)
+        return 1
+    if not numeros:
+        print("Nenhum processo informado.", file=sys.stderr)
+        return 1
+
+    # Antes de olhar configuracao: tribunais misturados e erro de quem pediu,
+    # e dizer isso vale mais do que listar variaveis de ambiente que faltam.
+    casas = {n.chave_segmento_tribunal for n in numeros}
+    if len(casas) > 1:
+        print("Uma varredura, um tribunal. Vieram processos de "
+              f"{len(casas)} tribunais diferentes. Separe por tribunal e rode "
+              "uma varredura para cada.", file=sys.stderr)
+        return 1
+
+    codigo_do_tribunal = tribunal
+    try:
+        achado = identificar_tribunal(numeros[0].chave_segmento_tribunal)
+    except Exception as exc:
+        print(f"Tribunal fora do escopo: {exc}", file=sys.stderr)
+        return 1
+    codigo_do_tribunal = codigo_do_tribunal or achado.codigo
+
+    # Sistema sem endereco no .env fica de fora da varredura, e isso e dito.
+    # Deixa-lo dentro faria o relatorio contar uma autenticacao que nunca
+    # houve e apresentar como "nao achado" um sistema onde ninguem buscou.
+    configurados: dict = {}
+    de_fora: list = []
+    pedidos = [s.lower() for s in sistemas] if sistemas else None
+    for candidato in achado.sistemas_candidatos:
+        if pedidos is not None and candidato.value not in pedidos:
+            continue
+        try:
+            configurados[candidato.value] = config_portal(
+                codigo_do_tribunal, candidato.value)
+        except PortalNaoConfigurado as exc:
+            de_fora.append((candidato.value, str(exc)))
+
+    print("=" * LARGURA)
+    print("SONDAGEM DE SISTEMA".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Tribunal: {achado.codigo}, {achado.nome}")
+    print(f"Processos: {len(numeros)}")
+    print(f"Sistemas a varrer, nesta ordem: "
+          f"{', '.join(configurados) or 'nenhum'}")
+    for nome, porque in de_fora:
+        print(f"  FORA: {nome} nao sera sondado. {porque}")
+    if not configurados:
+        print("\nNenhum sistema configurado para sondar.", file=sys.stderr)
+        return 1
+    print(f"Custo maximo: {len(configurados)} autenticacao(oes), "
+          "independentemente de quantos processos.")
+
+    async def sonda(sistema, pendentes):
+        config = configurados[sistema.value]
+        respostas: dict = {}
+
+        def depois(pagina, guarda, estado_local, identidade):
+            quantos = len(pendentes)
+            for posicao, cada in enumerate(pendentes, start=1):
+                print(f"\n  [{sistema.value}] {posicao} de {quantos}: "
+                      f"{cada.formatado}")
+                resposta = _sondas.procurar(
+                    sistema.value, pagina, guarda, cada, config.url, segundos)
+                respostas[cada.apenas_digitos] = resposta.valor
+                marca = {True: "ACHADO", False: "nao esta aqui",
+                         None: "nao confirmado"}[resposta.valor]
+                print(f"      {marca}. {resposta.detalhe}")
+                estado_local.registrar(
+                    acao="sondagem_de_sistema", tribunal=identidade.tribunal,
+                    sistema=sistema.value, numero=cada.formatado,
+                    resultado=marca)
+            return 0
+
+        print("\n" + "-" * LARGURA)
+        print(f"  ABRINDO {sistema.value.upper()}: uma autenticacao para "
+              f"{len(pendentes)} processo(s).")
+        print("-" * LARGURA)
+        autenticar(
+            config.url, codigo_do_tribunal, sistema.value,
+            confirmado=confirmado, perfil=config.perfil, oculto=oculto,
+            segundos=segundos, espera_humana=espera_humana,
+            cofre=cofre, estado=estado, apos_autenticar=depois,
+        )
+        return respostas
+
+    try:
+        relato = asyncio.run(sondar_em_lote(
+            numeros, estado or Estado(), sonda,
+            sistemas=list(configurados),
+            conferir_segundo_grau=conferir_segundo_grau,
+        ))
+    except ProcessosDeTribunaisDiferentes as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 1
+
+    print("\n" + "=" * LARGURA)
+    print("RESULTADO".center(LARGURA))
+    print("=" * LARGURA)
+    print(f"Autenticacoes gastas: {relato['autenticacoes']} "
+          f"({', '.join(relato['sistemas_abertos']) or 'nenhuma'}).")
+    resolvidos = 0
+    for linha in relato["linhas"]:
+        print(f"\n  {linha['numero']}")
+        for nome in relato["ordem"]:
+            valor = linha["por_sistema"].get(nome, "nao sondado")
+            marca = {True: "ACHADO", False: "nao esta aqui",
+                     None: "nao confirmado",
+                     "nao sondado": "nao sondado"}[valor]
+            print(f"    {nome:<6} {marca}")
+        if linha["sistema"]:
+            resolvidos += 1
+            print(f"    -> {linha['sistema']} (confianca {linha['confianca']})")
+        print(f"    {linha['observacao']}")
+    print("\n" + "=" * LARGURA)
+    print(f"  {resolvidos} de {len(relato['linhas'])} processo(s) resolvido(s) "
+          f"com {relato['autenticacoes']} autenticacao(oes).")
+    print("  O que foi resolvido ficou no historico da banca, na pasta de "
+          "copias: ninguem precisa sondar de novo.")
+    print("=" * LARGURA)
+    return 0
+
+
 AJUDA_URL = ("endereco do portal; quando omitido, vem do .env "
              "(JUSTICA_PORTAL_<TRIBUNAL>_<SISTEMA>_URL)")
 

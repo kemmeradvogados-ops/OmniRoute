@@ -224,6 +224,38 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--ate", type=int, default=None,
                     help="ultima folha a ler, dentro da peca")
 
+    sd = sub.add_parser(
+        "sondar",
+        help="descobre em qual sistema cada processo corre, com UMA "
+             "autenticacao por sistema")
+    sd.add_argument("--processo", action="append", required=True,
+                    help="numero no padrao da numeracao unica. PODE REPETIR, "
+                         "e e para isso que este comando existe: a lista "
+                         "inteira e procurada dentro de cada sessao ja aberta, "
+                         "entao dez processos custam o mesmo que dois")
+    sd.add_argument("--tribunal", default=None,
+                    help="quando omitido, vem do proprio numero")
+    sd.add_argument("--sistema", action="append", default=None,
+                    dest="sistemas",
+                    help="restringe a varredura a estes sistemas, sem mudar a "
+                         "ordem. PODE REPETIR. Quando omitido, varre todos os "
+                         "do tribunal que tiverem endereco no .env")
+    sd.add_argument("--conferir-segundo-grau", action="store_true",
+                    dest="conferir_segundo_grau",
+                    help="nao para no primeiro sistema que reconhecer o "
+                         "processo. Serve para processo com recurso, em que o "
+                         "primeiro e o segundo grau podem estar em sistemas "
+                         "diferentes. Custa uma autenticacao por sistema, "
+                         "sempre")
+    sd.add_argument("--confirmo-tentativa-unica", action="store_true",
+                    dest="confirmado",
+                    help="confirma que esta corrida AUTENTICA de verdade no "
+                         "portal, uma vez por sistema. Mesmo nome dos demais "
+                         "comandos de proposito: a confirmacao de login real "
+                         "se escreve igual em todo lugar")
+    sd.add_argument("--oculto", action="store_true")
+    sd.add_argument("--segundos", type=int, default=45)
+
     cp = sub.add_parser("consultar", help="autentica e consulta um processo pela busca rapida")
     cp.add_argument("--url", default=None, help=portal.AJUDA_URL)
     cp.add_argument("--tribunal", required=True)
@@ -331,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         # `estrutura` le um arquivo ja gravado: nao tem tribunal, nao tem
         # sistema e nao abre navegador nenhum.
         if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente",
-                                "leituras",
+                                "leituras", "sondar",
                                 "repor-config", "estrutura", "telas", "tela",
                                 "pecas", "peca"):
             portal._do_ambiente(args)
@@ -409,6 +441,12 @@ def main(argv: list[str] | None = None) -> int:
                                           confirmar=args.confirmar)
         if args.comando == "reindexar":
             return portal.reindexar(args.processo, confirmar=args.confirmar)
+        if args.comando == "sondar":
+            return portal.sondar_sistemas(
+                args.processo, tribunal=args.tribunal, sistemas=args.sistemas,
+                conferir_segundo_grau=args.conferir_segundo_grau,
+                confirmado=args.confirmado, oculto=args.oculto,
+                segundos=args.segundos)
         if args.comando == "mapear":
             return portal.mapear(args.alvos, oculto=args.oculto, segundos=args.segundos)
         if args.comando == "sessao":

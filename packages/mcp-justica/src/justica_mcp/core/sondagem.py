@@ -138,6 +138,7 @@ async def sondar_em_lote(
     estado: Estado,
     sonda: SondaEmLote,
     *,
+    sistemas: Optional[list] = None,
     conferir_segundo_grau: bool = False,
     gravar_cache: bool = True,
 ) -> dict:
@@ -159,18 +160,24 @@ async def sondar_em_lote(
         )
 
     tribunal: Tribunal = identificar_tribunal(numeros[0].chave_segmento_tribunal)
-    ordem = [s.value for s in tribunal.sistemas_candidatos]
+    # `sistemas` restringe a varredura sem mudar a ORDEM, que e a do tribunal.
+    # Serve para deixar de fora o sistema cujo endereco nao esta no .env: sem
+    # isso ele contaria como autenticacao aberta e o relatorio mentiria sobre
+    # o custo da corrida.
+    a_varrer = ([s for s in tribunal.sistemas_candidatos if s.value in sistemas]
+                if sistemas is not None else list(tribunal.sistemas_candidatos))
+    ordem = [s.value for s in a_varrer]
     linhas = {n.apenas_digitos: LinhaDaSondagem(numero=n.formatado) for n in numeros}
     por_digitos = {n.apenas_digitos: n for n in numeros}
     pendentes = list(por_digitos)
     abertos: list = []
 
-    for posicao, sistema in enumerate(tribunal.sistemas_candidatos):
+    for posicao, sistema in enumerate(a_varrer):
         if not pendentes:
             break
         abertos.append(sistema.value)
         respostas = await sonda(sistema, [por_digitos[d] for d in pendentes])
-        ultimo = posicao == len(tribunal.sistemas_candidatos) - 1
+        ultimo = posicao == len(a_varrer) - 1
         ainda: list = []
         for digitos in pendentes:
             resposta = respostas.get(digitos)

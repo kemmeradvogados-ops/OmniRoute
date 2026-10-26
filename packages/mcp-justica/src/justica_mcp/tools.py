@@ -175,6 +175,29 @@ class ConsultaAutenticadaInput(NumeroInput):
     sistema: Optional[str] = CAMPO_SISTEMA
 
 
+class SondarSistemasInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    numeros: list = Field(
+        ...,
+        description=("Os processos a sondar, no padrao da numeracao unica. "
+                     "TODOS do mesmo tribunal. Mande a lista inteira de uma "
+                     "vez: a varredura custa uma autenticacao por SISTEMA e "
+                     "nenhuma por processo, entao dez processos custam o "
+                     "mesmo que dois, e pedir um de cada vez multiplica o "
+                     "custo por dez."),
+    )
+    conferir_segundo_grau: bool = Field(
+        default=False,
+        description=("Nao parar no primeiro sistema que reconhecer o "
+                     "processo. Serve para processo com RECURSO, em que o "
+                     "primeiro e o segundo grau podem estar em sistemas "
+                     "diferentes. Custa uma autenticacao por sistema, sempre. "
+                     "Pergunte ao advogado se ha recurso antes de marcar."),
+    )
+    solicitante: Optional[str] = Field(
+        default=None, description="Quem pediu, para a auditoria.")
+
+
 class BaixarAutosInput(NumeroInput):
     guardar: bool = Field(
         default=True,
@@ -821,6 +844,143 @@ def registrar(mcp: Any) -> None:
                                   "SUCESSO: um login que da certo zera o "
                                   "contador, porque bloqueio de conta vem de "
                                   "falhas consecutivas e nao de trabalho."),
+        })
+
+    @mcp.tool(
+        name="justica_sondar_sistemas",
+        annotations=ToolAnnotations(
+            title="Descobrir em qual sistema cada processo corre",
+            # Nao grava nada do processo; grava o resultado da sondagem no
+            # historico da banca, que e o ponto da ferramenta.
+            read_only_hint=False,
+            destructive_hint=False,
+            # Cada corrida consome ate uma tentativa de autenticacao por
+            # sistema do tribunal.
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+    )
+    async def justica_sondar_sistemas(params: SondarSistemasInput) -> str:
+        """Descobre em qual sistema cada processo corre, UMA autenticacao por
+        sistema e nenhuma por processo. Volta na hora, sem esperar o fim.
+
+        QUANDO USAR: quando `justica_resolver_sistema` responder
+        'indeterminado' para um ou mais processos do mesmo tribunal. O
+        Tribunal de Justica do Rio de Janeiro opera eproc, PJe e DCP ao mesmo
+        tempo, e o numero do processo nao diz em qual deles o processo esta.
+
+        MANDE A LISTA INTEIRA DE UMA VEZ. O custo e por SISTEMA, nao por
+        processo: a lista toda e procurada dentro de cada sessao ja aberta.
+        Dez processos custam o mesmo que dois, e pedir um de cada vez
+        multiplica o custo por dez numa janela que e do escritorio inteiro.
+
+        A ordem e eproc, depois PJe, depois DCP, e processo achado sai da
+        fila: se todos estiverem no eproc, a corrida custa UMA autenticacao e
+        os outros dois sistemas nem sao abertos.
+
+        O QUE A RESPOSTA NAO DIZ. A sonda responde 'achado' ou 'nao
+        confirmado', nunca 'nao esta aqui'. Nenhuma corrida deste projeto
+        jamais viu a tela de 'nada encontrado' destes portais, entao afirmar
+        ausencia seria afirmar o que ninguem olhou. **Nao conclua que um
+        processo nao existe num sistema a partir de 'nao confirmado'.**
+
+        O resultado fica no historico da banca, na pasta de copias
+        compartilhada: ninguem mais precisa sondar o mesmo processo.
+
+        CUSTO REAL: autentica de verdade no tribunal. **Diante de erro, nao
+        repita a chamada**: relate ao advogado e espere instrucao.
+
+        PRESENCA HUMANA: o eproc levanta o desafio "Confirme que e humano", e
+        ele exige uma pessoa na frente da tela. Avise o advogado antes.
+        """
+        from .core.tribunais import identificar_tribunal as _tribunal_de
+        from .trabalhos import MURAL
+
+        if not autenticado_habilitado():
+            return _erro(
+                "Acesso autenticado desligado neste servidor.", "acesso_desligado",
+                "Ligar permite disparar autenticacao real no tribunal com a "
+                "credencial do advogado, e e decisao do operador.",
+            )
+        if not params.numeros:
+            return _erro("Nenhum processo informado.", "sem_processos")
+
+        # TODOS conferidos antes de qualquer navegador abrir. Numero errado
+        # descoberto no meio da corrida ja custou a autenticacao.
+        try:
+            numeros = [parse_numero(bruto) for bruto in params.numeros]
+            casas = {n.chave_segmento_tribunal for n in numeros}
+            if len(casas) > 1:
+                return _erro(
+                    f"Vieram processos de {len(casas)} tribunais diferentes.",
+                    "tribunais_diferentes",
+                    "Uma varredura, um tribunal: cada tribunal tem os seus "
+                    "proprios portais e a sua propria credencial. Peca uma "
+                    "sondagem por tribunal.",
+                )
+            tribunal = _tribunal_de(numeros[0].chave_segmento_tribunal)
+        except NumeroCNJInvalido as exc:
+            return _erro(str(exc), "numero_invalido")
+        except TribunalForaDoEscopo as exc:
+            return _erro(str(exc), "tribunal_fora_do_escopo")
+
+        configurados = sorted(
+            c.sistema for c in portais_configurados()
+            if c.tribunal == tribunal.codigo)
+        if not configurados:
+            return _erro(
+                f"Nenhum portal do {tribunal.codigo} configurado.",
+                "portal_nao_configurado",
+                "O endereco dos portais mora no arquivo de configuracao da "
+                "banca. Sem nenhum deles nao ha onde sondar.",
+            )
+
+        emCurso = next(
+            (MURAL.em_curso_para(cada.formatado) for cada in numeros
+             if MURAL.em_curso_para(cada.formatado) is not None), None)
+        if emCurso is not None:
+            return _erro(
+                "Ja ha um trabalho em curso para um destes processos.",
+                "trabalho_em_curso",
+                f"Acompanhe com justica_situacao_do_download, trabalho "
+                f"{emCurso.identificador}. Comecar outro gastaria mais "
+                "tentativas de autenticacao sem trazer nada novo.",
+            )
+        try:
+            LimiteTentativas.do_ambiente(_estado).exigir_folga()
+        except TetoDeTentativasAtingido as exc:
+            return _erro(str(exc), "teto_de_tentativas")
+
+        argumentos = ["sondar", "--tribunal", tribunal.codigo,
+                      "--confirmo-tentativa-unica"]
+        for cada in numeros:
+            argumentos += ["--processo", cada.formatado]
+        if params.conferir_segundo_grau:
+            argumentos.append("--conferir-segundo-grau")
+
+        rotulo = (numeros[0].formatado if len(numeros) == 1
+                  else f"{numeros[0].formatado} e mais {len(numeros) - 1}")
+        trabalho = MURAL.comecar("sondagem de sistema", rotulo, argumentos)
+        _estado.registrar(
+            acao="sondagem_pedida", tribunal=tribunal.codigo,
+            numero=rotulo, resultado=trabalho.identificador,
+            solicitante=params.solicitante,
+        )
+        return _json({
+            "trabalho": trabalho.identificador,
+            "tribunal": tribunal.codigo,
+            "processos": [cada.formatado for cada in numeros],
+            "ordem_da_varredura": [s.value for s in tribunal.sistemas_candidatos
+                                   if s.value in configurados],
+            "estado": trabalho.estado,
+            "autenticacoes_no_maximo": len(configurados),
+            "aviso": (
+                "A varredura comecou. Acompanhe com "
+                "justica_situacao_do_download. Ela custa ATE uma autenticacao "
+                "por sistema, e menos do que isso quando os processos sao "
+                "achados logo no primeiro. NAO chame esta ferramenta de novo "
+                "para os mesmos processos."
+            ),
         })
 
     @mcp.tool(
