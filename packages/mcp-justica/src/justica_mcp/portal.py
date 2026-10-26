@@ -7745,7 +7745,8 @@ def sondar_sistemas(
                 print(f"\n  [{sistema.value}] {posicao} de {quantos}: "
                       f"{cada.formatado}")
                 resposta = _sondas.procurar(
-                    sistema.value, pagina, guarda, cada, config.url, segundos)
+                    sistema.value, pagina, guarda, cada, config.url, segundos,
+                    config.perfil)
                 respostas[cada.apenas_digitos] = resposta.valor
                 marca = {True: "ACHADO", False: "nao esta aqui",
                          None: "nao confirmado"}[resposta.valor]

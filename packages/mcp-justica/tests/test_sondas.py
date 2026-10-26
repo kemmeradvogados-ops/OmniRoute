@@ -26,11 +26,19 @@ class _Pagina:
         return []
 
 
-def test_a_tabela_de_assinaturas_nasce_vazia():
-    """Se esta tabela deixar de estar vazia sem que alguem tenha olhado uma
-    tela real, o `False` volta a ser chute."""
+def test_so_o_pje_tem_assinatura_de_ausencia_conferida():
+    """Cada entrada desta tabela corresponde a uma tela REAL que alguem olhou.
+
+    O PJe ganhou a sua em 26/10/2026, da tela
+    `20261026T021247509-sonda-pje-sem-resultado.json`. Os outros tres seguem
+    vazios porque ninguem viu ainda a tela de "nada encontrado" deles, e
+    enquanto nao virem nao podem responder `False`.
+    """
     assert set(sondas.ASSINATURAS_DE_AUSENCIA) == {"dcp", "pje", "eproc", "esaj"}
-    assert all(v == () for v in sondas.ASSINATURAS_DE_AUSENCIA.values())
+    assert sondas.ASSINATURAS_DE_AUSENCIA["pje"]
+    assert sondas.ASSINATURAS_DE_AUSENCIA["dcp"] == ()
+    assert sondas.ASSINATURAS_DE_AUSENCIA["eproc"] == ()
+    assert sondas.ASSINATURAS_DE_AUSENCIA["esaj"] == ()
 
 
 def test_nao_confirmado_devolve_none_e_nunca_false(monkeypatch):
@@ -152,15 +160,58 @@ def test_esaj_achou_quando_ha_movimentacao(monkeypatch):
     assert "3 movimentacao" in r.detalhe
 
 
-def test_nenhuma_sonda_devolve_false_hoje(monkeypatch):
-    """Varredura estrutural: enquanto a tabela de assinaturas estiver vazia,
-    nenhum caminho deste modulo pode responder `False`."""
+def test_so_a_sonda_do_pje_pode_responder_que_nao_esta_la():
+    """Varredura estrutural: `False` so pode sair de onde alguem viu a tela.
+
+    Hoje isso e so `procurar_no_pje`. Se alguem acrescentar um `False` noutra
+    sonda sem antes olhar a tela daquele portal, este teste cai: afirmar que
+    um processo nao esta num sistema onde ninguem olhou e o pior desfecho
+    deste programa, porque processo dado como inexistente e prazo perdido.
+    """
     import inspect
 
-    fonte = inspect.getsource(sondas)
-    # `Resposta(False` ou `valor=False` seriam as duas formas de escrever isso.
-    assert "Resposta(False" not in fonte
-    assert "valor=False" not in fonte
+    for nome, sonda in sondas.PROCURADORES.items():
+        fonte = inspect.getsource(sonda)
+        devolve_falso = "Resposta(\n            False" in fonte or \
+                        "Resposta(False" in fonte or "valor=False" in fonte
+        if nome == "pje":
+            assert devolve_falso, "a sonda do PJe deveria confirmar ausencia"
+        else:
+            assert not devolve_falso, (
+                f"a sonda de {nome} responde False sem tela conferida")
+
+
+def test_pje_sem_tabela_montada_nao_afirma_ausencia(monkeypatch):
+    """Tabela ausente e tela que nao terminou de montar, que e coisa
+    diferente de processo que nao esta la."""
+    monkeypatch.setattr("justica_mcp.pje.buscar_autenticado", lambda *a, **k: "url")
+    monkeypatch.setattr("justica_mcp.pje.achar_link_do_processo",
+                        lambda *a, **k: None)
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
+
+    class _SemTabela(_Pagina):
+        def query_selector(self, *a, **k):
+            return None
+
+    r = sondas.procurar_no_pje(_SemTabela(), None, _num(), "https://x", 5)
+    assert r.valor is None
+    assert "nao montou" in r.detalhe
+
+
+def test_pje_com_tabela_montada_e_sem_o_numero_confirma_a_ausencia(monkeypatch):
+    monkeypatch.setattr("justica_mcp.pje.buscar_autenticado", lambda *a, **k: "url")
+    monkeypatch.setattr("justica_mcp.pje.achar_link_do_processo",
+                        lambda *a, **k: None)
+    monkeypatch.setattr("justica_mcp.pje.linhas_do_resultado", lambda *a, **k: 1)
+
+    class _ComTabela(_Pagina):
+        def query_selector(self, *a, **k):
+            return object()
+
+    r = sondas.procurar_no_pje(_ComTabela(), None, _num(), "https://x", 5)
+    assert r.valor is False
+    assert "Ausencia confirmada" in r.detalhe
 
 
 def test_gravacao_desligada_nao_vira_tela_gravada(monkeypatch):
@@ -190,3 +241,68 @@ def test_a_sonda_do_portal_de_servicos_nao_abre_o_processo(monkeypatch):
     sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5)
     # Linha zero nao existe: a abertura devolve sem clicar.
     assert pedidos == [0]
+
+
+def test_dcp_refaz_a_entrada_quando_o_formulario_sumiu(monkeypatch):
+    """Em 26/10/2026 o portal abriu o processo sozinho depois de uma busca que
+    devolveu uma linha, e dali em diante nao havia formulario. A volta ao
+    portal e tentada UMA vez: insistir esconderia qual e o problema."""
+    from justica_mcp.dcp import ConsultaIndisponivel
+
+    tentativas: list = []
+
+    def buscar(pagina, guarda, numero, url, segundos, linha=1):
+        tentativas.append(linha)
+        if len(tentativas) == 1:
+            raise ConsultaIndisponivel("A tela da consulta nao tem o campo.")
+        return "quadro"
+
+    entradas: list = []
+
+    def preparar_dcp(pagina, guarda, perfil, segundos):
+        entradas.append(perfil)
+        return sondas.Preparo(pagina, True, "portal reaberto")
+
+    monkeypatch.setattr("justica_mcp.dcp.buscar", buscar)
+    monkeypatch.setattr(sondas, "preparar_dcp", preparar_dcp)
+    monkeypatch.setattr("justica_mcp.dcp.esperar_a_lista_de_resultado",
+                        lambda *a, **k: ["linha"])
+    r = sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5,
+                               "Advogado")
+    assert r.valor is True
+    assert tentativas == [0, 0]
+    assert entradas == ["Advogado"]
+
+
+def test_dcp_desiste_quando_a_volta_ao_portal_tambem_falha(monkeypatch):
+    from justica_mcp.dcp import ConsultaIndisponivel
+
+    def buscar(*a, **k):
+        raise ConsultaIndisponivel("A tela da consulta nao tem o campo.")
+
+    monkeypatch.setattr("justica_mcp.dcp.buscar", buscar)
+    monkeypatch.setattr(
+        sondas, "preparar_dcp",
+        lambda pagina, guarda, perfil, segundos:
+            sondas.Preparo(pagina, False, "nao deu para entrar"))
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
+    r = sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5, None)
+    assert r.valor is None
+    assert "a volta ao portal tambem" in r.detalhe
+
+
+def test_o_perfil_so_chega_a_quem_precisa_dele(monkeypatch):
+    """O Portal de Servicos usa o perfil para refazer a entrada; os outros
+    nao tem o que fazer com ele, e passar um argumento a mais quebraria."""
+    recebidos: list = []
+
+    def sonda_sem_perfil(pagina, guarda, numero, url, segundos):
+        recebidos.append("sem perfil")
+        return sondas.Resposta(True, "simulado")
+
+    monkeypatch.setitem(sondas.PROCURADORES, "eproc", sonda_sem_perfil)
+    r = sondas.procurar("eproc", _Pagina(), None, _num(), "https://x", 5,
+                        "Advogado")
+    assert r.valor is True
+    assert recebidos == ["sem perfil"]

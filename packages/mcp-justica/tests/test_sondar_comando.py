@@ -98,7 +98,8 @@ def test_a_fila_encolhe_e_o_dcp_e_o_ultimo(portais, monkeypatch, capsys):
 
     from justica_mcp.sondas import Resposta
 
-    def procurar(sistema, pagina, guarda, numero, url, segundos):
+    def procurar(sistema, pagina, guarda, numero, url, segundos,
+                 perfil=None):
         vistos.append((sistema, numero.formatado))
         achou = (sistema == "eproc" and numero.formatado == UM) or \
                 (sistema == "dcp" and numero.formatado == DOIS)

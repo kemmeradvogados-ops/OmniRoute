@@ -42,9 +42,20 @@ from typing import Any, Callable, Optional
 # Assinaturas confirmadas de "este sistema nao tem este processo", por
 # sistema. Cada entrada so entra aqui depois de alguem ver a tela gravada por
 # uma corrida real. Texto inventado nao entra.
+#
+# PJE, conferida em 26/10/2026 na tela
+# `20261026T021247509-sonda-pje-sem-resultado.json`: a pagina de resultado
+# (`listView.seam`) montou, os seis campos do numero estavam preenchidos, a
+# tabela `#fPP:processosTable` existia com os dez cabecalhos de coluna
+# ("Acoes, Processo, Caracteristicas, ...") e nao havia link algum cujos
+# digitos batessem com o procurado. Essa conjuncao e o "nada encontrado"
+# daquele portal: a busca por numero exato que acha devolve a linha com o
+# proprio numero, que e como `achar_link_do_processo` o encontra.
+#
+# EPROC e DCP continuam vazios: ver `procurar_no_eproc` e `procurar_no_dcp`.
 ASSINATURAS_DE_AUSENCIA: dict[str, tuple] = {
     "dcp": (),
-    "pje": (),
+    "pje": ("tabela de resultado montada e nenhum link com o numero",),
     "eproc": (),
     "esaj": (),
 }
@@ -100,7 +111,7 @@ def _nao_confirmado(sistema: str, pagina: Any, porque: str) -> Resposta:
 
 
 def procurar_no_dcp(pagina: Any, guarda: Any, numero: Any, url: str,
-                    segundos: int) -> Resposta:
+                    segundos: int, perfil: Optional[str] = None) -> Resposta:
     """Portal de Servicos: busca pelo menu e procura a linha cujo numero bate.
 
     A conferencia e digito por digito, feita por `processos_na_lista`: a busca
@@ -118,7 +129,31 @@ def procurar_no_dcp(pagina: Any, guarda: Any, numero: Any, url: str,
     # existe, faz a abertura devolver sem clicar, e a lista, que e a unica
     # coisa que a sonda le, ja esta montada nesse ponto. Menos acao, menos
     # superficie de falha, e nenhum processo de terceiro aberto a toa.
-    quadro = buscar(pagina, guarda, numero, url, segundos, linha=0)
+    from .dcp import ConsultaIndisponivel
+
+    try:
+        quadro = buscar(pagina, guarda, numero, url, segundos, linha=0)
+    except ConsultaIndisponivel as exc:
+        # A SESSAO PODE TER FICADO DENTRO DE UM PROCESSO. Conferido em
+        # 26/10/2026 na tela `20261026T033403540-sonda-dcp-sem-resultado.json`:
+        # depois de uma busca que devolveu UMA linha, o portal abriu o processo
+        # sozinho, e o quadro embutido passou a ser `.../detalhes-processo`. Da
+        # busca seguinte em diante nao havia formulario, porque nao se estava
+        # mais nele, e a reabertura pelo menu nao volta de la: para o menu, a
+        # tela de detalhe ja e "a consulta processual".
+        #
+        # Entao refaz-se a ENTRADA inteira, que e caminho provado, e tenta-se
+        # uma vez. Uma, nao em laco: busca que falha duas vezes seguidas e
+        # outro problema, e insistir esconderia qual.
+        preparo = preparar_dcp(pagina, guarda, perfil, segundos)
+        if not preparo.pronto:
+            return _nao_confirmado(
+                "dcp", pagina,
+                f"A busca parou ({exc}) e a volta ao portal tambem: "
+                f"{preparo.detalhe}.")
+        pagina = preparo.pagina
+        quadro = buscar(pagina, guarda, numero, url, segundos, linha=0)
+
     achados = esperar_a_lista_de_resultado(
         quadro or quadro_da_consulta(pagina), numero, ESPERA_DA_LISTA)
     if achados:
@@ -146,10 +181,28 @@ def procurar_no_pje(pagina: Any, guarda: Any, numero: Any, url: str,
         return _nao_confirmado("pje", pagina, f"A busca parou: {exc}")
     if achar_link_do_processo(pagina, numero) is not None:
         return Resposta(True, "A lista traz o link deste processo.")
+
+    # AUSENCIA CONFIRMADA, e este e o unico lugar do programa que a afirma.
+    # A tela de 26/10/2026 mostrou o que a confirma: pagina de resultado
+    # montada, com a tabela e os cabecalhos de coluna, e nenhum link cujos
+    # digitos batam com o procurado. Sem a tabela nao se afirma nada: tabela
+    # ausente e tela que nao terminou de montar, que e coisa diferente de
+    # processo que nao esta la.
+    from .pje import TABELA_RESULTADOS
+
+    try:
+        montou = pagina.query_selector(TABELA_RESULTADOS) is not None
+    except Exception:
+        montou = False
+    if montou:
+        return Resposta(
+            False,
+            f"A tabela de resultado montada com {linhas_do_resultado(pagina)} "
+            "linha(s) e nenhuma traz este processo. Ausencia confirmada.")
     return _nao_confirmado(
         "pje", pagina,
-        f"A lista voltou com {linhas_do_resultado(pagina)} linha(s) e nenhuma "
-        "traz este processo.")
+        "A tabela de resultado nao montou, entao nao da para dizer se a busca "
+        "chegou a responder.")
 
 
 def procurar_no_eproc(pagina: Any, guarda: Any, numero: Any, url: str,
@@ -169,8 +222,70 @@ def procurar_no_eproc(pagina: Any, guarda: Any, numero: Any, url: str,
     chegou = esperar_tela_do_processo(pagina, segundos)
     if chegou in ("eventos", "capa"):
         return Resposta(True, f"A tela do processo apareceu ({chegou}).")
+
+    # A BUSCA PODE NEM TER ACONTECIDO. A tela gravada em 26/10/2026
+    # (`20261026T020958092-sonda-eproc-sem-resultado.json`) mostrou que a
+    # busca rapida, quando nao cai direto no processo, leva ao formulario de
+    # Consulta Processual COM O NUMERO JA PREENCHIDO e o botao Consultar
+    # esperando. Concluir "nao esta no eproc" ali seria afirmar a ausencia de
+    # um processo que ninguem chegou a procurar.
+    if _terminar_a_consulta_do_eproc(pagina, guarda, segundos):
+        chegou = esperar_tela_do_processo(pagina, segundos)
+        if chegou in ("eventos", "capa"):
+            return Resposta(
+                True, f"A tela do processo apareceu ({chegou}) depois de "
+                      "completar a consulta no formulario.")
+        return _nao_confirmado(
+            "eproc", pagina,
+            "A consulta foi completada no formulario e a tela do processo "
+            "ainda assim nao apareceu.")
     return _nao_confirmado(
         "eproc", pagina, "A tela do processo nao apareceu no tempo dado.")
+
+
+CAMPO_DA_CONSULTA_DO_EPROC = "#numNrProcesso"
+BOTAO_DA_CONSULTA_DO_EPROC = "#sbmConsultar"
+
+
+def _terminar_a_consulta_do_eproc(pagina: Any, guarda: Any,
+                                  segundos: int) -> bool:
+    """Clica em Consultar quando a busca rapida parou no formulario.
+
+    Devolve se chegou a clicar. Nao e um clique a esmo: a tela de 26/10/2026
+    trazia o numero ja escrito em `#numNrProcesso` e o botao `#sbmConsultar`
+    ao lado, que e a propria busca do portal, no mesmo escopo de permissao da
+    busca rapida.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import elemento_visivel, permissao_efemera
+
+    campo = elemento_visivel(pagina, CAMPO_DA_CONSULTA_DO_EPROC)
+    botao = elemento_visivel(pagina, BOTAO_DA_CONSULTA_DO_EPROC)
+    if campo is None or botao is None:
+        return False
+    try:
+        escrito = campo.evaluate("e => (e.value || '').length")
+    except Exception:
+        escrito = 0
+    if not escrito:
+        # Formulario vazio nao e a tela que se viu: ali o numero vinha
+        # preenchido. Clicar num formulario vazio consultaria o que?
+        return False
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="consulta processual do eproc, somente o botao Consultar",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(BOTAO_DA_CONSULTA_DO_EPROC,),
+        seletores_preenchiveis=(),
+    ))
+    guarda.pode_executar(Acao.CLICAR, BOTAO_DA_CONSULTA_DO_EPROC, url=pagina.url)
+    botao.click()
+    try:
+        pagina.wait_for_load_state("networkidle", timeout=segundos * 1000)
+    except Exception:
+        pass
+    return True
 
 
 def procurar_no_esaj(pagina: Any, guarda: Any, numero: Any, url: str,
@@ -268,14 +383,20 @@ PROCURADORES: dict[str, Callable] = {
 
 
 def procurar(sistema: str, pagina: Any, guarda: Any, numero: Any, url: str,
-             segundos: int) -> Resposta:
+             segundos: int, perfil: Optional[str] = None) -> Resposta:
     """Despacha para a sonda do sistema. Sistema sem sonda nao vira `False`."""
+    import inspect
+
     procurador = PROCURADORES.get(sistema)
     if procurador is None:
         return Resposta(
             None, f"Nao ha sonda escrita para o sistema {sistema!r}. A "
                   "ausencia nao foi confirmada porque ninguem olhou.")
     try:
+        # So quem precisa do perfil o recebe: o Portal de Servicos o usa para
+        # refazer a entrada; os outros nao tem o que fazer com ele.
+        if "perfil" in inspect.signature(procurador).parameters:
+            return procurador(pagina, guarda, numero, url, segundos, perfil)
         return procurador(pagina, guarda, numero, url, segundos)
     except Exception as exc:
         # Sonda quebrada em um processo nao pode derrubar a varredura inteira:
