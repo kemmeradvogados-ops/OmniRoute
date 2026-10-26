@@ -306,3 +306,96 @@ def test_o_perfil_so_chega_a_quem_precisa_dele(monkeypatch):
                         "Advogado")
     assert r.valor is True
     assert recebidos == ["sem perfil"]
+
+
+# --------------------------------------------------------------------------
+# Busca que devolve UMA linha abre o processo sozinha
+#
+# Tres corridas seguidas, 25 e 26/10/2026: sempre que uma busca do Portal de
+# Servicos devolveu 1 linha, a busca SEGUINTE nao achou o formulario; quando
+# devolveu 5, a seguinte funcionou. A tela gravada mostrou o quadro embutido
+# em `.../consultar/detalhes-processo`.
+# --------------------------------------------------------------------------
+
+class _Quadro:
+    def __init__(self, url, alvos=()):
+        self.url = url
+        self._alvos = set(alvos)
+
+    def query_selector(self, seletor):
+        return object() if seletor in self._alvos else None
+
+
+class _Clicavel:
+    def __init__(self, registro, seletor, sai):
+        self._registro, self._seletor, self._sai = registro, seletor, sai
+
+    def click(self):
+        self._registro.append(self._seletor)
+        self._sai()
+
+
+def test_a_tela_do_processo_e_reconhecida_pelo_endereco(monkeypatch):
+    monkeypatch.setattr(
+        "justica_mcp.dcp.quadro_da_consulta",
+        lambda pagina: _Quadro("https://x/consultaprocessual/#/consultar/detalhes-processo"))
+    assert sondas.dentro_da_tela_do_processo(_Pagina()) is True
+
+    monkeypatch.setattr(
+        "justica_mcp.dcp.quadro_da_consulta",
+        lambda pagina: _Quadro("https://x/consultaprocessual/#/consultaportal"))
+    assert sondas.dentro_da_tela_do_processo(_Pagina()) is False
+
+
+def test_a_volta_usa_a_trilha_do_portal_antes_do_botao_voltar(monkeypatch):
+    """A ordem e a da tela gravada: a trilha de navegacao primeiro."""
+    cliques: list = []
+    estado = {"dentro": True}
+
+    class _Guarda:
+        permissoes: list = []
+
+        def pode_executar(self, *a, **k):
+            return True
+
+    quadro = _Quadro("https://x/#/consultar/detalhes-processo")
+    monkeypatch.setattr("justica_mcp.dcp.quadro_da_consulta", lambda p: quadro)
+    monkeypatch.setattr("justica_mcp.portal._assentar", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "justica_mcp.portal.elemento_visivel",
+        lambda alvo, seletor: _Clicavel(
+            cliques, seletor, lambda: estado.update(dentro=False))
+        if seletor == "texto=Consultas / Consulta Processual" else None)
+    monkeypatch.setattr(sondas, "dentro_da_tela_do_processo",
+                        lambda p: estado["dentro"])
+
+    assert sondas.voltar_da_tela_do_processo(_Pagina(), _Guarda(), 5) is True
+    assert cliques == ["texto=Consultas / Consulta Processual"]
+
+
+def test_a_sonda_sai_da_tela_do_processo_antes_de_buscar(monkeypatch, capsys):
+    saidas: list = []
+    monkeypatch.setattr(sondas, "dentro_da_tela_do_processo",
+                        lambda p: not saidas)
+    monkeypatch.setattr(
+        sondas, "voltar_da_tela_do_processo",
+        lambda p, g, s: (saidas.append("voltou"), True)[1])
+    monkeypatch.setattr("justica_mcp.dcp.buscar", lambda *a, **k: "quadro")
+    monkeypatch.setattr("justica_mcp.dcp.esperar_a_lista_de_resultado",
+                        lambda *a, **k: ["linha"])
+    r = sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5)
+    assert r.valor is True
+    assert saidas == ["voltou"]
+    assert "[VOLTOU]" in capsys.readouterr().out
+
+
+def test_quando_a_volta_falha_a_sonda_avisa_em_vez_de_calar(
+        monkeypatch, capsys):
+    monkeypatch.setattr(sondas, "dentro_da_tela_do_processo", lambda p: True)
+    monkeypatch.setattr(sondas, "voltar_da_tela_do_processo",
+                        lambda p, g, s: False)
+    monkeypatch.setattr("justica_mcp.dcp.buscar", lambda *a, **k: "quadro")
+    monkeypatch.setattr("justica_mcp.dcp.esperar_a_lista_de_resultado",
+                        lambda *a, **k: ["linha"])
+    sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5)
+    assert "[ATENCAO]" in capsys.readouterr().out

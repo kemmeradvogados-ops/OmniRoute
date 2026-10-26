@@ -131,6 +131,18 @@ def procurar_no_dcp(pagina: Any, guarda: Any, numero: Any, url: str,
     # superficie de falha, e nenhum processo de terceiro aberto a toa.
     from .dcp import ConsultaIndisponivel
 
+    # SAIR DA TELA DO PROCESSO ANTES DE BUSCAR. A busca anterior pode ter
+    # devolvido uma linha so, e nesse caso o portal abriu o processo sozinho:
+    # dali nao ha formulario. Sair antes custa um clique; descobrir depois
+    # custa o processo inteiro da vez.
+    if dentro_da_tela_do_processo(pagina):
+        if voltar_da_tela_do_processo(pagina, guarda, segundos):
+            print("      [VOLTOU] A sessao estava dentro de um processo, "
+                  "aberto pela busca anterior. Voltou para a consulta.")
+        else:
+            print("      [ATENCAO] A sessao esta dentro de um processo e a "
+                  "volta do portal nao funcionou. A busca abaixo pode falhar.")
+
     try:
         quadro = buscar(pagina, guarda, numero, url, segundos, linha=0)
     except ConsultaIndisponivel as exc:
@@ -145,6 +157,8 @@ def procurar_no_dcp(pagina: Any, guarda: Any, numero: Any, url: str,
         # Entao refaz-se a ENTRADA inteira, que e caminho provado, e tenta-se
         # uma vez. Uma, nao em laco: busca que falha duas vezes seguidas e
         # outro problema, e insistir esconderia qual.
+        if dentro_da_tela_do_processo(pagina):
+            voltar_da_tela_do_processo(pagina, guarda, segundos)
         preparo = preparar_dcp(pagina, guarda, perfil, segundos)
         if not preparo.pronto:
             return _nao_confirmado(
@@ -354,6 +368,76 @@ def preparar_dcp(pagina: Any, guarda: Any, perfil: Optional[str],
         _assentar(pagina, segundos)
         pagina = reencontrar_o_portal(pagina, min(segundos, 15))
     return Preparo(pagina, True, "portal aberto")
+
+
+# A tela do processo aberto, no quadro embutido do Portal de Servicos, e o
+# caminho `.../consultar/detalhes-processo`. Conferido em 26/10/2026 na tela
+# `20261026T033403540-sonda-dcp-sem-resultado.json`.
+MARCA_DA_TELA_DO_PROCESSO = "detalhes-processo"
+
+# A volta, pelo caminho que o PROPRIO portal oferece, na ordem em que a tela
+# gravada os mostrou: a trilha de navegacao primeiro, o botao Voltar depois.
+#   <a> .breadcrumb-item  'Consultas / Consulta Processual'  x=43 y=12
+#   <button> .btn         'Voltar'                           x=4  y=92
+VOLTAS_DA_TELA_DO_PROCESSO = (
+    "texto=Consultas / Consulta Processual",
+    "texto=Voltar",
+)
+
+
+def dentro_da_tela_do_processo(pagina: Any) -> bool:
+    """Se a sessao esta DENTRO de um processo, e nao na consulta.
+
+    Busca que devolve exatamente uma linha faz o portal abrir o processo
+    sozinho. Visto em tres corridas seguidas, 25 e 26/10/2026: sempre que uma
+    busca devolveu 1 linha, a busca SEGUINTE nao achou o formulario; quando
+    devolveu 5, a seguinte funcionou.
+    """
+    from .dcp import quadro_da_consulta
+
+    try:
+        quadro = quadro_da_consulta(pagina)
+        return MARCA_DA_TELA_DO_PROCESSO in ((quadro.url or "") if quadro else "")
+    except Exception:
+        return False
+
+
+def voltar_da_tela_do_processo(pagina: Any, guarda: Any, segundos: int) -> bool:
+    """Sai da tela do processo pela volta do proprio portal.
+
+    Refazer a entrada no portal NAO resolve isto, e foi o que eu tentei antes:
+    `entrar_no_portal_de_servicos` nao faz nada quando a sessao ja esta no
+    portal, e a reabertura pelo menu tambem nao, porque para o menu a tela de
+    detalhe JA E a consulta processual. A tentativa virava um nada e a busca
+    seguinte falhava igual.
+    """
+    from .core.guarda_navegacao import Acao, Permissao
+    from .dcp import quadro_da_consulta
+    from .portal import _assentar, elemento_visivel, permissao_efemera
+
+    quadro = quadro_da_consulta(pagina)
+    if quadro is None:
+        return False
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="voltar da tela do processo para a consulta",
+        conferido_em="execucao atual",
+        seletores_clicaveis=VOLTAS_DA_TELA_DO_PROCESSO,
+        seletores_preenchiveis=(),
+    ))
+    for seletor in VOLTAS_DA_TELA_DO_PROCESSO:
+        alvo = elemento_visivel(quadro, seletor)
+        if alvo is None:
+            continue
+        try:
+            guarda.pode_executar(Acao.CLICAR, seletor, url=pagina.url)
+            alvo.click()
+        except Exception:
+            continue
+        _assentar(pagina, min(segundos, 15))
+        if not dentro_da_tela_do_processo(pagina):
+            return True
+    return False
 
 
 PREPARADORES: dict[str, Callable] = {"dcp": preparar_dcp}
