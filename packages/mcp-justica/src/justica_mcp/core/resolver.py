@@ -29,7 +29,7 @@ from typing import Awaitable, Callable, Optional
 import yaml
 
 from .cnj import NumeroCNJ
-from .estado import Estado
+from .estado import Estado, detalhe_do_erro
 from .schemas import Confianca, SistemaResolvido, agora_iso
 from .tribunais import (
     Sistema,
@@ -279,7 +279,7 @@ async def resolver_sistema(
         except Exception as exc:  # sonda quebrada nao pode derrubar a resolucao
             estado.registrar(
                 acao="sondagem_falhou", tribunal=tribunal.codigo, sistema=sistema.value,
-                numero=numero.formatado, resultado="erro", detalhe=type(exc).__name__,
+                numero=numero.formatado, resultado="erro", detalhe=detalhe_do_erro(exc),
             )
 
     # 3. base nacional: evidencia oficial, porem possivelmente atrasada

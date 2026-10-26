@@ -63,3 +63,43 @@ def test_disjuntor_bloqueia_insistencia():
     d.registrar_falha()
     with pytest.raises(PortalIndisponivel, match="Nao insista"):
         d.exigir_passagem()
+
+
+# --------------------------------------------------------------------------
+# A auditoria precisa guardar a MENSAGEM, nao so o tipo.
+#
+# Em 26/10/2026 a consulta autenticada falhou tres vezes e o registro dizia
+# apenas "RuntimeError". Esse e o tipo que o proprio codigo levanta em tres
+# situacoes diferentes, entao o registro nao distinguia nenhuma delas e o
+# diagnostico ficou parado esperando o operador colar a mensagem de volta.
+
+from justica_mcp.core.estado import LIMITE_DO_DETALHE, detalhe_do_erro
+
+
+def test_o_detalhe_traz_tipo_e_mensagem():
+    d = detalhe_do_erro(RuntimeError("Consulta nao concluida (codigo 1)."))
+    assert d.startswith("RuntimeError: ")
+    assert "codigo 1" in d
+
+
+def test_runtime_errors_diferentes_viram_detalhes_diferentes():
+    # O ponto todo: antes os tres eram gravados como "RuntimeError".
+    a = detalhe_do_erro(RuntimeError("Portal nao abriu"))
+    b = detalhe_do_erro(RuntimeError("Consulta nao concluida (codigo 2)."))
+    c = detalhe_do_erro(RuntimeError("Destino com termo de risco"))
+    assert len({a, b, c}) == 3
+
+
+def test_so_a_primeira_linha_entra():
+    d = detalhe_do_erro(RuntimeError("primeira linha\nrastro de pilha\nmais"))
+    assert "rastro" not in d
+    assert d.endswith("primeira linha")
+
+
+def test_sem_mensagem_devolve_o_tipo_sozinho():
+    assert detalhe_do_erro(ValueError()) == "ValueError"
+
+
+def test_mensagem_enorme_e_cortada():
+    d = detalhe_do_erro(RuntimeError("x" * 5000))
+    assert len(d) <= LIMITE_DO_DETALHE

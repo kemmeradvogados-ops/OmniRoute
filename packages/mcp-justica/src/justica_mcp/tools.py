@@ -17,7 +17,7 @@ from .core.acesso import PortalNaoConfigurado, autenticado_habilitado, portais_c
 from .core.cofre import Cofre, CofreIndisponivel
 from .core.limite_tentativas import LimiteTentativas, TetoDeTentativasAtingido
 from .core.cnj import NumeroCNJInvalido, parse_numero
-from .core.estado import Estado
+from .core.estado import Estado, detalhe_do_erro
 from .core.resolver import resolver_sistema
 from .core.resiliencia import PortalIndisponivel
 from .core.schemas import Erro
@@ -347,7 +347,7 @@ def registrar(mcp: Any) -> None:
             return _json(resposta.model_dump())
         except Exception as exc:
             _estado.registrar(acao="consultar_processo", solicitante=params.solicitante,
-                              numero=params.numero, resultado="erro", detalhe=type(exc).__name__)
+                              numero=params.numero, resultado="erro", detalhe=detalhe_do_erro(exc))
             return _tratar(exc)
 
     @mcp.tool(name="justica_listar_andamentos", annotations=somente_leitura("Listar andamentos"))
@@ -602,7 +602,7 @@ def registrar(mcp: Any) -> None:
             return _erro(str(exc), "acesso_desligado", None)
         except Exception as exc:
             _estado.registrar(acao="consulta_processo_autenticada", numero=params.numero,
-                              resultado="erro", detalhe=type(exc).__name__)
+                              resultado="erro", detalhe=detalhe_do_erro(exc))
             return _tratar(exc)
 
     @mcp.tool(name="justica_pecas_do_processo",

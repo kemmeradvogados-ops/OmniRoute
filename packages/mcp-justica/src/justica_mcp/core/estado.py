@@ -46,6 +46,39 @@ CREATE INDEX IF NOT EXISTS idx_auditoria_data ON auditoria(ocorrido_em DESC);
 """
 
 
+# Quantos caracteres da mensagem cabem na auditoria. O suficiente para a
+# primeira linha de um recado util, sem transformar o banco num depositorio de
+# rastros de pilha.
+LIMITE_DO_DETALHE = 300
+
+
+def detalhe_do_erro(exc: BaseException) -> str:
+    """O que gravar na auditoria quando algo falha: tipo E mensagem.
+
+    POR QUE ISTO EXISTE
+
+    A auditoria gravava so `type(exc).__name__`. Em 26/10/2026 a consulta
+    autenticada falhou tres vezes e o registro dizia apenas "RuntimeError",
+    que e o tipo que o proprio codigo levanta quando a captura nao produz
+    dados. O motivo de verdade estava na MENSAGEM, e a mensagem tinha sido
+    jogada fora: "Portal nao abriu", "Consulta nao concluida (codigo N)" e
+    "Destino com termo de risco" sao todos `RuntimeError`, e o registro nao
+    distinguia nenhum deles.
+
+    Foi a segunda vez no mesmo dia que descartar a mensagem de uma excecao
+    custou uma rodada inteira de diagnostico. Por isso virou funcao, usada em
+    todos os pontos que gravam erro.
+
+    So a PRIMEIRA linha entra: o resto de um rastro de pilha nao ajuda quem le
+    a auditoria e so dificulta a leitura.
+    """
+    texto = str(exc).strip().splitlines()
+    primeira = texto[0].strip() if texto else ""
+    if not primeira:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {primeira}"[:LIMITE_DO_DETALHE]
+
+
 def diretorio_estado() -> Path:
     bruto = os.environ.get("JUSTICA_MCP_HOME")
     base = Path(bruto).expanduser() if bruto else Path.home() / ".justica-mcp"
