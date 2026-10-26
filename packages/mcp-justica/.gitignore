@@ -11,3 +11,12 @@ __pycache__/
 # zip faria conviverem duas verdades: a fonte e uma copia que envelhece em
 # silencio, e quem instalasse a copia velha acharia que instalou a nova.
 conector/*.mcpb
+
+# Pasta de copias criada por engano DENTRO do pacote. Acontece quando um
+# caminho do Windows (`G:\Meu Drive\...`) chega a uma maquina Linux: la a
+# barra invertida nao separa pasta, entao o nome inteiro vira UM diretorio
+# aqui dentro, e o que deveria ir para o Drive da banca fica versionado.
+# Foi assim que `sistemas.json` entrou no repositorio publico (commit
+# d2533222, removido depois). O conteudo era de teste, mas a proxima vez
+# poderia ser de cliente.
+G:*
