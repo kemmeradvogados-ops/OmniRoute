@@ -34,7 +34,7 @@ TRES = "0000003-88.2019.8.19.0001"
 
 def _sonda(mapa, registro=None):
     """Sonda falsa: `mapa` diz o que cada sistema responde por numero."""
-    async def sonda(sistema, numeros):
+    def sonda(sistema, numeros):
         if registro is not None:
             registro.append((sistema.value, [n.apenas_digitos for n in numeros]))
         return {n.apenas_digitos: mapa.get(sistema.value, {}).get(n.formatado)
@@ -42,11 +42,11 @@ def _sonda(mapa, registro=None):
     return sonda
 
 
-async def test_todos_achados_no_eproc_custam_uma_autenticacao(estado):
+def test_todos_achados_no_eproc_custam_uma_autenticacao(estado):
     """A economia inteira do sondador esta aqui: sistema com fila vazia nao e
     aberto. Se tudo esta no mais novo, nao se autentica nos outros dois."""
     visitas: list = []
-    relato = await sondar_em_lote(
+    relato = sondar_em_lote(
         [_num(UM), _num(DOIS)], estado,
         _sonda({"eproc": {UM: True, DOIS: True}}, visitas),
     )
@@ -57,11 +57,11 @@ async def test_todos_achados_no_eproc_custam_uma_autenticacao(estado):
     assert all(l["confianca"] == "alta" for l in relato["linhas"])
 
 
-async def test_a_ordem_e_eproc_pje_dcp_e_a_fila_encolhe(estado):
+def test_a_ordem_e_eproc_pje_dcp_e_a_fila_encolhe(estado):
     """Regra do operador: o mais novo primeiro, o DCP por ultimo, porque
     comecar pelo mais antigo acharia copia de processo ja migrado."""
     visitas: list = []
-    await sondar_em_lote(
+    sondar_em_lote(
         [_num(UM), _num(DOIS), _num(TRES)], estado,
         _sonda({"eproc": {UM: True}, "pje": {DOIS: True}, "dcp": {TRES: True}},
                visitas),
@@ -73,10 +73,10 @@ async def test_a_ordem_e_eproc_pje_dcp_e_a_fila_encolhe(estado):
     assert len(visitas[2][1]) == 1
 
 
-async def test_achado_em_dois_sistemas_nao_e_escolhido_sozinho(estado):
+def test_achado_em_dois_sistemas_nao_e_escolhido_sozinho(estado):
     """Processo que aparece em dois sistemas e o caso em que errar custa caro.
     A resposta avisa e devolve a decisao ao advogado."""
-    relato = await sondar_em_lote(
+    relato = sondar_em_lote(
         [_num(UM)], estado,
         _sonda({"eproc": {UM: False}, "pje": {UM: True}, "dcp": {UM: True}}),
         conferir_segundo_grau=True,
@@ -88,8 +88,8 @@ async def test_achado_em_dois_sistemas_nao_e_escolhido_sozinho(estado):
     assert relato["autenticacoes"] == 3
 
 
-async def test_sem_conferir_segundo_grau_para_no_primeiro_achado(estado):
-    relato = await sondar_em_lote(
+def test_sem_conferir_segundo_grau_para_no_primeiro_achado(estado):
+    relato = sondar_em_lote(
         [_num(UM)], estado,
         _sonda({"eproc": {UM: False}, "pje": {UM: True}, "dcp": {UM: True}}),
     )
@@ -100,11 +100,11 @@ async def test_sem_conferir_segundo_grau_para_no_primeiro_achado(estado):
     assert "segundo grau" in linha["observacao"]
 
 
-async def test_nao_consegui_ver_nao_vira_nao_existe(estado):
+def test_nao_consegui_ver_nao_vira_nao_existe(estado):
     """None e 'ninguem olhou'. Tratar como 'nao existe' faria o relatorio
     afirmar ausencia que ninguem conferiu, e processo dado como inexistente e
     prazo perdido."""
-    relato = await sondar_em_lote(
+    relato = sondar_em_lote(
         [_num(UM)], estado,
         _sonda({"eproc": {UM: False}, "pje": {UM: None}, "dcp": {UM: False}}),
     )
@@ -115,8 +115,8 @@ async def test_nao_consegui_ver_nao_vira_nao_existe(estado):
     assert "pje" in linha["observacao"]
 
 
-async def test_nenhum_sistema_reconheceu_diz_isso_com_todas_as_letras(estado):
-    relato = await sondar_em_lote(
+def test_nenhum_sistema_reconheceu_diz_isso_com_todas_as_letras(estado):
+    relato = sondar_em_lote(
         [_num(UM)], estado,
         _sonda({"eproc": {UM: False}, "pje": {UM: False}, "dcp": {UM: False}}),
     )
@@ -126,9 +126,9 @@ async def test_nenhum_sistema_reconheceu_diz_isso_com_todas_as_letras(estado):
     assert "transcricao" in linha["observacao"]
 
 
-async def test_tribunais_diferentes_na_mesma_varredura_sao_recusados(estado):
+def test_tribunais_diferentes_na_mesma_varredura_sao_recusados(estado):
     with pytest.raises(ProcessosDeTribunaisDiferentes, match="um tribunal"):
-        await sondar_em_lote(
+        sondar_em_lote(
             [_num(UM), _num("0000001-88.2019.8.26.0100")], estado, _sonda({}),
         )
 
@@ -138,12 +138,12 @@ async def test_o_resultado_confirmado_vai_para_o_cache_do_resolvedor(estado):
     pergunta sobre este processo nao gasta autenticacao nenhuma."""
     from justica_mcp.core.resolver import resolver_sistema
 
-    await sondar_em_lote([_num(UM)], estado, _sonda({"eproc": {UM: True}}))
+    sondar_em_lote([_num(UM)], estado, _sonda({"eproc": {UM: True}}))
     depois = await resolver_sistema(_num(UM), estado)
     assert depois.sistema == "eproc"
     assert depois.origem_da_resolucao == "cache"
 
 
-async def test_lista_vazia_nao_abre_portal_nenhum(estado):
-    relato = await sondar_em_lote([], estado, _sonda({}))
+def test_lista_vazia_nao_abre_portal_nenhum(estado):
+    relato = sondar_em_lote([], estado, _sonda({}))
     assert relato["linhas"] == []

@@ -186,3 +186,50 @@ def test_sonda_que_nao_confirma_nao_vira_nao_esta_aqui(
     assert "nao confirmado" in saida
     assert "0 de 1 processo(s) resolvido(s)" in saida
     assert "nao conseguiu responder" in saida
+
+
+# --------------------------------------------------------------------------
+# A corrida nao pode acontecer dentro de laco assincrono
+# --------------------------------------------------------------------------
+
+def test_o_autenticador_nunca_e_chamado_dentro_de_laco_assincrono(
+        portais, monkeypatch):
+    """A primeira corrida real, em 26/10/2026, morreu em `sync_playwright()`
+    com "Playwright Sync API inside the asyncio loop": a sondagem era `async`
+    por simetria com o resolvedor, e a sonda de verdade abre navegador.
+
+    Os testes de entao nao pegaram porque o autenticador simulado deles nao
+    tinha a restricao. Este tem: ele recusa exatamente como a biblioteca do
+    navegador recusa.
+    """
+    import asyncio
+
+    from justica_mcp.sondas import Resposta
+
+    def autenticar(url, tribunal, sistema, *, apos_autenticar=None, **k):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "Playwright Sync API inside the asyncio loop")
+        if apos_autenticar is not None:
+            apos_autenticar(_Pagina(), _Guarda(), _Estado(), _Identidade(tribunal))
+        return 0
+
+    monkeypatch.setattr(portal, "autenticar", autenticar)
+    monkeypatch.setattr("justica_mcp.sondas.procurar",
+                        lambda *a, **k: Resposta(True, "simulado"))
+    assert portal.sondar_sistemas([UM], confirmado=True) == 0
+
+
+def test_o_miolo_da_sondagem_nao_e_assincrono():
+    """Guarda do mesmo conserto, um degrau abaixo: se alguem tornar
+    `sondar_em_lote` assincrona de novo, a corrida volta a morrer no
+    navegador, e nao aqui."""
+    import inspect
+
+    from justica_mcp.core.sondagem import sondar_em_lote
+
+    assert not inspect.iscoroutinefunction(sondar_em_lote)

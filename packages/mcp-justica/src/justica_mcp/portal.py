@@ -7638,8 +7638,6 @@ def sondar_sistemas(
     Sistema cuja fila esvaziou NAO e aberto. Se todos forem achados no eproc,
     que e o primeiro da ordem, a corrida custa uma autenticacao.
     """
-    import asyncio
-
     from .core.acesso import (PortalNaoConfigurado, autenticado_habilitado,
                               config_portal)
     from .core.cnj import parse_numero
@@ -7711,7 +7709,7 @@ def sondar_sistemas(
     print(f"Custo maximo: {len(configurados)} autenticacao(oes), "
           "independentemente de quantos processos.")
 
-    async def sonda(sistema, pendentes):
+    def sonda(sistema, pendentes):
         config = configurados[sistema.value]
         respostas: dict = {}
 
@@ -7745,11 +7743,11 @@ def sondar_sistemas(
         return respostas
 
     try:
-        relato = asyncio.run(sondar_em_lote(
+        relato = sondar_em_lote(
             numeros, estado or Estado(), sonda,
             sistemas=list(configurados),
             conferir_segundo_grau=conferir_segundo_grau,
-        ))
+        )
     except ProcessosDeTribunaisDiferentes as exc:
         print(f"\n{exc}", file=sys.stderr)
         return 1

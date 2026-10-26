@@ -126,17 +126,17 @@ async def test_historico_antigo_responde_com_confianca_baixa_e_ressalva(
     assert "pode ter migrado" in r.motivo
 
 
-async def test_a_sondagem_alimenta_o_historico_da_banca(pasta, tmp_path):
+def test_a_sondagem_alimenta_o_historico_da_banca(pasta, tmp_path):
     """E o ponto inteiro: a tentativa que um advogado gastou nao e gasta de
     novo por ninguem."""
     from justica_mcp.core.sondagem import sondar_em_lote
 
-    async def sonda(sistema, numeros):
+    def sonda(sistema, numeros):
         return {n.apenas_digitos: sistema.value == "eproc" for n in numeros}
 
     n = _num(UM)
     estado = Estado(tmp_path / "estado.sqlite3")
-    await sondar_em_lote([n], estado, sonda)
+    sondar_em_lote([n], estado, sonda)
     guardado = hist.consultar(n.apenas_digitos)
     assert guardado["sistema"] == "eproc"
     assert guardado["origem"] == "sondagem no portal"

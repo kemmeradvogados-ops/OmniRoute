@@ -44,7 +44,7 @@ e processo dado como inexistente e prazo perdido.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional
+from typing import Callable, Optional
 
 from .cnj import NumeroCNJ
 from .estado import Estado
@@ -54,7 +54,14 @@ from .tribunais import Sistema, Tribunal, identificar_tribunal
 # Recebe o sistema e a lista de numeros pendentes; devolve, por numero em
 # apenas digitos, True (o sistema reconheceu), False (nao reconheceu) ou None
 # (nao deu para ver). Quem implementa autentica UMA vez e procura todos.
-SondaEmLote = Callable[[Sistema, list[NumeroCNJ]], Awaitable[dict[str, Optional[bool]]]]
+SondaEmLote = Callable[[Sistema, list[NumeroCNJ]], dict[str, Optional[bool]]]
+
+# SINCRONA, e isto nao e detalhe de estilo. A biblioteca que dirige o
+# navegador recusa a sua interface sincrona dentro de um laco assincrono
+# ("Playwright Sync API inside the asyncio loop"), e a sonda de verdade abre
+# navegador. Em 26/10/2026 a primeira corrida real morreu exatamente ali,
+# porque esta funcao era `async` por simetria com o resolvedor e nada mais.
+# Os testes nao pegaram: o autenticador simulado deles nao tem a restricao.
 
 
 class ProcessosDeTribunaisDiferentes(ValueError):
@@ -133,7 +140,7 @@ def _conclusao(linha: LinhaDaSondagem, ordem: list, conferiu_tudo: bool) -> None
     ) if naos else "Nenhum sistema foi sondado."
 
 
-async def sondar_em_lote(
+def sondar_em_lote(
     numeros: list,
     estado: Estado,
     sonda: SondaEmLote,
@@ -176,7 +183,7 @@ async def sondar_em_lote(
         if not pendentes:
             break
         abertos.append(sistema.value)
-        respostas = await sonda(sistema, [por_digitos[d] for d in pendentes])
+        respostas = sonda(sistema, [por_digitos[d] for d in pendentes])
         ultimo = posicao == len(a_varrer) - 1
         ainda: list = []
         for digitos in pendentes:
