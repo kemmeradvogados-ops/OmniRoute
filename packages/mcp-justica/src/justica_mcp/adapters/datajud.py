@@ -64,12 +64,74 @@ class AdaptadorDataJud(AdaptadorBase):
             raise ChaveDataJudAusente()
         return {"Authorization": f"APIKey {self._chave}", "Content-Type": "application/json"}
 
+    def _diagnostico_do_401(self) -> str:
+        """Diz POR QUE a chave foi recusada, sem mostrar a chave.
+
+        Em 26/10/2026 o 401 custou uma noite. Tudo o que se podia medir dizia
+        que estava certo: a mesma chave respondia 200 de duas maquinas
+        diferentes, o valor no `.env` tinha os 60 caracteres exatos e sem
+        caractere invisivel, e o campo da extensao estava vazio. O que faltava
+        era saber QUAL valor o servidor estava usando, e de onde ele veio.
+        O 401 cru nao dizia nada disso, e nem sequer tinha ramo proprio: caia
+        no `raise_for_status` e virava um `HTTPStatusError` sem contexto.
+
+        Nenhum valor aparece aqui: so comprimento e procedencia.
+        """
+        from ..core.config import (parece_molde_nao_substituido,
+                                   sobrescritas_pelo_ambiente)
+
+        partes = [
+            "DataJud recusou a chave (401). A chave e publica e nao expira "
+            "por uso, entao o problema costuma ser QUAL valor chegou ate aqui."
+        ]
+        partes.append(f"A chave em uso tem {len(self._chave)} caractere(s).")
+        if parece_molde_nao_substituido(self._chave):
+            partes.append(
+                "E ela e um MOLDE nao substituido: o campo da extensao ficou "
+                "vazio e o aplicativo mandou o texto do molde no lugar de nada. "
+                "Esse texto vence o arquivo .env por precedencia de ambiente."
+            )
+        # A comparacao com o arquivo so e afirmada quando o arquivo pode ser
+        # lido E tem a chave. "Nao achei diferenca" nao e "sao iguais": o
+        # arquivo pode nem existir onde este processo esta rodando.
+        try:
+            from ..core.config import pares_do_arquivo
+
+            no_arquivo = pares_do_arquivo().get("DATAJUD_API_KEY")
+            vencidas = {c: (a, b) for c, a, b, _ in sobrescritas_pelo_ambiente()}
+        except Exception:  # diagnostico nunca derruba a chamada
+            no_arquivo, vencidas = None, {}
+
+        if "DATAJUD_API_KEY" in vencidas:
+            do_arquivo, do_ambiente = vencidas["DATAJUD_API_KEY"]
+            partes.append(
+                f"O arquivo .env traz um valor de {do_arquivo} caractere(s), "
+                f"diferente do que esta em uso ({do_ambiente}). O programa usa "
+                "o do AMBIENTE, nao o do arquivo: limpe o campo da extensao ou "
+                "a variavel do sistema para o arquivo voltar a valer."
+            )
+        elif no_arquivo is not None:
+            partes.append(
+                "O valor em uso e o mesmo do arquivo .env, entao foi a chave "
+                "gravada que o servico recusou: confira a vigente em "
+                "https://datajud-wiki.cnj.jus.br/api-publica/acesso/."
+            )
+        else:
+            partes.append(
+                "Nao consegui ler a chave do arquivo .env deste processo para "
+                "comparar, entao nao sei dizer se o valor em uso veio de la ou "
+                "do ambiente. Rode o comando `ambiente` para ver os dois."
+            )
+        return " ".join(partes)
+
     async def _buscar(self, tribunal: Tribunal, consulta: dict[str, Any]) -> dict[str, Any]:
         url = f"{BASE}/{tribunal.alias_datajud}/_search"
         async with httpx.AsyncClient(timeout=30) as cliente:
             resposta = await self._requisitar(
                 cliente, method="POST", url=url, headers=self._cabecalhos(), json=consulta
             )
+        if resposta.status_code == 401:
+            raise PermissionError(self._diagnostico_do_401())
         if resposta.status_code == 403:
             raise PermissionError(
                 "DataJud recusou a requisicao (403). Duas causas comuns: chave "

@@ -128,3 +128,51 @@ def test_nenhuma_capacidade_do_dcp_ficou_sem_declaracao():
         decl = consultar("dcp", capacidade)
         assert decl.situacao is Situacao.NAO_IMPLEMENTADO, capacidade
         assert decl.motivo, capacidade
+
+
+# --------------------------------------------------------------------------
+# O 401 do DataJud precisa dizer POR QUE, sem mostrar a chave.
+#
+# Em 26/10/2026 um 401 custou uma noite: a mesma chave respondia 200 de duas
+# maquinas, o valor no arquivo tinha os 60 caracteres exatos e o campo da
+# extensao estava vazio. Faltava saber QUAL valor o servidor usava e de onde
+# ele vinha. O 401 nem ramo proprio tinha: caia no `raise_for_status`.
+
+def test_o_401_informa_o_comprimento_e_nao_a_chave():
+    from justica_mcp.adapters.datajud import AdaptadorDataJud
+
+    chave = "k" * 60
+    texto = AdaptadorDataJud(chave=chave)._diagnostico_do_401()
+    assert "60 caractere" in texto
+    assert chave not in texto
+
+
+def test_o_401_denuncia_molde_nao_substituido():
+    from justica_mcp.adapters.datajud import AdaptadorDataJud
+
+    texto = AdaptadorDataJud(
+        chave="${user_config.chave_do_datajud}")._diagnostico_do_401()
+    assert "MOLDE" in texto
+
+
+def test_o_401_aponta_quando_o_ambiente_venceu_o_arquivo(tmp_path, monkeypatch):
+    from justica_mcp.adapters import datajud as mod
+    from justica_mcp.core import config as conf
+
+    monkeypatch.setattr(conf, "raiz_do_pacote", lambda: tmp_path)
+    (tmp_path / ".env").write_text(
+        "DATAJUD_API_KEY=" + "a" * 60 + "\n", encoding="utf-8")
+    monkeypatch.setenv("DATAJUD_API_KEY", "b" * 31)
+    texto = mod.AdaptadorDataJud(chave="b" * 31)._diagnostico_do_401()
+    assert "60 caractere(s), diferente" in texto
+    assert "AMBIENTE" in texto
+
+
+def test_sem_arquivo_nao_afirma_que_sao_iguais(tmp_path, monkeypatch):
+    # "Nao achei diferenca" nao e "sao iguais": o arquivo pode nem existir.
+    from justica_mcp.adapters import datajud as mod
+    from justica_mcp.core import config as conf
+
+    monkeypatch.setattr(conf, "raiz_do_pacote", lambda: tmp_path)
+    texto = mod.AdaptadorDataJud(chave="c" * 60)._diagnostico_do_401()
+    assert "nao sei dizer" in texto
