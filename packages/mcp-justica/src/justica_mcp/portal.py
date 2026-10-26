@@ -7644,12 +7644,21 @@ def sondar_sistemas(
     from .core.sondagem import (ProcessosDeTribunaisDiferentes,
                                 sondar_em_lote)
     from .core.tribunais import identificar_tribunal
+    from .telas import ligar_gravacao
     from . import sondas as _sondas
 
     if not autenticado_habilitado():
         print("Acesso autenticado desligado. Para habilitar, defina no .env: "
               "JUSTICA_ACESSO_AUTENTICADO=1", file=sys.stderr)
         return 1
+
+    # A gravacao de telas e LIGADA pela propria varredura, e nao deixada a
+    # cargo de uma variavel de ambiente que o operador precise lembrar.
+    # Enquanto a sonda nao souber reconhecer a tela de "nada encontrado", a
+    # tela gravada E metade do resultado: sem ela, a corrida gasta
+    # autenticacao e nao deixa com que escrever o reconhecimento. Foi o que
+    # aconteceu em 26/10/2026, com tres autenticacoes e colheita vazia.
+    ligar_gravacao()
 
     # TODOS os numeros sao conferidos ANTES de qualquer navegador abrir. Numero
     # errado descoberto no meio da corrida ja custou a autenticacao.
@@ -7714,6 +7723,23 @@ def sondar_sistemas(
         respostas: dict = {}
 
         def depois(pagina, guarda, estado_local, identidade):
+            # O preparo corre UMA vez por sessao, antes da primeira busca. O
+            # Portal de Servicos precisa dele: a sessao termina o login na
+            # tela de selecao de sistemas, e buscar dali devolve a pagina
+            # publica do tribunal. Em 26/10/2026 a sonda pulou esse passo e as
+            # quatro buscas estouraram, gastando a autenticacao inteira.
+            preparo = _sondas.preparar(
+                sistema.value, pagina, guarda, config.perfil, segundos)
+            if not preparo.pronto:
+                print(f"      [PAROU] A sessao nao ficou pronta: "
+                      f"{preparo.detalhe}")
+                print("      Nenhum processo foi procurado neste sistema. A "
+                      "ausencia NAO foi confirmada para nenhum deles.")
+                for cada in pendentes:
+                    respostas[cada.apenas_digitos] = None
+                return 1
+            pagina = preparo.pagina
+
             quantos = len(pendentes)
             for posicao, cada in enumerate(pendentes, start=1):
                 print(f"\n  [{sistema.value}] {posicao} de {quantos}: "

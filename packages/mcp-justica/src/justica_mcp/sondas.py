@@ -67,25 +67,35 @@ class Resposta:
 
 
 def _nao_confirmado(sistema: str, pagina: Any, porque: str) -> Resposta:
-    """Nao achou. Grava a tela e diz que NAO confirmou ausencia."""
-    gravou = False
+    """Nao achou. Grava a tela e diz, COM BASE NO ARQUIVO, se gravou.
+
+    Em 26/10/2026 esta funcao anunciou "A tela foi gravada para conferencia"
+    cinco vezes numa corrida que nao gravou nada: `gravar_a_tela` devolve
+    `None` em silencio quando a gravacao esta desligada, e aqui se tratava
+    "nao levantou excecao" como "gravou". A corrida custou tres autenticacoes
+    e a colheita veio vazia, sem que a saida dissesse isso.
+
+    Agora o que decide e o CAMINHO devolvido, e nao a ausencia de erro. Um
+    programa que afirma o que nao conferiu e pior do que um que falha.
+    """
+    caminho = None
     try:
         from .telas import gravar_a_tela
 
-        gravar_a_tela(pagina, nome_da_tela(sistema, None))
-        gravou = True
+        caminho = gravar_a_tela(pagina, nome_da_tela(sistema, None))
     except Exception:
         # Falhar ao gravar a tela nao pode derrubar a varredura ja paga: o
         # resultado `None` continua valendo e a colheita perde um exemplar.
-        gravou = False
+        caminho = None
     return Resposta(
         valor=None,
         detalhe=(f"{porque} A ausencia NAO foi confirmada: pode ser que o "
                  "processo nao esteja neste sistema, ou que a tela nao tenha "
                  "montado a tempo."
-                 + (" A tela foi gravada para conferencia." if gravou else
-                    " A tela NAO pode ser gravada.")),
-        tela_gravada=gravou,
+                 + (f" Tela gravada em {caminho}." if caminho else
+                    " A TELA NAO FOI GRAVADA, entao nao ha o que conferir "
+                    "depois.")),
+        tela_gravada=bool(caminho),
     )
 
 
@@ -100,6 +110,8 @@ def procurar_no_dcp(pagina: Any, guarda: Any, numero: Any, url: str,
     from .dcp import (ESPERA_DA_LISTA, buscar, esperar_a_lista_de_resultado,
                       quadro_da_consulta, resumo_da_lista)
 
+    # Chega aqui com a sessao JA dentro do portal: ver `preparar_dcp`. Sem
+    # aquele preparo esta busca estoura, e foi o que aconteceu em 26/10/2026.
     # `buscar` abre a consulta, preenche e pesquisa. Ela tambem tenta abrir a
     # linha; aqui isso nao incomoda, porque abrir a tela do processo e sinal
     # positivo igualmente valido e nao baixa nada.
@@ -173,6 +185,75 @@ def procurar_no_esaj(pagina: Any, guarda: Any, numero: Any, url: str,
         return Resposta(True, f"A tela trouxe {quantas} movimentacao(oes).")
     return _nao_confirmado(
         "esaj", pagina, "A tela nao trouxe movimentacao nenhuma.")
+
+
+@dataclass(frozen=True)
+class Preparo:
+    """O que a sessao precisa ANTES de a primeira busca acontecer."""
+
+    pagina: Any
+    pronto: bool
+    detalhe: str
+
+
+def preparar_dcp(pagina: Any, guarda: Any, perfil: Optional[str],
+                 segundos: int) -> Preparo:
+    """Portal de Servicos: entra pela tela de selecao e escolhe o perfil.
+
+    Isto NAO e etapa decorativa, e o comentario que esta em `_consultar_dcp`
+    desde 06/10/2026 ja avisava: navegar direto para a consulta devolve a
+    pagina publica do tribunal. A sessao do IdServerJus existe, mas o Portal
+    de Servicos so e alcancado pela entrega que aquele formulario faz.
+
+    Em 26/10/2026 a sonda pulou os tres passos e as quatro buscas estouraram
+    com `ConsultaIndisponivel`, gastando uma autenticacao inteira. A pagina
+    muda no caminho, e por isso a nova e DEVOLVIDA: seguir usando a antiga
+    seria buscar na janela errada.
+
+    Corre UMA vez por sessao. Repetir por processo seria entrar no portal
+    quatro vezes para fazer quatro buscas.
+    """
+    from .dcp import (ConsultaIndisponivel, PerfilNaoInformado,
+                      entrar_no_portal_de_servicos, escolher_perfil,
+                      na_tela_de_perfil, reencontrar_o_portal)
+    from .portal import _assentar
+
+    try:
+        pagina = entrar_no_portal_de_servicos(pagina, guarda, segundos)
+    except ConsultaIndisponivel as exc:
+        return Preparo(pagina, False, f"nao deu para entrar no portal: {exc}")
+    _assentar(pagina, segundos)
+    pagina = reencontrar_o_portal(pagina, min(segundos, 15))
+
+    if na_tela_de_perfil(pagina):
+        try:
+            escolher_perfil(pagina, guarda, perfil, segundos)
+        except PerfilNaoInformado as exc:
+            return Preparo(pagina, False, f"o portal pediu o perfil: {exc}")
+        except Exception as exc:
+            return Preparo(pagina, False,
+                           f"a escolha do perfil falhou ({type(exc).__name__})")
+        _assentar(pagina, segundos)
+        pagina = reencontrar_o_portal(pagina, min(segundos, 15))
+    return Preparo(pagina, True, "portal aberto")
+
+
+PREPARADORES: dict[str, Callable] = {"dcp": preparar_dcp}
+
+
+def preparar(sistema: str, pagina: Any, guarda: Any,
+             perfil: Optional[str], segundos: int) -> Preparo:
+    """Prepara a sessao do sistema, quando ele precisar. Sistema sem preparo
+    devolve a propria pagina e segue: o eproc e o PJe buscam direto da tela
+    em que o login termina, e isso esta provado em campo."""
+    preparador = PREPARADORES.get(sistema)
+    if preparador is None:
+        return Preparo(pagina, True, "este sistema busca direto")
+    try:
+        return preparador(pagina, guarda, perfil, segundos)
+    except Exception as exc:
+        return Preparo(pagina, False,
+                       f"o preparo falhou ({type(exc).__name__})")
 
 
 PROCURADORES: dict[str, Callable] = {

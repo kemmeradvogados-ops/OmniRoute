@@ -25,10 +25,20 @@ DOIS = "0000002-98.2019.8.19.0001"
 
 @pytest.fixture
 def portais(monkeypatch):
-    """Todos os tres sistemas do Rio de Janeiro configurados."""
+    """Todos os tres sistemas do Rio de Janeiro configurados.
+
+    O preparo da sessao entra neutralizado: estes testes medem o LACO, e o
+    preparo de verdade abre portal. Ele tem testes proprios, mais abaixo.
+    """
     monkeypatch.setenv("JUSTICA_ACESSO_AUTENTICADO", "1")
     monkeypatch.setattr("justica_mcp.core.acesso.config_portal",
                         lambda t, s: _Config())
+    from justica_mcp.sondas import Preparo
+
+    monkeypatch.setattr(
+        "justica_mcp.sondas.preparar",
+        lambda sistema, pagina, guarda, perfil, segundos:
+            Preparo(pagina, True, "simulado"))
     return _Config()
 
 
@@ -233,3 +243,81 @@ def test_o_miolo_da_sondagem_nao_e_assincrono():
     from justica_mcp.core.sondagem import sondar_em_lote
 
     assert not inspect.iscoroutinefunction(sondar_em_lote)
+
+
+# --------------------------------------------------------------------------
+# O preparo da sessao, que o Portal de Servicos exige
+# --------------------------------------------------------------------------
+
+def test_o_preparo_corre_uma_vez_por_sessao_e_nao_por_processo(
+        monkeypatch, capsys):
+    """Repetir por processo seria entrar no portal quatro vezes para fazer
+    quatro buscas."""
+    monkeypatch.setenv("JUSTICA_ACESSO_AUTENTICADO", "1")
+    monkeypatch.setattr("justica_mcp.core.acesso.config_portal",
+                        lambda t, s: _Config())
+    logins: list = []
+    monkeypatch.setattr(portal, "autenticar", _autenticador(logins, None))
+
+    from justica_mcp.sondas import Preparo, Resposta
+
+    preparos: list = []
+
+    def preparar(sistema, pagina, guarda, perfil, segundos):
+        preparos.append(sistema)
+        return Preparo(pagina, True, "simulado")
+
+    monkeypatch.setattr("justica_mcp.sondas.preparar", preparar)
+    monkeypatch.setattr("justica_mcp.sondas.procurar",
+                        lambda *a, **k: Resposta(None, "simulado"))
+    portal.sondar_sistemas([UM, DOIS], confirmado=True)
+    # Dois processos, tres sistemas: tres preparos, nao seis.
+    assert preparos == ["eproc", "pje", "dcp"]
+
+
+def test_sessao_que_nao_ficou_pronta_nao_procura_nada_e_nao_afirma_ausencia(
+        monkeypatch, capsys):
+    """Em 26/10/2026 a sonda do Portal de Servicos pulou a entrada no portal
+    e as quatro buscas estouraram. O que nao pode acontecer e isso virar
+    'nao esta aqui' para os quatro."""
+    monkeypatch.setenv("JUSTICA_ACESSO_AUTENTICADO", "1")
+    monkeypatch.setattr("justica_mcp.core.acesso.config_portal",
+                        lambda t, s: _Config())
+    logins: list = []
+    monkeypatch.setattr(portal, "autenticar", _autenticador(logins, None))
+
+    from justica_mcp.sondas import Preparo, Resposta
+
+    monkeypatch.setattr(
+        "justica_mcp.sondas.preparar",
+        lambda sistema, pagina, guarda, perfil, segundos:
+            Preparo(pagina, False, "nao deu para entrar no portal"))
+    procuras: list = []
+
+    def procurar(sistema, *a, **k):
+        procuras.append(sistema)
+        return Resposta(True, "nao deveria ter sido chamada")
+
+    monkeypatch.setattr("justica_mcp.sondas.procurar", procurar)
+    portal.sondar_sistemas([UM], confirmado=True)
+    saida = capsys.readouterr().out
+    assert procuras == []
+    assert "A sessao nao ficou pronta" in saida
+    assert "0 de 1 processo(s) resolvido(s)" in saida
+
+
+def test_a_varredura_liga_a_gravacao_de_telas_sozinha(portais, monkeypatch):
+    """Enquanto a sonda nao souber reconhecer o 'nada encontrado', a tela
+    gravada E metade do resultado. Deixar isso a cargo de uma variavel de
+    ambiente custou tres autenticacoes e uma colheita vazia em 26/10/2026."""
+    import os
+
+    monkeypatch.delenv("JUSTICA_GRAVAR_TELAS", raising=False)
+    monkeypatch.setattr(portal, "autenticar", _autenticador([], None))
+
+    from justica_mcp.sondas import Resposta
+
+    monkeypatch.setattr("justica_mcp.sondas.procurar",
+                        lambda *a, **k: Resposta(True, "simulado"))
+    portal.sondar_sistemas([UM], confirmado=True)
+    assert os.environ.get("JUSTICA_GRAVAR_TELAS")

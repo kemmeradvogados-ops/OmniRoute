@@ -34,7 +34,8 @@ def test_a_tabela_de_assinaturas_nasce_vazia():
 
 
 def test_nao_confirmado_devolve_none_e_nunca_false(monkeypatch):
-    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela", lambda *a, **k: None)
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
     r = sondas._nao_confirmado("dcp", _Pagina(), "A lista voltou vazia.")
     assert r.valor is None
     assert r.valor is not False
@@ -50,7 +51,7 @@ def test_falha_ao_gravar_a_tela_nao_derruba_a_sonda(monkeypatch):
     r = sondas._nao_confirmado("pje", _Pagina(), "Nada na lista.")
     assert r.valor is None
     assert r.tela_gravada is False
-    assert "NAO pode ser gravada" in r.detalhe
+    assert "NAO FOI GRAVADA" in r.detalhe
 
 
 def test_sistema_sem_sonda_nao_vira_ausencia():
@@ -85,7 +86,8 @@ def test_dcp_sem_linha_nao_afirma_ausencia(monkeypatch):
                         lambda *a, **k: [])
     monkeypatch.setattr("justica_mcp.dcp.resumo_da_lista",
                         lambda *a, **k: "Na tela ha 0 tabela(s).")
-    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela", lambda *a, **k: None)
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
     r = sondas.procurar_no_dcp(_Pagina(), None, _num(), "https://x", 5)
     assert r.valor is None
     assert r.tela_gravada is True
@@ -108,7 +110,8 @@ def test_eproc_tela_que_nao_montou_nao_vira_ausencia(monkeypatch):
                         lambda *a, **k: (True, "busca enviada"))
     monkeypatch.setattr("justica_mcp.extracao.esperar_tela_do_processo",
                         lambda *a, **k: "nada")
-    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela", lambda *a, **k: None)
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
     r = sondas.procurar_no_eproc(_Pagina(), None, _num(), "https://x", 5)
     assert r.valor is None
 
@@ -126,7 +129,8 @@ def test_pje_sem_link_nao_afirma_ausencia(monkeypatch):
     monkeypatch.setattr("justica_mcp.pje.achar_link_do_processo",
                         lambda *a, **k: None)
     monkeypatch.setattr("justica_mcp.pje.linhas_do_resultado", lambda *a, **k: 0)
-    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela", lambda *a, **k: None)
+    monkeypatch.setattr("justica_mcp.telas.gravar_a_tela",
+                        lambda *a, **k: "/telas/sonda.json")
     r = sondas.procurar_no_pje(_Pagina(), None, _num(), "https://x", 5)
     assert r.valor is None
 
@@ -149,3 +153,14 @@ def test_nenhuma_sonda_devolve_false_hoje(monkeypatch):
     # `Resposta(False` ou `valor=False` seriam as duas formas de escrever isso.
     assert "Resposta(False" not in fonte
     assert "valor=False" not in fonte
+
+
+def test_gravacao_desligada_nao_vira_tela_gravada(monkeypatch):
+    """Em 26/10/2026 a sonda anunciou "tela gravada" cinco vezes numa corrida
+    que nao gravou nada: `gravar_a_tela` devolve None em silencio quando a
+    gravacao esta desligada, e a sonda lia "nao levantou excecao" como
+    "gravou". Tres autenticacoes e colheita vazia, sem aviso."""
+    monkeypatch.delenv("JUSTICA_GRAVAR_TELAS", raising=False)
+    r = sondas._nao_confirmado("eproc", _Pagina(), "A tela nao montou.")
+    assert r.tela_gravada is False
+    assert "A TELA NAO FOI GRAVADA" in r.detalhe
