@@ -20,3 +20,7 @@ conector/*.mcpb
 # d2533222, removido depois). O conteudo era de teste, mas a proxima vez
 # poderia ser de cliente.
 G:*
+# No Windows `:` e ilegal em nome de arquivo, entao o mesmo caminho
+# aparece la com o nome deformado. Ignorar as duas formas.
+G__/
+G__*
