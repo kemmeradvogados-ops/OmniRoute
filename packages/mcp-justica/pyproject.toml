@@ -1,6 +1,6 @@
 [project]
 name = "justica-mcp"
-version = "0.9.5"
+version = "0.9.6"
 description = "Camada padronizadora de acesso processual (somente leitura) para os tribunais da Kemmer Advogados"
 requires-python = ">=3.11"
 dependencies = [

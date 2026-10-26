@@ -73,6 +73,13 @@ def main(argv: list[str] | None = None) -> int:
         help="diz onde o programa procura a configuracao e o que encontrou la",
     )
 
+    pr = sub.add_parser(
+        "protocolo",
+        help=("diz qual revisao de protocolo o servidor serve e se ja ha "
+              "versao mais nova da biblioteca"),
+    )
+    pr.add_argument("--segundos", type=int, default=15)
+
     rc = sub.add_parser(
         "repor-config",
         help="repoe o .env a partir da copia de seguranca mais recente",
@@ -363,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
         # `estrutura` le um arquivo ja gravado: nao tem tribunal, nao tem
         # sistema e nao abre navegador nenhum.
         if args.comando not in ("reconhecer", "mapear", "reindexar", "ambiente",
-                                "leituras", "sondar",
+                                "leituras", "sondar", "protocolo",
                                 "repor-config", "estrutura", "telas", "tela",
                                 "pecas", "peca"):
             portal._do_ambiente(args)
@@ -423,6 +430,10 @@ def main(argv: list[str] | None = None) -> int:
                                     segundos=args.segundos)
         if args.comando == "ambiente":
             return portal.mostrar_ambiente()
+        if args.comando == "protocolo":
+            from .core.protocolo import mostrar as mostrar_protocolo
+
+            return mostrar_protocolo(args.segundos)
         if args.comando == "repor-config":
             return portal.repor_config(confirmar=args.confirmar, copia=args.copia)
         if args.comando == "estrutura":
