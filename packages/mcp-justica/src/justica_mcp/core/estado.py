@@ -194,6 +194,19 @@ class Estado:
                 ),
             )
 
+    # Quais resultados do passo do segundo fator RESPONDEM a pergunta "este
+    # portal pede codigo?", e quais nao respondem.
+    #
+    # `autenticado` esta entre os que NAO respondem, e isso custou uma rodada
+    # inteira em 27/10/2026. Ele nao e gravado no ramo do codigo: e gravado no
+    # fim do fluxo, conferindo se o campo de codigo ainda esta na tela. Um
+    # portal que nunca pediu codigo chega la e grava `autenticado` igual. Lido
+    # como "pediu", ele fazia a recusa barrar justamente o portal que nao pede,
+    # que era o defeito que esta consulta deveria ter corrigido.
+    PEDIU_CODIGO = frozenset({"enviado", "recusado", "codigo_nao_informado",
+                              "janela_indisponivel"})
+    NAO_PEDIU_CODIGO = frozenset({"sem_segundo_fator", "nao_solicitado"})
+
     def portal_pede_segundo_fator(self, tribunal: str, sistema: str) -> Optional[bool]:
         """O portal ja PEDIU codigo de segundo fator neste par tribunal/sistema?
 
@@ -214,17 +227,20 @@ class Estado:
         A resposta vem da auditoria, que e observacao, nao palpite: o programa
         registra em cada login se a tela de codigo apareceu.
         """
+        informativos = sorted(self.PEDIU_CODIGO | self.NAO_PEDIU_CODIGO)
+        marcas = ",".join("?" for _ in informativos)
         with self._conectar() as cx:
             linha = cx.execute(
                 "SELECT resultado FROM auditoria "
                 "WHERE acao = 'login_etapa_segundo_fator' "
                 "AND tribunal = ? AND sistema = ? "
+                f"AND resultado IN ({marcas}) "
                 "ORDER BY ocorrido_em DESC, id DESC LIMIT 1",
-                (tribunal, sistema),
+                (tribunal, sistema, *informativos),
             ).fetchone()
         if linha is None:
             return None
-        return str(linha["resultado"]) not in ("sem_segundo_fator", "nao_solicitado")
+        return str(linha["resultado"]) in self.PEDIU_CODIGO
 
     def auditoria_recente(self, limite: int = 50) -> list[dict[str, Any]]:
         with self._conectar() as cx:

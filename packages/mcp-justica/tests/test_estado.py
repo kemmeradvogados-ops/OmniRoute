@@ -141,7 +141,7 @@ def test_nao_solicitado_tambem_conta_como_nao_pede(tmp_path):
 def test_portal_que_pediu_codigo_e_reconhecido(tmp_path):
     e = _estado_limpo(tmp_path)
     e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
-                sistema="eproc", resultado="codigo_aceito")
+                sistema="eproc", resultado="enviado")
     assert e.portal_pede_segundo_fator("TJRJ", "eproc") is True
 
 
@@ -151,7 +151,7 @@ def test_vale_a_observacao_mais_recente(tmp_path):
     e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
                 sistema="dcp", resultado="sem_segundo_fator")
     e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
-                sistema="dcp", resultado="codigo_aceito")
+                sistema="dcp", resultado="enviado")
     assert e.portal_pede_segundo_fator("TJRJ", "dcp") is True
 
 
@@ -160,3 +160,58 @@ def test_um_sistema_nao_responde_pelo_outro(tmp_path):
     e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
                 sistema="dcp", resultado="sem_segundo_fator")
     assert e.portal_pede_segundo_fator("TJRJ", "eproc") is None
+
+
+# --------------------------------------------------------------------------
+# `autenticado` nao responde "este portal pede codigo?".
+#
+# Ele nao e gravado no ramo do codigo: e gravado no FIM do fluxo, conferindo
+# se o campo de codigo ainda esta na tela. Um portal que nunca pediu codigo
+# chega la e grava `autenticado` igual. Lido como "pediu", ele fazia a recusa
+# barrar justamente o portal que nao pede, que era o defeito que a consulta
+# deveria ter corrigido. Custou uma rodada inteira em 27/10/2026, e so foi
+# visto porque o operador insistiu que o portal dele nao pede codigo.
+
+def test_autenticado_por_cima_nao_apaga_a_observacao(tmp_path):
+    e = _estado_limpo(tmp_path)
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="sem_segundo_fator")
+    # Na mesma corrida, logo depois, o fim do fluxo grava isto:
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="autenticado")
+    assert e.portal_pede_segundo_fator("TJRJ", "dcp") is False
+
+
+def test_so_autenticado_nao_responde_nada(tmp_path):
+    e = _estado_limpo(tmp_path)
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="autenticado")
+    assert e.portal_pede_segundo_fator("TJRJ", "dcp") is None
+
+
+def test_resultados_que_provam_tela_de_codigo(tmp_path):
+    for marca in ("enviado", "recusado", "codigo_nao_informado",
+                  "janela_indisponivel"):
+        pasta = tmp_path / marca
+        pasta.mkdir()
+        e = _estado_limpo(pasta)
+        e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                    sistema="eproc", resultado=marca)
+        assert e.portal_pede_segundo_fator("TJRJ", "eproc") is True, marca
+
+
+def test_resultados_que_nao_respondem_sao_ignorados(tmp_path):
+    for marca in ("autenticado", "segundo_fator_indeterminado",
+                  "campo_sem_seletor_registrado"):
+        pasta = tmp_path / marca
+        pasta.mkdir()
+        e = _estado_limpo(pasta)
+        e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                    sistema="eproc", resultado=marca)
+        assert e.portal_pede_segundo_fator("TJRJ", "eproc") is None, marca
+
+
+def test_os_dois_conjuntos_nao_se_cruzam():
+    from justica_mcp.core.estado import Estado
+
+    assert not (Estado.PEDIU_CODIGO & Estado.NAO_PEDIU_CODIGO)
