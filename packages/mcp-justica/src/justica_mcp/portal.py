@@ -4014,10 +4014,22 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     # movimentacao sem dizer de que tela eles vieram, e nao havia como saber
     # pelo terminal se o processo tinha chegado.
     #
-    # Duas provas, e qualquer uma basta: o botao do Visualizador, que so existe
-    # depois que a busca devolve, e a rota do quadro.
+    # TRES provas, e qualquer uma basta: o botao do Visualizador, que so existe
+    # depois que a busca devolve; a rota `detalhes-processo` da aplicacao de
+    # fora; e o endereco do proprio quadro do conteudo.
+    #
+    # A terceira entrou em 27/10/2026. No registro de SEGUNDO GRAU a rota de
+    # fora permanece `#/consproc/consultaportal` e o conteudo chega no quadro
+    # `.../ejud/ConsultaProcesso.aspx`. Com as duas provas antigas, a chegada
+    # dava por nao confirmada numa tela em que o processo estava inteiro
+    # diante do programa, com dez tabelas e a integra do acordao clicavel.
+    from .dcp import MARCAS_DO_QUADRO
+
+    endereco_minusculo = (endereco_do_quadro or "").lower()
     dados["leitura"]["tela_do_processo_confirmada"] = bool(
-        botao is not None or MARCA_DA_TELA_DO_PROCESSO in endereco_do_quadro)
+        botao is not None
+        or MARCA_DA_TELA_DO_PROCESSO in endereco_do_quadro
+        or any(marca in endereco_minusculo for marca in MARCAS_DO_QUADRO))
     dados["leitura"]["endereco_do_quadro"] = endereco_sem_dado(
         endereco_do_quadro or "(sem endereco)")
     dados["leitura"]["todos_os_movimentos"] = historico["situacao"]

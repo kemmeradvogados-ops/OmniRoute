@@ -9212,3 +9212,45 @@ def test_os_dois_campos_de_confirmacao_nao_sao_confundidos():
     assert "tela_do_processo_confirmada" in fonte, (
         "o campo da navegacao precisa ser citado aqui, nem que seja no "
         "comentario que separa os dois, para ninguem confundi-los de novo")
+
+
+# --------------------------------------------------------------------------
+# O quadro do conteudo tem mais de um endereco.
+#
+# Conferido em tela gravada: no registro de primeiro grau o quadro e
+# `.../consultaprocessual/...`; no de segundo grau e
+# `.../ejud/ConsultaProcesso.aspx`. Com uma marca so, o segundo caso nao
+# achava quadro nenhum e a leitura caia na pagina de fora, que e a casca do
+# portal. Saia com zero partes e zero movimentacoes, e chegou ao advogado
+# como se o processo estivesse vazio, em 27/10/2026.
+
+def test_as_duas_formas_do_quadro_sao_reconhecidas():
+    from justica_mcp.dcp import MARCAS_DO_QUADRO
+
+    def reconhece(endereco):
+        return any(m in endereco.lower() for m in MARCAS_DO_QUADRO)
+
+    assert reconhece("https://www3.tjrj.jus.br/ejud/ConsultaProcesso.aspx")
+    assert reconhece("https://www3.tjrj.jus.br/consultaprocessual/qualquer")
+    # A casca do portal NAO pode ser confundida com o conteudo: foi ela que
+    # o leitor leu, e dela nao sai processo nenhum.
+    assert not reconhece(
+        "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal")
+
+
+def test_o_nome_antigo_continua_valendo():
+    """Outro codigo importa `MARCA_DO_QUADRO`; quebrar isso seria gratuito."""
+    from justica_mcp.dcp import MARCA_DO_QUADRO, MARCAS_DO_QUADRO
+
+    assert MARCA_DO_QUADRO in MARCAS_DO_QUADRO
+
+
+def test_o_endereco_do_quadro_confirma_a_chegada():
+    import inspect
+
+    from justica_mcp.portal import _ler_a_tela_do_dcp
+
+    fonte = inspect.getsource(_ler_a_tela_do_dcp)
+    assert "MARCAS_DO_QUADRO" in fonte, (
+        "sem esta prova, o segundo grau da chegada por nao confirmada com o "
+        "processo inteiro diante do programa")

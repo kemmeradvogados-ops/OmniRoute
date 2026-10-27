@@ -2516,7 +2516,23 @@ def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
 SUFIXO_DA_CONSULTA = "/portalservicos/#/consproc/consultaportal"
 
 # O quadro onde o formulario vive, reconhecido pelo caminho.
-MARCA_DO_QUADRO = "/consultaprocessual/"
+# ONDE O CONTEUDO DO PROCESSO MORA, e por que sao DUAS marcas.
+#
+# O Portal de Servicos poe o conteudo num quadro embutido, e o endereco desse
+# quadro NAO e o mesmo em todos os caminhos. Conferido em tela gravada:
+#
+#   21/10/2026, registro de primeiro grau:  .../consultaprocessual/...
+#   27/10/2026, registro de segundo grau:   .../ejud/ConsultaProcesso.aspx
+#
+# Com uma marca so, o segundo caso nao achava quadro nenhum e a leitura caia
+# na pagina de fora, que e a casca do portal: menu lateral, botoes de
+# acessibilidade e formulario de contato. O resultado saia com zero partes e
+# zero movimentacoes, e chegou ao advogado como se o processo estivesse
+# vazio.
+MARCAS_DO_QUADRO = ("/consultaprocessual/", "/ejud/consultaprocesso.aspx")
+
+# Mantida por compatibilidade com quem a importa pelo nome antigo.
+MARCA_DO_QUADRO = MARCAS_DO_QUADRO[0]
 
 # Tipo de numeracao. "Unica" ja vem marcada, e ainda assim e conferida: achar
 # a tela com "Antiga" marcada e digitar o numero unico devolve "nada
@@ -2588,7 +2604,8 @@ def quadro_da_consulta(pagina: Any) -> Any:
     """
     try:
         for quadro in list(pagina.frames or [])[1:]:
-            if MARCA_DO_QUADRO in (quadro.url or ""):
+            endereco = (quadro.url or "").lower()
+            if any(marca in endereco for marca in MARCAS_DO_QUADRO):
                 return quadro
     except Exception:
         pass
