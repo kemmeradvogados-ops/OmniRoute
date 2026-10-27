@@ -7778,6 +7778,29 @@ def consultar_processo(
     print("  ter enderecos diferentes, e o nome da chave no .env nao garante "
           "qual e qual.")
 
+    # NO DCP O GRAU NAO ESTA NO NUMERO: ESTA NA LINHA DO RESULTADO.
+    #
+    # Medido na consulta de 27/10/2026: um unico numero devolveu CINCO linhas,
+    # e cada uma e o processo numa instancia diferente, com historico proprio.
+    # A primeira era de primeiro grau, a segunda e a quinta eram Apelacao, a
+    # terceira Recurso Especial e a quarta Agravo em Recurso Especial.
+    #
+    # Sem `--linha`, abre a 1. Naquela execucao o operador pediu `--grau 2`,
+    # recebeu a linha 1, que e de primeiro grau, e a autenticacao foi gasta sem
+    # tocar no segundo grau. O programa sabia disso antes de abrir o navegador:
+    # `--grau` escolhe qual numero de teste usar, e no DCP o numero e o mesmo
+    # nas duas instancias.
+    if (sistema or "").lower().strip() == "dcp":
+        print("  No Portal de Servicos o numero unico e O MESMO em todas as "
+              "instancias, e o")
+        print("  grau NAO se escolhe pelo numero: escolhe-se pela LINHA do "
+              "resultado da busca.")
+        if linha_do_resultado in (None, 1):
+            print("  Sem --linha, abre a linha 1. A lista das linhas sai logo "
+                  "abaixo, com a")
+            print("  instancia de cada uma; para abrir outra, repita com "
+                  "--linha <numero>.")
+
     def um_processo(pagina, guarda, estado_local, identidade, numero):
         """Escolhe o caminho do portal e corre UM processo.
 
@@ -8128,12 +8151,30 @@ def _do_ambiente(args) -> None:
         # qual usar. Sem indicacao fica o de primeiro grau, que e o caso comum.
         grau = getattr(args, "grau", 1) or 1
         escolhido = config.processo_teste_2g if grau == 2 else config.processo_teste
+        # A RECAIDA PARA O PROCESSO DE PRIMEIRO GRAU PRECISA SER DITA.
+        #
+        # Em 27/10/2026 uma consulta pedida com `--grau 2` imprimiu "Processo
+        # vindo do .env (2º grau)" e, tres linhas abaixo, "Processo de primeira
+        # instancia". As duas frases vinham do mesmo programa, na mesma
+        # execucao, e se contradiziam: nao havia processo de teste de segundo
+        # grau configurado, a recaida entrou calada e o rotulo continuou
+        # dizendo 2º. A autenticacao foi gasta e o segundo grau nao foi tocado.
+        caiu_para_o_primeiro = False
         if escolhido is None and grau == 2:
             escolhido = config.processo_teste
+            caiu_para_o_primeiro = escolhido is not None
         if escolhido:
             args.processo = [escolhido]
-            print(f"Processo vindo do .env para {config.rotulo} "
-                  f"({'2º' if grau == 2 else '1º'} grau).")
+            if caiu_para_o_primeiro:
+                print(f"Processo vindo do .env para {config.rotulo} "
+                      f"(1º grau).")
+                print("ATENCAO: voce pediu --grau 2, e NAO ha processo de "
+                      "teste de segundo grau")
+                print(f"configurado para {config.rotulo}. Entrou o de primeiro "
+                      "grau.")
+            else:
+                print(f"Processo vindo do .env para {config.rotulo} "
+                      f"({'2º' if grau == 2 else '1º'} grau).")
 
 
 # Quantas familias de identificador o relato mostra. Elas servem para

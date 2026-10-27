@@ -8642,3 +8642,64 @@ def test_o_numero_de_um_processo_nao_traz_o_de_outro(tmp_path, monkeypatch):
     (pasta / "00111111120158190001-20261027T000000Z.json").write_text(
         "{}", encoding="utf-8")
     assert consultas_gravadas("00222222220168190002") == []
+
+
+# ---------------------------------------------------------------------------
+# O grau no Portal de Servicos esta na LINHA, nao no numero
+#
+# Medido na consulta de 27/10/2026: um unico numero devolveu cinco linhas, e
+# cada uma e o processo numa instancia diferente, com historico proprio. O
+# operador pediu `--grau 2`, recebeu a linha 1, que e de primeiro grau, e a
+# autenticacao foi gasta sem tocar no segundo grau.
+# ---------------------------------------------------------------------------
+
+class _ConfigSemSegundoGrau:
+    rotulo = "TJRJ / dcp"
+    url = "https://exemplo/"
+    perfil = None
+    processo_teste = "0000001-02.2020.8.19.0001"
+    processo_teste_2g = None
+
+
+class _ArgsDeTeste:
+    def __init__(self, grau):
+        self.tribunal = "tjrj"
+        self.sistema = "dcp"
+        self.url = ""
+        self.perfil = None
+        self.processo = []
+        self.grau = grau
+
+
+def _completar(monkeypatch, grau):
+    from justica_mcp import portal
+
+    monkeypatch.setattr(portal, "config_portal",
+                        lambda *_a, **_k: _ConfigSemSegundoGrau())
+    args = _ArgsDeTeste(grau)
+    portal._do_ambiente(args)
+    return args
+
+
+def test_a_recaida_para_o_primeiro_grau_e_dita(monkeypatch, capsys):
+    """As duas frases vinham do mesmo programa, na mesma execucao, e se
+    contradiziam: 'Processo vindo do .env (2º grau)' e, tres linhas abaixo,
+    'Processo de primeira instancia'."""
+    _completar(monkeypatch, grau=2)
+    saida = capsys.readouterr().out
+    assert "(2º grau)" not in saida
+    assert "(1º grau)" in saida
+    assert "NAO ha processo de teste de segundo grau" in saida
+
+
+def test_sem_recaida_o_rotulo_nao_avisa_nada(monkeypatch, capsys):
+    _completar(monkeypatch, grau=1)
+    saida = capsys.readouterr().out
+    assert "(1º grau)" in saida
+    assert "ATENCAO" not in saida
+
+
+def test_o_processo_entra_mesmo_com_a_recaida(monkeypatch):
+    """Avisar nao e recusar: a consulta segue, so que dizendo o que usou."""
+    args = _completar(monkeypatch, grau=2)
+    assert args.processo == ["0000001-02.2020.8.19.0001"]
