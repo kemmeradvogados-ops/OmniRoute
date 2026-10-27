@@ -9169,3 +9169,46 @@ def test_o_aviso_ensina_a_escolher_outra():
     assert "`linha`" in fonte
     # E precisa lembrar do custo: cada repeticao autentica de novo.
     assert "custa uma tentativa" in fonte
+
+
+# --------------------------------------------------------------------------
+# Moldura do portal nao e processo sem movimentacao.
+#
+# `abrir_o_processo_da_lista` devolve "clicado" logo apos o clique, sem
+# comprovar chegada. Nao montando a tela de detalhes, o leitor extrai o que
+# ha: menu lateral, cabecalho, janelas de aviso. Em 27/10/2026 isso chegou ao
+# advogado como "nenhuma parte, nenhuma movimentacao e nenhum dado de capa".
+#
+# Processo dado como vazio e da mesma familia de processo dado como
+# inexistente: prazo perdido.
+
+def test_tela_nao_confirmada_vira_falha_de_navegacao():
+    import inspect
+
+    from justica_mcp.portal import _capturar_dcp
+
+    fonte = inspect.getsource(_capturar_dcp)
+    assert 'get("tela_do_processo_confirmada") is False' in fonte
+    assert 'guardado["erro"]' in fonte
+    # O recado precisa negar a leitura errada, e nao so relatar o fato.
+    assert "NAO significa processo sem movimentacao" in fonte
+    # E precisa dizer onde esta a prova, senao consertar custa outra
+    # autenticacao.
+    assert "telas" in fonte
+
+
+def test_os_dois_campos_de_confirmacao_nao_sao_confundidos():
+    """Um diz se a NAVEGACAO chegou; o outro, se a LEITURA foi conferida.
+
+    A ferramenta do servidor olhava so o segundo, e por isso devolvia como
+    leitura valida uma tela que nunca foi a do processo.
+    """
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools)
+    assert "confirmada_em_tela_real" in fonte
+    assert "tela_do_processo_confirmada" in fonte, (
+        "o campo da navegacao precisa ser citado aqui, nem que seja no "
+        "comentario que separa os dois, para ninguem confundi-los de novo")

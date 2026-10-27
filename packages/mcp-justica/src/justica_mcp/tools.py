@@ -594,8 +594,13 @@ def registrar(mcp: Any) -> None:
             # le por estrutura nao sabe o mesmo que quem le por seletor
             # conferido, e dizer "alta" para os dois apaga essa diferenca
             # justamente onde ela pesa.
-            conferida = (dados.get("leitura") or {}).get(
-                "confirmada_em_tela_real", True)
+            leitura = dados.get("leitura") or {}
+            # DOIS campos diferentes, e confundi-los custou caro.
+            # `confirmada_em_tela_real` diz se a LEITURA foi conferida contra
+            # a tela; `tela_do_processo_confirmada` diz se a NAVEGACAO chegou
+            # ao processo. A segunda, sendo falsa, vira falha antes daqui
+            # (ver `_capturar_dcp`); esta linha trata so da primeira.
+            conferida = leitura.get("confirmada_em_tela_real", True)
             observacao = ("Leitura autenticada do portal, ao vivo. Nenhum documento "
                           "foi aberto e nenhum expediente foi tocado.")
             if not conferida:

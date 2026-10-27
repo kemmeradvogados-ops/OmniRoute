@@ -5840,6 +5840,34 @@ def _capturar_dcp(pagina, guarda, estado_local, identidade, numero,
 
     dados = _ler_a_tela_do_dcp(pagina, guarda, numero, identidade,
                                estado_local, segundos)
+
+    # MOLDURA DO PORTAL NAO E PROCESSO SEM MOVIMENTACAO.
+    #
+    # `abrir_o_processo_da_lista` devolve "clicado" logo apos o clique, sem
+    # comprovar chegada. Quando a tela de detalhes nao monta, o leitor extrai
+    # o que ha: menu lateral, cabecalho, janelas de aviso. O resultado sai
+    # com zero partes e zero movimentacoes, e o campo
+    # `tela_do_processo_confirmada` sai `false` dentro da leitura.
+    #
+    # Em 27/10/2026 isso chegou ao advogado como "nenhuma parte, nenhuma
+    # movimentacao e nenhum dado de capa", que ele poderia ler como processo
+    # vazio. Processo dado como vazio e da mesma familia de processo dado
+    # como inexistente: prazo perdido.
+    #
+    # Entao vira FALHA DE NAVEGACAO, explicita. O arquivo gravado continua no
+    # disco e e nomeado no recado, porque e a prova para consertar a
+    # navegacao sem gastar outra autenticacao.
+    if (dados.get("leitura") or {}).get("tela_do_processo_confirmada") is False:
+        guardado["erro"] = (
+            "A linha foi clicada mas a tela do processo nao se confirmou: o "
+            "que a pagina mostrava era a moldura do portal, nao os detalhes. "
+            "Isso NAO significa processo sem movimentacao, significa que a "
+            "navegacao nao chegou. Nada foi lido do processo. A leitura "
+            f"ficou gravada em {dados.get('arquivo') or '(nao gravada)'} e a "
+            "tela em `justica-portal telas`, para conserto sem nova "
+            "autenticacao."
+        )
+        return 1
     # O MESMO NUMERO EM MAIS DE UMA LINHA e o caso do recurso: havendo
     # Apelacao Civel ou Agravo de Instrumento, a busca devolve uma linha por
     # grau ou serventia, cada uma com historico proprio. A leitura entregue
