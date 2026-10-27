@@ -8781,3 +8781,44 @@ def test_tela_sem_tabela_de_documentos_diz_que_nao_tem(tmp_path, capsys):
     saida = capsys.readouterr().out
     assert "TABELA DE DOCUMENTOS (0)" in saida
     assert "esta tela nao tem ancora de documento" in saida
+
+
+def test_a_estrutura_conta_as_movimentacoes_por_origem(tmp_path, capsys):
+    """A origem e o unico jeito de saber se os andamentos que vieram de fora
+    da tabela de documentos sao andamento mesmo ou campo da capa lido como
+    tal: na tela do segundo grau a capa tem 'Data do Movimento:', 'Data da
+    Sessao:' e 'Data da Publicacao:', e linha de duas celulas com data numa
+    delas e exatamente o que a segunda passada generica procura."""
+    import json
+
+    from justica_mcp.portal import mostrar_estrutura
+
+    arquivo = tmp_path / "consulta.json"
+    arquivo.write_text(json.dumps({
+        "totais": {"movimentacoes": 3},
+        "leitura": {"conferido": {}},
+        "estrutura": {"tabelas": [], "familias": {}, "colunas_dos_documentos": [],
+                      "fora_da_tabela_de_documentos": 1,
+                      "movimentacoes_por_origem": {
+                          "tabela de documentos do segundo grau, data depois": 2,
+                          "celula de data na tabela sem id": 1}},
+        # O conteudo esta no arquivo e o relatorio NAO pode toca-lo: e isso
+        # que a guarda `test_estrutura_nao_abre_navegador_nem_exige_tribunal`
+        # exige, e e por le-lo que ela me barrou em 27/10/2026.
+        "movimentacoes": [
+            {"data": "19/09/2026", "descricao": "Acordao",
+             "origem": "tabela de documentos do segundo grau, data depois"},
+            {"data": "12/09/2026", "descricao": "Despacho",
+             "origem": "tabela de documentos do segundo grau, data depois"},
+            {"data": "01/08/2026", "descricao": "alguma coisa",
+             "origem": "celula de data na tabela sem id"},
+        ],
+    }), encoding="utf-8")
+    assert mostrar_estrutura(str(arquivo)) == 0
+    saida = capsys.readouterr().out
+    assert "MOVIMENTACOES POR ORIGEM (2)" in saida
+    assert "x2" in saida
+    assert "celula de data na tabela sem id" in saida
+    # A descricao e dado de cliente e NAO entra neste relatorio.
+    assert "Acordao" not in saida
+    assert "alguma coisa" not in saida

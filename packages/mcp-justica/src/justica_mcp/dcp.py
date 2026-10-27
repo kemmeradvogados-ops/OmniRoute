@@ -4358,6 +4358,15 @@ def secoes_nao_lidas(secoes: Any) -> list:
     return vistos
 
 
+def _por_origem(movimentacoes: list) -> dict:
+    """Quantas movimentacoes cada regra achou. So a contagem, nunca o texto."""
+    contagem: dict = {}
+    for movimento in movimentacoes or []:
+        chave = _sem_dado(str((movimento or {}).get("origem") or "(sem)"))
+        contagem[chave] = contagem.get(chave, 0) + 1
+    return contagem
+
+
 def _colunas_dos_documentos(bruto: Any) -> list:
     """Como a tabela de documentos do segundo grau esta montada.
 
@@ -4403,6 +4412,69 @@ def _colunas_dos_documentos(bruto: Any) -> list:
     return saida
 
 
+# OS ROTULOS DA CAPA, lidos na tela real do segundo grau em 27/10/2026.
+#
+# Nao e lista de desejo: sao os rotulos que a tela do Portal de Servicos
+# ofereceu naquela consulta, na secao da capa. Servem para uma pergunta so,
+# que e se a leitura generica pegou a capa ou pegou outro bloco.
+ROTULOS_DA_CAPA = ("classe", "assunto", "orgao julgador", "relator",
+                   "localizacao", "fase atual")
+
+# Quantos deles bastam para a capa parecer capa. Tres, porque com dois ainda
+# cabe coincidencia e com quatro a tela de primeiro grau, que tem rotulos
+# proprios, seria reprovada sem motivo.
+CAPA_RECONHECIDA_COM = 3
+
+
+def _sem_acento(texto: str) -> str:
+    import unicodedata
+
+    return "".join(
+        c for c in unicodedata.normalize("NFD", (texto or "").lower())
+        if unicodedata.category(c) != "Mn").strip().rstrip(":")
+
+
+def veredicto_da_capa(principais: dict) -> tuple[bool, str]:
+    """A capa foi lida, ou a leitura generica pegou outro bloco?
+
+    Ate 27/10/2026 esta resposta era uma CONSTANTE: o arquivo sempre dizia que
+    `principais` nao servia como capa, citando o relato de 21/10/2026, em que
+    os unicos tres rotulos achados foram 'Destinatario:', 'Data da remessa:' e
+    'Prazo:'. Aquilo era verdade naquela tela.
+
+    Na consulta ao segundo grau de 27/10/2026 a mesma frase saiu impressa
+    embaixo de trinta rotulos lidos: Classe, Assunto, Localizacao, Orgao
+    Julgador, Relator, APELANTE, APELADO, FASE ATUAL, Data da Sessao, Votacao,
+    Designado p/ Acordao. Sao os campos da capa de um processo de segundo
+    grau. O aviso estava desmentindo uma leitura que funcionou, e quem o
+    lesse descartaria capa boa.
+
+    Um aviso que nao olha para o que aconteceu vira ruido, e ruido se aprende
+    a ignorar, inclusive quando ele estiver certo.
+
+    Devolve (foi_reconhecida, explicacao). Reconhecer os rotulos NAO e conferir
+    os valores: continua sendo leitura generica, e a explicacao diz isso.
+    """
+    achados = {_sem_acento(r) for r in (principais or {})}
+    presentes = [r for r in ROTULOS_DA_CAPA if r in achados]
+    if len(presentes) >= CAPA_RECONHECIDA_COM:
+        return True, (
+            "`principais` traz os rotulos da capa ("
+            + ", ".join(presentes) + "), que e o que se esperava achar. Os "
+            "ROTULOS foram reconhecidos; os VALORES continuam vindo da leitura "
+            "generica e nao foram conferidos um a um contra a tela. Use como "
+            "capa, conferindo o que for decidir prazo.")
+    return False, (
+        "`principais` (a capa) NAO foi reconhecida: dos rotulos que a capa "
+        "costuma ter (" + ", ".join(ROTULOS_DA_CAPA) + ") esta leitura achou "
+        + (", ".join(presentes) if presentes else "nenhum") + ". Em 21/10/2026 "
+        "o mesmo aconteceu e os tres rotulos achados eram 'Destinatario:', "
+        "'Data da remessa:' e 'Prazo:', que sao de outro bloco. Naquela tela a "
+        "capa morava na secao 'Descricao Detalhada', onde esta leitura nao "
+        "acha nada. Nao use `principais` como capa sem conferir contra a "
+        "tela.")
+
+
 def _leitura_vazia(falha: Optional[str] = None) -> dict:
     """O mesmo formato, quando nao houve o que ler. Nunca um dicionario torto.
 
@@ -4420,7 +4492,8 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
                       "caixas_de_movimentacao": [],
                       "componentes_de_movimento": 0,
                       "colunas_dos_documentos": [],
-                      "fora_da_tabela_de_documentos": 0},
+                      "fora_da_tabela_de_documentos": 0,
+                      "movimentacoes_por_origem": {}},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -4430,19 +4503,16 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
             # conferidos na tela real em 13/10/2026, e nao apontava a capa, que
             # e a unica que de fato nao foi conferida e que, em 21/10/2026, se
             # viu estar lendo outro bloco.
+            # O veredicto da capa e preenchido por `extrair`, a partir dos
+            # rotulos que a leitura achou NESTA tela. O molde vazio comeca
+            # pelo caso de leitura nenhuma, que e o unico que ele conhece.
             "conferido": {
                 "partes": True,
                 "mandados": True,
                 "movimentacoes": True,
                 "principais": False,
             },
-            "o_que_nao_foi_conferido": (
-                "`principais` (a capa). Ela e lida pela estrutura generica, e o "
-                "relato de estrutura de 21/10/2026 mostrou que os unicos tres "
-                "rotulos achados na tela inteira foram 'Destinatario:', 'Data "
-                "da remessa:' e 'Prazo:', que nao sao campos da capa deste "
-                "processo. A capa mora na secao 'Descricao Detalhada' e esta "
-                "leitura nao acha nada la. Nao use `principais` como capa."),
+            "o_que_nao_foi_conferido": veredicto_da_capa({})[1],
             # Coisa diferente da linha acima, e as duas precisam existir. A de
             # cima diz que a REGRA de leitura nunca foi conferida contra a tela
             # real. Esta diz se a tela lida era mesmo a do processo, e nao o
@@ -4584,6 +4654,9 @@ def extrair(quadro: Any) -> dict:
 
     saida = _leitura_vazia()
     saida["principais"] = principais
+    capa_reconhecida, explicacao_da_capa = veredicto_da_capa(principais)
+    saida["leitura"]["conferido"]["principais"] = capa_reconhecida
+    saida["leitura"]["o_que_nao_foi_conferido"] = explicacao_da_capa
     saida["partes"] = partes
     saida["mandados"] = mandados
     saida["movimentacoes"] = movimentacoes
@@ -4616,6 +4689,20 @@ def extrair(quadro: Any) -> dict:
         # documentos. Numero alto aqui quer dizer que a tabela de documentos
         # nao era o historico inteiro, e isso precisa ficar visivel.
         "fora_da_tabela_de_documentos": sobraram_das_genericas,
+        # QUANTAS movimentacoes cada regra achou, sem nenhuma delas.
+        #
+        # A origem diz qual regra pegou o andamento e, na segunda passada
+        # generica, em que tabela e sob que cabecalho. E o unico jeito de
+        # saber se o que veio de fora da tabela de documentos e andamento
+        # mesmo ou campo da capa lido como tal: a capa do segundo grau tem
+        # 'Data do Movimento:', 'Data da Sessao:' e 'Data da Publicacao:', e
+        # linha de duas celulas com data numa delas e exatamente o que a
+        # segunda passada procura.
+        #
+        # Nasce AQUI, e nao no relatorio, porque o relatorio e proibido de ler
+        # `movimentacoes`: la mora valor de campo. A contagem por origem e
+        # forma, entao o lugar dela e o bloco de forma.
+        "movimentacoes_por_origem": _por_origem(movimentacoes),
         # As secoes que esta leitura NAO aproveita. Sem isto, quem abre o
         # arquivo supoe que a tela foi lida por inteiro.
         "secoes_nao_lidas": secoes_nao_lidas(

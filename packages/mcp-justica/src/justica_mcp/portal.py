@@ -8347,6 +8347,27 @@ def mostrar_estrutura(caminho: str) -> int:
                 linhas.append(f"      {parte}")
     linhas.append(f"  ANDAMENTOS FORA DA TABELA DE DOCUMENTOS: "
                   f"{estrutura.get('fora_da_tabela_de_documentos', 0)}")
+
+    # DE ONDE VEIO CADA MOVIMENTACAO, so a contagem por origem.
+    #
+    # A origem diz qual regra achou o andamento e, na segunda passada, em que
+    # tabela e sob que cabecalho. Nao e conteudo do processo, e e o unico jeito
+    # de saber se os andamentos que vieram de fora da tabela de documentos sao
+    # andamento mesmo ou campo da capa lido como tal: na tela do segundo grau
+    # a capa tem 'Data do Movimento:', 'Data da Sessao:' e 'Data da
+    # Publicacao:', e uma linha de duas celulas com data numa delas e
+    # exatamente o que a segunda passada procura.
+    # Lida do bloco de ESTRUTURA, nunca de `movimentacoes`: la mora valor de
+    # campo, e este relatorio existe justamente para poder ser mostrado. Em
+    # 27/10/2026 eu a calculei aqui, percorrendo `movimentacoes`, e a guarda
+    # `test_estrutura_nao_abre_navegador_nem_exige_tribunal` barrou. Filtrar
+    # cada texto por `sem_dado_de_processo` e a segunda rede, nao a primeira.
+    por_origem = estrutura.get("movimentacoes_por_origem") or {}
+    linhas.append(f"  MOVIMENTACOES POR ORIGEM ({len(por_origem)}):")
+    if not por_origem:
+        linhas.append("    (nenhuma)")
+    for chave, quantas in sorted(por_origem.items(), key=lambda par: -par[1]):
+        linhas.append(f"    x{quantas:<4} {sem_dado_de_processo(str(chave))}")
     linhas.append(f"  DIAGNOSTICO DOS BLOCOS: "
                   f"{estrutura.get('diagnostico_dos_blocos') or '(sem)'}")
     caixas = estrutura.get("caixas_de_movimentacao") or []

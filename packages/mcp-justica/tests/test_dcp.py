@@ -9620,3 +9620,105 @@ def test_na_tabela_de_verdade_a_data_vem_da_celula_irma():
     lida = dados["estrutura"]["colunas_dos_documentos"][0]
     assert lida["de_onde_veio_a_data"]["celula_irma"] == 3
     assert lida["linhas_sem_documento"] == 0
+
+
+# ---------------------------------------------------------------------------
+# O veredicto da capa olha para o que foi lido
+#
+# Ate 27/10/2026 ele era uma CONSTANTE. Na consulta ao segundo grau daquele
+# dia a frase "nao use `principais` como capa" saiu impressa embaixo de trinta
+# rotulos lidos, e entre eles Classe, Assunto, Localizacao, Orgao Julgador e
+# Relator, que sao a capa. O aviso desmentia uma leitura que funcionou.
+# ---------------------------------------------------------------------------
+
+CAPA_DO_SEGUNDO_GRAU = {
+    "Classe": "Apelacao", "Assunto": "Rescisao contratual",
+    "Localizacao": "Capital", "Orgao Julgador": "Primeira Camara",
+    "Relator": "Fulano de Tal", "Fase Atual": "Concluso",
+}
+
+# Os tres rotulos achados em 21/10/2026, que sao de outro bloco da tela.
+CAPA_QUE_NAO_E_CAPA = {
+    "Destinatario": "Fulano", "Data da remessa": "01/10/2026",
+    "Prazo": "15 dias",
+}
+
+
+def test_a_capa_com_os_rotulos_certos_e_reconhecida():
+    from justica_mcp.dcp import veredicto_da_capa
+
+    reconhecida, explicacao = veredicto_da_capa(CAPA_DO_SEGUNDO_GRAU)
+    assert reconhecida is True
+    assert "Nao use" not in explicacao
+    assert "classe" in explicacao
+
+
+def test_a_capa_que_nao_e_capa_continua_recusada():
+    from justica_mcp.dcp import veredicto_da_capa
+
+    reconhecida, explicacao = veredicto_da_capa(CAPA_QUE_NAO_E_CAPA)
+    assert reconhecida is False
+    assert "Nao use `principais` como capa" in explicacao
+    assert "21/10/2026" in explicacao
+
+
+def test_reconhecer_rotulo_nao_e_conferir_valor():
+    """A distincao precisa estar na propria frase: quem le o arquivo daqui a
+    seis meses nao tem outro jeito de saber o que foi conferido."""
+    from justica_mcp.dcp import veredicto_da_capa
+
+    _, explicacao = veredicto_da_capa(CAPA_DO_SEGUNDO_GRAU)
+    assert "ROTULOS foram reconhecidos" in explicacao
+    assert "VALORES continuam vindo da leitura" in explicacao
+
+
+def test_dois_rotulos_nao_bastam():
+    from justica_mcp.dcp import veredicto_da_capa
+
+    reconhecida, _ = veredicto_da_capa({"Classe": "x", "Assunto": "y"})
+    assert reconhecida is False
+
+
+def test_o_acento_e_o_dois_pontos_nao_atrapalham():
+    from justica_mcp.dcp import veredicto_da_capa
+
+    reconhecida, _ = veredicto_da_capa(
+        {"Órgão Julgador:": "x", "Relator:": "y", "Localização:": "z"})
+    assert reconhecida is True
+
+
+def test_leitura_vazia_nao_reconhece_capa_nenhuma():
+    from justica_mcp.dcp import _leitura_vazia
+
+    vazia = _leitura_vazia()
+    assert vazia["leitura"]["conferido"]["principais"] is False
+    assert "NAO foi reconhecida" in vazia["leitura"]["o_que_nao_foi_conferido"]
+
+
+@semNavegador
+def test_a_contagem_por_origem_nasce_na_extracao(tmp_path):
+    """Ela mora no bloco de ESTRUTURA porque e forma, e porque o relatorio e
+    proibido de ler `movimentacoes`, onde mora valor de campo."""
+    dados = _ler_em_navegador(TELA_DOS_DOCUMENTOS_NUMA_CELULA)
+    por_origem = dados["estrutura"]["movimentacoes_por_origem"]
+    assert sum(por_origem.values()) == len(dados["movimentacoes"])
+    assert any("tabela de documentos do segundo grau" in chave
+               for chave in por_origem)
+
+
+def test_a_contagem_por_origem_nao_carrega_texto_de_movimento():
+    from justica_mcp.dcp import _por_origem
+
+    contagem = _por_origem([
+        {"data": "19/09/2026", "descricao": "Acordao", "origem": "regra A"},
+        {"data": "12/09/2026", "descricao": "Despacho", "origem": "regra A"},
+        {"data": "01/08/2026", "descricao": "Outra coisa", "origem": "regra B"},
+    ])
+    assert contagem == {"regra A": 2, "regra B": 1}
+    assert "Acordao" not in "".join(contagem)
+
+
+def test_movimento_sem_origem_nao_some_da_contagem():
+    from justica_mcp.dcp import _por_origem
+
+    assert _por_origem([{"data": "01/01/2026"}]) == {"(sem)": 1}
