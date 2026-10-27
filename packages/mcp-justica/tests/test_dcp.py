@@ -9317,7 +9317,7 @@ def test_a_tabela_de_documentos_do_segundo_grau_e_lida():
     assert [m["data"] for m in movimentos] == [
         "05/09/2026", "12/09/2026", "19/09/2026"]
     assert movimentos[2]["descricao"] == "Acordao"
-    assert all(m["origem"] == "tabela de documentos do segundo grau"
+    assert all(m["origem"].startswith("tabela de documentos do segundo grau")
                for m in movimentos)
 
 
@@ -9373,7 +9373,7 @@ def test_sem_coluna_de_texto_o_rotulo_da_ancora_vira_a_descricao():
     assert dados["movimentacoes"] == [
         {"data": "19/09/2026", "hora": "",
          "descricao": "Integra do(a) Acordao",
-         "origem": "tabela de documentos do segundo grau",
+         "origem": "tabela de documentos do segundo grau, data celula_irma",
          "documentos": [{"rotulo": "Integra do(a) Acordao",
                          "endereco": "/ejud/doc.aspx?x=9"}]}]
 
@@ -9425,7 +9425,7 @@ def test_tela_sem_ancora_de_integra_nao_muda_de_comportamento():
     passadas genericas continuam sendo as unicas, como sempre foram."""
     dados = _ler_em_navegador(TELA_DE_EXEMPLO)
     assert dados["estrutura"]["colunas_dos_documentos"] == []
-    assert all(m["origem"] != "tabela de documentos do segundo grau"
+    assert all(not m["origem"].startswith("tabela de documentos do segundo grau")
                for m in dados["movimentacoes"])
 
 
@@ -9515,3 +9515,108 @@ def test_o_mesmo_andamento_nao_entra_duas_vezes_por_duas_origens():
     assinaturas = [(m["data"], m["descricao"]) for m in dados["movimentacoes"]]
     assert len(assinaturas) == len(set(assinaturas)) == 3
     assert dados["estrutura"]["fora_da_tabela_de_documentos"] == 0
+
+
+# ---------------------------------------------------------------------------
+# A FORMA de verdade da tabela de documentos do segundo grau
+#
+# Lida na tela gravada de 27/10/2026 com o recorte por faixa vertical:
+#
+#   <table>    y=1042
+#     <tbody>  y=1042
+#       <tr>   y=1042      UMA linha
+#         <td> y=1042      UMA celula
+#           <b>  y=1058
+#           <a>  y=1088    oito ancoras, de quinze em quinze pixels
+#
+# Nao sao oito linhas: sao oito linhas de TEXTO numa celula so. A primeira
+# versao desta leitura, escrita com a tabela ainda nao observada, lia por linha
+# e devolveria um registro com oito documentos pendurados.
+# ---------------------------------------------------------------------------
+
+TELA_DOS_DOCUMENTOS_NUMA_CELULA = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>Resultado da consulta processual</title></head>
+<body><span><table><tbody><tr><td>
+  <b>Documentos</b>
+  05/09/2026 <a href="/ejud/d.aspx?x=1">Integra do(a) Despacho Mero expediente</a>
+  12/09/2026 <a href="/ejud/d.aspx?x=2">Integra do(a) Despacho Mero expediente</a>
+  19/09/2026 <a href="/ejud/d.aspx?x=3">Integra do(a) Acordao</a>
+</td></tr></tbody></table></span></body></html>"""
+
+
+@semNavegador
+def test_oito_documentos_numa_celula_viram_oito_registros():
+    """A unidade e a ANCORA, e nao a linha: numa celula so, cada documento
+    continua sendo um registro."""
+    dados = _ler_em_navegador(TELA_DOS_DOCUMENTOS_NUMA_CELULA)
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 3, movimentos
+    assert [m["data"] for m in movimentos] == [
+        "05/09/2026", "12/09/2026", "19/09/2026"]
+    assert [len(m["documentos"]) for m in movimentos] == [1, 1, 1]
+    assert movimentos[2]["documentos"][0]["endereco"].endswith("x=3")
+
+
+@semNavegador
+def test_a_data_solta_ao_lado_do_link_e_encontrada_e_a_origem_dita():
+    dados = _ler_em_navegador(TELA_DOS_DOCUMENTOS_NUMA_CELULA)
+    for movimento in dados["movimentacoes"]:
+        assert movimento["origem"].endswith("data antes"), movimento["origem"]
+    lida = dados["estrutura"]["colunas_dos_documentos"][0]
+    assert lida["documentos"] == 3
+    assert lida["de_onde_veio_a_data"]["antes"] == 3
+    assert lida["de_onde_veio_a_data"]["nao_achada"] == 0
+
+
+@semNavegador
+def test_a_data_de_um_documento_nao_vaza_para_o_seguinte():
+    """Esta e a falha que a leitura por vizinhanca pode ter: o trecho antes de
+    uma ancora inclui o texto que vem depois da anterior. Ele para no link
+    anterior, e por isso cada documento fica com a SUA data."""
+    dados = _ler_em_navegador(TELA_DOS_DOCUMENTOS_NUMA_CELULA)
+    datas = [m["data"] for m in dados["movimentacoes"]]
+    assert len(set(datas)) == 3
+
+
+@semNavegador
+def test_documento_sem_data_nenhuma_entra_e_diz_que_nao_tem():
+    """Descartar por falta de data apagaria prova que a tela mostrou. O
+    documento existe, foi visto, e sai dizendo que a data nao foi achada."""
+    html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+            "<table><tr><td><b>Documentos</b>"
+            "<a href=\"/ejud/d.aspx?x=7\">Integra do(a) Acordao</a>"
+            "</td></tr></table></body></html>")
+    dados = _ler_em_navegador(html)
+    assert len(dados["movimentacoes"]) == 1
+    assert dados["movimentacoes"][0]["data"] == ""
+    assert dados["movimentacoes"][0]["origem"].endswith("data nao_achada")
+    lida = dados["estrutura"]["colunas_dos_documentos"][0]
+    assert lida["de_onde_veio_a_data"]["nao_achada"] == 1
+
+
+@semNavegador
+def test_a_data_depois_do_link_tambem_e_achada():
+    html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+            "<table><tr><td>"
+            "<a href=\"/ejud/d.aspx?x=8\">Integra do(a) Acordao</a> 19/09/2026"
+            "</td></tr></table></body></html>")
+    dados = _ler_em_navegador(html)
+    assert dados["movimentacoes"][0]["data"] == "19/09/2026"
+    assert dados["movimentacoes"][0]["origem"].endswith("data depois")
+
+
+@semNavegador
+def test_na_tabela_de_verdade_a_data_vem_da_celula_irma():
+    """O outro formato continua valendo: uma ancora por linha, data em celula
+    propria. Os dois saem iguais."""
+    dados = _ler_em_navegador(_tela_do_segundo_grau(
+        ("documento", "data", "descricao")))
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 3
+    assert [m["data"] for m in movimentos] == [
+        "05/09/2026", "12/09/2026", "19/09/2026"]
+    for movimento in movimentos:
+        assert movimento["origem"].endswith("data celula_irma")
+    lida = dados["estrutura"]["colunas_dos_documentos"][0]
+    assert lida["de_onde_veio_a_data"]["celula_irma"] == 3
+    assert lida["linhas_sem_documento"] == 0

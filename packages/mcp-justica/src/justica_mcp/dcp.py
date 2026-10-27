@@ -3855,86 +3855,179 @@ JS_DA_TELA_DO_PROCESSO = r"""
   // Essa tela nao tem o botao "Todos Os Movimentos", nao tem `app-movimento`, e
   // NENHUMA tabela dela carrega id, classe, rotulo ou texto com a palavra
   // "movimenta": procurar por esse termo devolveu zero elemento. O unico
-  // marcador que ela tem sao ancoras cujo texto comeca em "Integra do(a)",
-  // oito delas, uma por linha. Isso e palavra do proprio portal, lida na tela,
-  // e nao suposicao sobre como a tela seria.
+  // marcador que ela tem sao ancoras cujo texto comeca em "Integra do(a)".
   //
-  // A ORDEM DAS COLUNAS nao e suposta aqui, porque eu nao a vi. Cada linha e
-  // lida pela FORMA de cada celula: a celula que e SO data e a data, a que tem
-  // a ancora e o documento, e a maior das restantes e a descricao. O arranjo
-  // observado sai em `colunasDosDocumentos` para que a leitura possa ser
-  // apertada depois contra a tela, em vez de nascer com uma ordem adivinhada.
+  // A FORMA DESSA TABELA, lida na mesma tela em 27/10/2026 com o recorte por
+  // faixa vertical (`tela --de-y 1030 --ate-y 1260`):
+  //
+  //   <table>    y=1042
+  //     <tbody>  y=1042
+  //       <tr>   y=1042      UMA linha
+  //         <td> y=1042      UMA celula
+  //           <b>  y=1058
+  //           <a>  y=1088    oito ancoras, de quinze em quinze pixels
+  //
+  // Nao sao oito linhas de tabela: sao oito linhas de TEXTO dentro de uma
+  // celula so, e os quinze pixels sao altura de linha. A primeira versao desta
+  // passada, escrita horas antes com a tabela ainda nao observada, lia por
+  // LINHA e devolveria um registro so, com oito documentos pendurados nele.
+  //
+  // Por isso a unidade aqui e a ANCORA, e nao a linha: cada documento vira um
+  // registro, nos dois formatos. Numa tabela de verdade, com uma ancora por
+  // linha, o resultado e o mesmo.
+  //
+  // A DATA e procurada em tres lugares, nesta ordem, e de onde ela veio fica
+  // gravado em cada registro:
+  //
+  //   1. o texto solto imediatamente ANTES da ancora, na mesma celula, que e
+  //      como lista de uma celula so costuma se montar;
+  //   2. o texto solto logo DEPOIS dela, ate o proximo link;
+  //   3. uma celula irma que seja data, que e o caso da tabela de verdade.
+  //
+  // Nao achando em nenhum, o registro sai SEM data e dizendo isso. O documento
+  // existe e foi visto; descarta-lo por falta de data seria apagar prova que a
+  // tela mostrou. Onde as datas desta tela moram eu nao sei: o gravador nao
+  // guarda texto de celula nem texto solto, de proposito, porque e neles que
+  // mora dado de cliente. A proxima consulta real responde isso em
+  // `colunas_dos_documentos`, sem gastar outra autenticacao para perguntar.
   //
   // Esta passada NAO passa por `guardarMovimento`: a chave de deduplicacao de
-  // la e data+descricao, e esta tabela tem cinco linhas de "Mero expediente"
-  // que podem repetir a descricao. Deduplicar aqui apagaria andamento que
-  // existe.
+  // la e data+descricao, e esta tela tem cinco despachos de "Mero expediente"
+  // que repetem a descricao. Deduplicar aqui apagaria andamento que existe.
   const documentosDoSegundoGrau = [];
   const colunasDosDocumentos = [];
+
+  // O texto solto vizinho da ancora, de um lado so, ate esbarrar noutro link,
+  // numa quebra de linha ou no comeco/fim da celula. E a "linha" dela, quando
+  // a tela nao usa linha de tabela para separar.
+  const PARA_A_LINHA = {A: 1, BR: 1, TR: 1, TD: 1, TABLE: 1};
+  const textoVizinho = (ancora, paraTras) => {
+    const pedacos = [];
+    let no = paraTras ? ancora.previousSibling : ancora.nextSibling;
+    for (let i = 0; i < 12 && no; i++) {
+      if (no.nodeType === 1 && PARA_A_LINHA[no.tagName]) break;
+      const t = no.nodeType === 3 ? no.nodeValue : (no.textContent || '');
+      if (t) pedacos.push(t);
+      no = paraTras ? no.previousSibling : no.nextSibling;
+    }
+    if (paraTras) pedacos.reverse();
+    return corta(pedacos.join(' '), 200);
+  };
+  // A data mais PROXIMA da ancora: a ultima do trecho que vem antes, a
+  // primeira do que vem depois.
+  const DATA_EM_QUALQUER_LUGAR = /(\d{2}\/\d{2}\/\d{4})(?:[\s,]+(\d{2}:\d{2}(?::\d{2})?))?/g;
+  const datasDe = (texto) => {
+    const achadas = [];
+    let m;
+    DATA_EM_QUALQUER_LUGAR.lastIndex = 0;
+    while ((m = DATA_EM_QUALQUER_LUGAR.exec(texto)) !== null) {
+      achadas.push([m[1], m[2] || '']);
+    }
+    return achadas;
+  };
+
   for (const tabela of tabelasDeDocumento) {
     const formaDaColuna = {};
-    let linhasLidas = 0;
+    const deOndeVeioAData = {antes: 0, depois: 0, celula_irma: 0, nao_achada: 0};
+    const ancoras = Array.from(tabela.querySelectorAll('a'))
+      .filter(a => ehMarcaDeDocumento(a.innerText));
+
+    for (const ancora of ancoras) {
+      const rotulo = corta(ancora.innerText, 120);
+      let data = '', hora = '', origemDaData = 'nao_achada';
+
+      const antes = datasDe(textoVizinho(ancora, true));
+      if (antes.length) {
+        data = antes[antes.length - 1][0];
+        hora = antes[antes.length - 1][1];
+        origemDaData = 'antes';
+      }
+      if (!data) {
+        const depois = datasDe(textoVizinho(ancora, false));
+        if (depois.length) {
+          data = depois[0][0]; hora = depois[0][1]; origemDaData = 'depois';
+        }
+      }
+      if (!data) {
+        const celula = ancora.closest('td, th');
+        const linha = celula ? celula.parentElement : null;
+        for (const irma of (linha ? Array.from(linha.children) : [])) {
+          if (irma === celula) continue;
+          const m = corta(irma.innerText, 60).match(soData);
+          if (m) {
+            data = m[1]; hora = m[2] || ''; origemDaData = 'celula_irma';
+            break;
+          }
+        }
+      }
+      deOndeVeioAData[origemDaData] += 1;
+
+      // A descricao: a celula irma de texto, quando existe; senao o rotulo da
+      // ancora, que e o que diz "Despacho", "Acordao", "Mero expediente".
+      let descricao = '';
+      const celula = ancora.closest('td, th');
+      const linha = celula ? celula.parentElement : null;
+      for (const irma of (linha ? Array.from(linha.children) : [])) {
+        if (irma === celula || irma.querySelector('a')) continue;
+        const t = corta(irma.innerText, 300);
+        if (soData.test(t)) continue;
+        if (t.length > descricao.length) descricao = t;
+      }
+      if (!descricao) descricao = rotulo;
+
+      documentosDoSegundoGrau.push([
+        data, hora, corta(descricao, 300),
+        'tabela de documentos do segundo grau, data ' + origemDaData,
+        [[rotulo, ancora.getAttribute('href') || '']]]);
+    }
+
+    // As linhas da mesma tabela que NAO tem ancora de documento e tem data:
+    // andamento sem documento anexado existe, e ele entra tambem.
+    let linhasSemAncora = 0;
     for (const linha of tabela.querySelectorAll('tr')) {
       if (linha.querySelector('tr')) continue;
       const celulas = Array.from(linha.children);
       if (celulas.length === 0) continue;
-
-      const links = [];
-      for (const a of linha.querySelectorAll('a')) {
-        const rotulo = corta(a.innerText, 120);
-        if (!ehMarcaDeDocumento(rotulo)) continue;
-        links.push([rotulo, a.getAttribute('href') || '']);
-      }
-
-      // A data: primeiro a celula que e SO data, que e a que nao deixa duvida.
-      // So se nenhuma for, aceita a celula que COMECA por data.
-      let data = '', hora = '', ondeEstaADataCelula = -1;
       const textos = celulas.map(c => corta(c.innerText, 300));
-      const temLink = celulas.map(c => c.querySelector('a') !== null);
+      const temLink = celulas.map(
+        c => Array.from(c.querySelectorAll('a'))
+               .some(a => ehMarcaDeDocumento(a.innerText)));
+
+      let data = '', hora = '', ondeEstaADataCelula = -1;
       for (let i = 0; i < celulas.length; i++) {
         const m = textos[i].match(soData);
         if (m) { data = m[1]; hora = m[2] || ''; ondeEstaADataCelula = i; break; }
       }
-      if (!data) {
-        for (let i = 0; i < celulas.length; i++) {
-          const m = textos[i].match(comecaPorData);
-          if (m) { data = m[1]; hora = m[2] || ''; ondeEstaADataCelula = i; break; }
-        }
-      }
-
       for (let i = 0; i < celulas.length; i++) {
         const forma = temLink[i] ? 'documento'
           : (i === ondeEstaADataCelula ? 'data' : (textos[i] ? 'texto' : 'vazia'));
         if (!formaDaColuna[i]) formaDaColuna[i] = {};
         formaDaColuna[i][forma] = (formaDaColuna[i][forma] || 0) + 1;
       }
-
-      // Linha sem data E sem documento e cabecalho ou rodape da tabela, nao
-      // andamento. Linha com um dos dois entra: ha movimento sem documento
-      // anexado, e ha documento cuja data mora em outra coluna.
-      if (!data && links.length === 0) continue;
-      linhasLidas += 1;
-
+      if (temLink.some(Boolean)) continue;
+      if (!data) continue;
       let descricao = '';
       for (let i = 0; i < celulas.length; i++) {
-        if (i === ondeEstaADataCelula || temLink[i]) continue;
+        if (i === ondeEstaADataCelula) continue;
         if (textos[i].length > descricao.length) descricao = textos[i];
       }
-      // Sem celula de texto propria, o rotulo da ancora e a descricao: e ele
-      // que diz "Despacho", "Acordao", "Mero expediente". E conteudo da tela,
-      // nao rotulo inventado aqui.
-      if (!descricao && links.length > 0) descricao = links[0][0];
-
+      if (!descricao) continue;
+      linhasSemAncora += 1;
       documentosDoSegundoGrau.push([
-        data, hora, corta(descricao, 300),
-        'tabela de documentos do segundo grau', links]);
+        data, hora, descricao,
+        'tabela de documentos do segundo grau, linha sem documento', []]);
     }
+
     const topo = tabela.querySelector('tr');
     const cabecalhos = topo
       ? Array.from(topo.children).map(c => corta(c.innerText, 30)) : [];
     colunasDosDocumentos.push({
       id: tabela.id || '', classe: corta(tabela.className, 40),
-      linhas_lidas: linhasLidas, cabecalhos: cabecalhos,
+      linhas_lidas: ancoras.length + linhasSemAncora,
+      documentos: ancoras.length,
+      linhas_sem_documento: linhasSemAncora,
+      de_onde_veio_a_data: deOndeVeioAData,
+      cabecalhos: cabecalhos,
       forma_por_coluna: formaDaColuna,
     });
   }
@@ -4291,6 +4384,16 @@ def _colunas_dos_documentos(bruto: Any) -> list:
                 "id": _sem_dado(item.get("id") or ""),
                 "classe": _sem_dado(item.get("classe") or ""),
                 "linhas_lidas": int(item.get("linhas_lidas") or 0),
+                "documentos": int(item.get("documentos") or 0),
+                "linhas_sem_documento": int(
+                    item.get("linhas_sem_documento") or 0),
+                # Onde a data de cada documento foi achada, ou que nao foi.
+                # E a pergunta que a tela gravada nao responde, porque o
+                # gravador nao guarda texto solto nem texto de celula: e neles
+                # que mora dado de cliente. A consulta real responde aqui.
+                "de_onde_veio_a_data": {
+                    str(k): int(v) for k, v in
+                    (item.get("de_onde_veio_a_data") or {}).items()},
                 "cabecalhos": [_sem_dado(c) for c in
                                (item.get("cabecalhos") or [])],
                 "forma_por_coluna": forma,
