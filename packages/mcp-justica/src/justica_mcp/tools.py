@@ -22,7 +22,7 @@ from functools import partial
 from .core.estado import Estado, detalhe_do_erro
 from .core.resolver import resolver_sistema
 from .core.resiliencia import PortalIndisponivel
-from .core.schemas import Erro
+from .core.schemas import Erro, agora_iso
 from .core.tribunais import TribunalForaDoEscopo, identificar_tribunal
 
 _estado = Estado()
