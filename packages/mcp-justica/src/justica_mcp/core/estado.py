@@ -194,6 +194,38 @@ class Estado:
                 ),
             )
 
+    def portal_pede_segundo_fator(self, tribunal: str, sistema: str) -> Optional[bool]:
+        """O portal ja PEDIU codigo de segundo fator neste par tribunal/sistema?
+
+        `True` pediu, `False` nao pediu, `None` ninguem chegou a ver. O terceiro
+        valor e o mais importante: "nunca observei" nao e "nao pede", e tratar
+        um como o outro e o que produz decisao errada com cara de certeza.
+
+        POR QUE ISTO EXISTE
+
+        Sem semente guardada e com a janela oculta, `autenticar` recusava ANTES
+        do login, presumindo que haveria codigo a digitar e ninguem a quem
+        perguntar. Para o eproc a presuncao vale. Para o Portal de Servicos do
+        Rio de Janeiro ela e falsa: aquele portal nao pede segundo fator, e a
+        recusa barrava uma consulta que teria funcionado, pela falta de uma
+        coisa que nao e usada ali. O mesmo erro o codigo ja cometera em 22/09
+        exigindo semente como condicao geral, e corrigira so em parte.
+
+        A resposta vem da auditoria, que e observacao, nao palpite: o programa
+        registra em cada login se a tela de codigo apareceu.
+        """
+        with self._conectar() as cx:
+            linha = cx.execute(
+                "SELECT resultado FROM auditoria "
+                "WHERE acao = 'login_etapa_segundo_fator' "
+                "AND tribunal = ? AND sistema = ? "
+                "ORDER BY ocorrido_em DESC, id DESC LIMIT 1",
+                (tribunal, sistema),
+            ).fetchone()
+        if linha is None:
+            return None
+        return str(linha["resultado"]) not in ("sem_segundo_fator", "nao_solicitado")
+
     def auditoria_recente(self, limite: int = 50) -> list[dict[str, Any]]:
         with self._conectar() as cx:
             linhas = cx.execute(

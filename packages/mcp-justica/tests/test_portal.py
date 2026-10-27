@@ -1433,6 +1433,12 @@ class _CofreSemSemente:
 
 
 class _EstadoMudo:
+    # `pede_segundo_fator` imita a auditoria vazia do estado de verdade:
+    # None e "ninguem observou ainda". Um duble que respondesse False seria
+    # mais permissivo que a realidade e esconderia justamente a recusa que
+    # estes testes conferem.
+    pede_segundo_fator = None
+
     def registrar(self, **kw):
         pass
 
@@ -1442,10 +1448,14 @@ class _EstadoMudo:
     def gravar_snapshot(self, *a, **kw):
         pass
 
+    def portal_pede_segundo_fator(self, tribunal, sistema):
+        return self.pede_segundo_fator
 
-def test_sem_semente_e_sem_janela_recusa_com_motivo(capsys):
+
+def test_sem_semente_e_sem_janela_recusa_quando_nunca_se_observou(capsys):
     """Sem semente o codigo e digitado por uma pessoa. Sem janela nao ha
-    pessoa: recusar antes de abrir o navegador poupa uma tentativa."""
+    pessoa, e sem observacao nao se sabe se o portal pede: recusar antes de
+    abrir o navegador poupa uma tentativa que nao poderia terminar."""
     from justica_mcp.portal import autenticar
 
     codigo = autenticar(
@@ -1454,7 +1464,45 @@ def test_sem_semente_e_sem_janela_recusa_com_motivo(capsys):
     )
     assert codigo == 1
     saida = capsys.readouterr()
-    assert "nao ha a quem perguntar" in saida.err
+    assert "nunca se observou" in saida.err
+    assert "nenhuma tentativa foi gasta" in saida.err
+
+
+def test_sem_semente_e_sem_janela_recusa_quando_o_portal_ja_pediu(capsys):
+    from justica_mcp.portal import autenticar
+
+    estado = _EstadoMudo()
+    estado.pede_segundo_fator = True
+    codigo = autenticar(
+        "https://portal.exemplo/login", "TJSP", "esaj", confirmado=True,
+        oculto=True, cofre=_CofreSemSemente(), estado=estado,
+    )
+    assert codigo == 1
+    assert "ja pediu codigo antes" in capsys.readouterr().err
+
+
+def test_portal_observado_sem_segundo_fator_segue_mesmo_oculto(capsys):
+    """O caso que motivou a mudanca: o Portal de Servicos do Rio de Janeiro
+    nao pede codigo, e a recusa incondicional barrava uma consulta que teria
+    funcionado, por falta de uma coisa que aquele portal nao usa."""
+    from justica_mcp.portal import autenticar
+
+    estado = _EstadoMudo()
+    estado.pede_segundo_fator = False
+    # Endereco invalido para parar logo depois da decisao: o que se mede aqui
+    # e que a recusa NAO aconteceu, nao o que vem depois dela. O endereco
+    # invalido e recusado adiante, e essa recusa e justamente a prova de que
+    # a execucao passou do ponto em questao.
+    from justica_mcp.portal import PortalIndisponivel
+
+    with pytest.raises(PortalIndisponivel):
+        autenticar(
+            "endereco-invalido-para-parar-cedo", "TJRJ", "dcp", confirmado=True,
+            oculto=True, cofre=_CofreSemSemente(), estado=estado,
+        )
+    saida = capsys.readouterr()
+    assert "nao pediu segundo fator nas vezes observadas" in saida.out
+    assert "nao ha a quem perguntar" not in saida.err
 
 
 def test_sem_semente_avisa_para_ter_o_codigo_em_maos(capsys):

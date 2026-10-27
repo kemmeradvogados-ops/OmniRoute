@@ -103,3 +103,60 @@ def test_sem_mensagem_devolve_o_tipo_sozinho():
 def test_mensagem_enorme_e_cortada():
     d = detalhe_do_erro(RuntimeError("x" * 5000))
     assert len(d) <= LIMITE_DO_DETALHE
+
+
+# --------------------------------------------------------------------------
+# "Nunca observei" nao e "nao pede".
+#
+# Sem semente e com janela oculta, `autenticar` recusava antes do login
+# presumindo que haveria codigo a digitar. Para o eproc a presuncao vale; para
+# o Portal de Servicos do Rio de Janeiro e falsa, e a recusa barrava uma
+# consulta que teria funcionado. Quem decide passa a ser a auditoria.
+
+def _estado_limpo(tmp_path):
+    from justica_mcp.core.estado import Estado
+
+    return Estado(tmp_path / "estado.sqlite3")
+
+
+def test_sem_historico_a_resposta_e_nao_sei(tmp_path):
+    e = _estado_limpo(tmp_path)
+    assert e.portal_pede_segundo_fator("TJRJ", "dcp") is None
+
+
+def test_portal_que_nao_pediu_codigo_e_reconhecido(tmp_path):
+    e = _estado_limpo(tmp_path)
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="sem_segundo_fator")
+    assert e.portal_pede_segundo_fator("TJRJ", "dcp") is False
+
+
+def test_nao_solicitado_tambem_conta_como_nao_pede(tmp_path):
+    e = _estado_limpo(tmp_path)
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="nao_solicitado")
+    assert e.portal_pede_segundo_fator("TJRJ", "dcp") is False
+
+
+def test_portal_que_pediu_codigo_e_reconhecido(tmp_path):
+    e = _estado_limpo(tmp_path)
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="eproc", resultado="codigo_aceito")
+    assert e.portal_pede_segundo_fator("TJRJ", "eproc") is True
+
+
+def test_vale_a_observacao_mais_recente(tmp_path):
+    # Portal que passa a exigir codigo precisa voltar a ser tratado assim.
+    e = _estado_limpo(tmp_path)
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="sem_segundo_fator")
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="codigo_aceito")
+    assert e.portal_pede_segundo_fator("TJRJ", "dcp") is True
+
+
+def test_um_sistema_nao_responde_pelo_outro(tmp_path):
+    e = _estado_limpo(tmp_path)
+    e.registrar(acao="login_etapa_segundo_fator", tribunal="TJRJ",
+                sistema="dcp", resultado="sem_segundo_fator")
+    assert e.portal_pede_segundo_fator("TJRJ", "eproc") is None

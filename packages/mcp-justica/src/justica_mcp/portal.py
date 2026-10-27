@@ -3078,11 +3078,36 @@ def autenticar(
         print(f"  Sem semente para {identidade.rotulo}: o codigo do segundo fator")
         print("  sera pedido a voce, se o portal exigir um. Tenha em maos o")
         print("  celular ou o e-mail que o recebe.")
+        # A recusa aqui so vale se este portal REALMENTE pedir codigo. Ate
+        # 27/10/2026 ela era incondicional, e barrava o Portal de Servicos do
+        # Rio de Janeiro, que nao pede segundo fator nenhum: a consulta
+        # autenticada pelo Claude falhava tres vezes num dia com "codigo 1",
+        # por falta de uma coisa que aquele portal nao usa. E o mesmo erro que
+        # o codigo ja cometera em 22/09 exigindo semente como condicao geral.
+        #
+        # Quem decide e a OBSERVACAO, nao o palpite: a auditoria registra, a
+        # cada login, se a tela de codigo apareceu. Nunca observado continua
+        # recusando, porque ai seguir gastaria uma tentativa para descobrir no
+        # meio do caminho que nao da para terminar.
         if oculto:
-            print("\n  [PARADO] Sem semente e sem janela, nao ha a quem perguntar.",
-                  file=sys.stderr)
-            print("  Rode pela linha de comando, sem --oculto.", file=sys.stderr)
-            return 1
+            pede = estado.portal_pede_segundo_fator(
+                identidade.tribunal, identidade.sistema)
+            if pede is not False:
+                motivo = ("este portal ja pediu codigo antes" if pede
+                          else "nunca se observou se este portal pede codigo")
+                print(f"\n  [PARADO] Sem semente, sem janela e {motivo}:",
+                      file=sys.stderr)
+                print("  nao haveria a quem perguntar o codigo. Nada foi enviado",
+                      file=sys.stderr)
+                print("  e nenhuma tentativa foi gasta. Rode uma vez pela linha de",
+                      file=sys.stderr)
+                print("  comando, sem --oculto: o programa anota ali se a tela de",
+                      file=sys.stderr)
+                print("  codigo aparece, e passa a decidir por observacao.",
+                      file=sys.stderr)
+                return 1
+            print("  Este portal nao pediu segundo fator nas vezes observadas,")
+            print("  entao a janela oculta segue.")
         print()
 
     base = permissao_efemera(url)
