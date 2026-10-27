@@ -3635,9 +3635,33 @@ JS_DA_TELA_DO_PROCESSO = r"""
     movimentacoes.push([data, hora || '', descricao, origem]);
   };
 
+  // AS TABELAS DE DOCUMENTO sao achadas ANTES das passadas genericas, e as
+  // passadas genericas pulam as linhas delas.
+  //
+  // Isto nao e economia: e correcao. A linha da tabela de documentos tambem
+  // casa com a segunda passada generica, que ve a celula de data, e as duas
+  // leituras da MESMA linha saem diferentes, porque a generica escolhe a maior
+  // celula como descricao e a maior e a do link ("Integra do(a) Despacho Mero
+  // expediente"). O mesmo andamento sairia duas vezes, com duas descricoes, e
+  // nenhuma chave de deduplicacao por texto juntaria as duas. Quem le a tabela
+  // de documentos e a quarta passada, logo abaixo.
+  const MARCA_DO_DOCUMENTO = /^integra\s*do\(a\)/;
+  const ehMarcaDeDocumento = (texto) => MARCA_DO_DOCUMENTO.test(semAcento(texto));
+  const tabelasDeDocumento = [];
+  for (const a of document.querySelectorAll('a')) {
+    if (!ehMarcaDeDocumento(a.innerText)) continue;
+    const dona = a.closest('table');
+    if (dona && tabelasDeDocumento.indexOf(dona) < 0) tabelasDeDocumento.push(dona);
+  }
+  const ehLinhaDeDocumento = (linha) => {
+    const dona = linha.closest ? linha.closest('table') : null;
+    return dona !== null && tabelasDeDocumento.indexOf(dona) >= 0;
+  };
+
   // Primeira passada: a linha COMECA por data.
   for (const linha of document.querySelectorAll('tr, [role=row], li')) {
     if (linha.querySelector('tr, [role=row]')) continue;
+    if (ehLinhaDeDocumento(linha)) continue;
     const texto = corta(linha.innerText, 400);
     const m = texto.match(comecaPorData);
     if (!m) continue;
@@ -3653,6 +3677,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
   // movimento para que ninguem precise adivinhar de onde ele veio.
   for (const linha of document.querySelectorAll('tr')) {
     if (linha.querySelector('tr')) continue;
+    if (ehLinhaDeDocumento(linha)) continue;
     const celulas = Array.from(linha.children);
     if (celulas.length < 2) continue;
     let data = '', hora = '', posicao = -1;
@@ -3822,6 +3847,96 @@ JS_DA_TELA_DO_PROCESSO = r"""
       descricao = bloco['tipo do movimento'];
     }
     guardarMovimento(data, hora, descricao, 'bloco de rotulos da tela');
+  }
+
+  // Quarta passada: a TABELA DE DOCUMENTOS do segundo grau.
+  //
+  // Lida na tela real em 27/10/2026, em `www3.tjrj.jus.br/ejud/ConsultaProcesso.aspx`.
+  // Essa tela nao tem o botao "Todos Os Movimentos", nao tem `app-movimento`, e
+  // NENHUMA tabela dela carrega id, classe, rotulo ou texto com a palavra
+  // "movimenta": procurar por esse termo devolveu zero elemento. O unico
+  // marcador que ela tem sao ancoras cujo texto comeca em "Integra do(a)",
+  // oito delas, uma por linha. Isso e palavra do proprio portal, lida na tela,
+  // e nao suposicao sobre como a tela seria.
+  //
+  // A ORDEM DAS COLUNAS nao e suposta aqui, porque eu nao a vi. Cada linha e
+  // lida pela FORMA de cada celula: a celula que e SO data e a data, a que tem
+  // a ancora e o documento, e a maior das restantes e a descricao. O arranjo
+  // observado sai em `colunasDosDocumentos` para que a leitura possa ser
+  // apertada depois contra a tela, em vez de nascer com uma ordem adivinhada.
+  //
+  // Esta passada NAO passa por `guardarMovimento`: a chave de deduplicacao de
+  // la e data+descricao, e esta tabela tem cinco linhas de "Mero expediente"
+  // que podem repetir a descricao. Deduplicar aqui apagaria andamento que
+  // existe.
+  const documentosDoSegundoGrau = [];
+  const colunasDosDocumentos = [];
+  for (const tabela of tabelasDeDocumento) {
+    const formaDaColuna = {};
+    let linhasLidas = 0;
+    for (const linha of tabela.querySelectorAll('tr')) {
+      if (linha.querySelector('tr')) continue;
+      const celulas = Array.from(linha.children);
+      if (celulas.length === 0) continue;
+
+      const links = [];
+      for (const a of linha.querySelectorAll('a')) {
+        const rotulo = corta(a.innerText, 120);
+        if (!ehMarcaDeDocumento(rotulo)) continue;
+        links.push([rotulo, a.getAttribute('href') || '']);
+      }
+
+      // A data: primeiro a celula que e SO data, que e a que nao deixa duvida.
+      // So se nenhuma for, aceita a celula que COMECA por data.
+      let data = '', hora = '', ondeEstaADataCelula = -1;
+      const textos = celulas.map(c => corta(c.innerText, 300));
+      const temLink = celulas.map(c => c.querySelector('a') !== null);
+      for (let i = 0; i < celulas.length; i++) {
+        const m = textos[i].match(soData);
+        if (m) { data = m[1]; hora = m[2] || ''; ondeEstaADataCelula = i; break; }
+      }
+      if (!data) {
+        for (let i = 0; i < celulas.length; i++) {
+          const m = textos[i].match(comecaPorData);
+          if (m) { data = m[1]; hora = m[2] || ''; ondeEstaADataCelula = i; break; }
+        }
+      }
+
+      for (let i = 0; i < celulas.length; i++) {
+        const forma = temLink[i] ? 'documento'
+          : (i === ondeEstaADataCelula ? 'data' : (textos[i] ? 'texto' : 'vazia'));
+        if (!formaDaColuna[i]) formaDaColuna[i] = {};
+        formaDaColuna[i][forma] = (formaDaColuna[i][forma] || 0) + 1;
+      }
+
+      // Linha sem data E sem documento e cabecalho ou rodape da tabela, nao
+      // andamento. Linha com um dos dois entra: ha movimento sem documento
+      // anexado, e ha documento cuja data mora em outra coluna.
+      if (!data && links.length === 0) continue;
+      linhasLidas += 1;
+
+      let descricao = '';
+      for (let i = 0; i < celulas.length; i++) {
+        if (i === ondeEstaADataCelula || temLink[i]) continue;
+        if (textos[i].length > descricao.length) descricao = textos[i];
+      }
+      // Sem celula de texto propria, o rotulo da ancora e a descricao: e ele
+      // que diz "Despacho", "Acordao", "Mero expediente". E conteudo da tela,
+      // nao rotulo inventado aqui.
+      if (!descricao && links.length > 0) descricao = links[0][0];
+
+      documentosDoSegundoGrau.push([
+        data, hora, corta(descricao, 300),
+        'tabela de documentos do segundo grau', links]);
+    }
+    const topo = tabela.querySelector('tr');
+    const cabecalhos = topo
+      ? Array.from(topo.children).map(c => corta(c.innerText, 30)) : [];
+    colunasDosDocumentos.push({
+      id: tabela.id || '', classe: corta(tabela.className, 40),
+      linhas_lidas: linhasLidas, cabecalhos: cabecalhos,
+      forma_por_coluna: formaDaColuna,
+    });
   }
 
   // O DIAGNOSTICO da leitura dos blocos. Em 13/10/2026 a leitura devolveu uma
@@ -4024,6 +4139,8 @@ JS_DA_TELA_DO_PROCESSO = r"""
 
   return {pares: pares, partes: partes, mandados: mandados,
           movimentacoes: movimentacoes,
+          documentosDoSegundoGrau: documentosDoSegundoGrau,
+          colunasDosDocumentos: colunasDosDocumentos,
           tabelas: tabelas, familias: familias,
           rotulosCandidatos: rotulosCandidatos,
           secoes: secoes, botoes: botoes, diagnostico: diagnostico,
@@ -4148,6 +4265,41 @@ def secoes_nao_lidas(secoes: Any) -> list:
     return vistos
 
 
+def _colunas_dos_documentos(bruto: Any) -> list:
+    """Como a tabela de documentos do segundo grau esta montada.
+
+    So FORMA: quantas linhas, que cabecalhos, e quantas vezes cada coluna
+    apareceu como data, como documento, como texto ou vazia. E o que permite
+    conferir a ordem das colunas contra a tela depois, sem que a leitura
+    precise ter nascido com uma ordem adivinhada.
+
+    Nenhum conteudo de processo entra aqui: cabecalho e vocabulario da tela e
+    ainda passa por `_sem_dado`, que e a mesma rede do resto do bloco de
+    estrutura.
+    """
+    saida = []
+    for item in bruto or []:
+        if not isinstance(item, dict):
+            continue
+        forma = {}
+        for coluna, contagem in (item.get("forma_por_coluna") or {}).items():
+            if not isinstance(contagem, dict):
+                continue
+            forma[str(coluna)] = {str(k): int(v) for k, v in contagem.items()}
+        try:
+            saida.append({
+                "id": _sem_dado(item.get("id") or ""),
+                "classe": _sem_dado(item.get("classe") or ""),
+                "linhas_lidas": int(item.get("linhas_lidas") or 0),
+                "cabecalhos": [_sem_dado(c) for c in
+                               (item.get("cabecalhos") or [])],
+                "forma_por_coluna": forma,
+            })
+        except Exception:
+            continue
+    return saida
+
+
 def _leitura_vazia(falha: Optional[str] = None) -> dict:
     """O mesmo formato, quando nao houve o que ler. Nunca um dicionario torto.
 
@@ -4163,7 +4315,9 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
                       "secoes": [], "botoes": [], "rotulos_lidos": [],
                       "diagnostico_dos_blocos": _diagnostico(None),
                       "caixas_de_movimentacao": [],
-                      "componentes_de_movimento": 0},
+                      "componentes_de_movimento": 0,
+                      "colunas_dos_documentos": [],
+                      "fora_da_tabela_de_documentos": 0},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -4196,7 +4350,7 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
             "falha": falha,
         },
         "totais": {"principais": 0, "partes": 0, "mandados": 0,
-                   "movimentacoes": 0},
+                   "movimentacoes": 0, "documentos_listados": 0},
     }
 
 
@@ -4233,7 +4387,36 @@ def extrair(quadro: Any) -> dict:
     # andamentos do mesmo dia com a mesma descricao existem, e a deduplicacao
     # das passadas genericas apagaria o segundo.
     do_componente = bruto.get("movimentosDoComponente") or []
-    fonte = do_componente if do_componente else (bruto.get("movimentacoes") or [])
+    # A tabela de documentos do segundo grau, quando a tela a tem, manda sobre
+    # as passadas genericas pela mesma razao que `<app-movimento>` manda: ela
+    # foi achada por marcador lido na tela de verdade, e nao por formato que
+    # qualquer pagina poderia ter. Em 27/10/2026 a consulta ao segundo grau
+    # voltou com quatro registros com data, das passadas genericas, contra oito
+    # ancoras de documento visiveis na mesma tela.
+    do_segundo_grau = bruto.get("documentosDoSegundoGrau") or []
+    genericas = bruto.get("movimentacoes") or []
+    sobraram_das_genericas = 0
+    if do_componente:
+        fonte = do_componente
+    elif do_segundo_grau:
+        # A tabela de documentos vem PRIMEIRO, e o que as passadas genericas
+        # acharam alem dela vem DEPOIS, com a origem de cada um preservada.
+        #
+        # Descartar as genericas aqui seria o erro que esta leitura existe
+        # para evitar. A tabela de documentos nao e, por construcao, o
+        # historico inteiro: ela e a tabela que tem ancora de documento, e um
+        # andamento sem documento anexado pode morar em outro lugar da tela.
+        # Repetir um andamento com duas origens visiveis custa uma linha a
+        # mais; perder um custa o andamento.
+        # Nao ha deduplicacao por texto aqui, e nao pode haver: as duas
+        # fontes sao disjuntas por construcao, porque as passadas genericas
+        # pulam as linhas das tabelas de documento (ver `ehLinhaDeDocumento`).
+        # Deduplicar por data+descricao apagaria andamento repetido de
+        # verdade, que existe.
+        fonte = list(do_segundo_grau) + list(genericas)
+        sobraram_das_genericas = len(genericas)
+    else:
+        fonte = genericas
 
     movimentacoes = []
     for item in fonte:
@@ -4246,6 +4429,17 @@ def extrair(quadro: Any) -> dict:
                 # adivinhar qual delas achou cada uma.
                 "origem": str(item[3]) if len(item) > 3 else "",
             })
+            # Os documentos da linha, quando a fonte os traz. Sao LISTADOS,
+            # com rotulo e endereco: nada e aberto nem baixado aqui.
+            documentos = []
+            for par in (item[4] if len(item) > 4 else []) or []:
+                try:
+                    documentos.append({"rotulo": str(par[0]),
+                                       "endereco": str(par[1])})
+                except Exception:
+                    continue
+            if documentos:
+                movimentacoes[-1]["documentos"] = documentos
         except Exception:
             continue
 
@@ -4309,6 +4503,16 @@ def extrair(quadro: Any) -> dict:
         "diagnostico_dos_blocos": _diagnostico(bruto.get("diagnostico")),
         "caixas_de_movimentacao": _caixas(bruto.get("caixasDeMovimentacao")),
         "componentes_de_movimento": len(do_componente),
+        # Como a tabela de documentos do segundo grau esta montada: quantas
+        # linhas, que cabecalhos, e que FORMA tem cada coluna (data, documento,
+        # texto, vazia). Sem conteudo de processo. E por aqui que se confere a
+        # ordem das colunas contra a tela, em vez de supo-la.
+        "colunas_dos_documentos": _colunas_dos_documentos(
+            bruto.get("colunasDosDocumentos")),
+        # Quantos andamentos as passadas genericas acharam FORA da tabela de
+        # documentos. Numero alto aqui quer dizer que a tabela de documentos
+        # nao era o historico inteiro, e isso precisa ficar visivel.
+        "fora_da_tabela_de_documentos": sobraram_das_genericas,
         # As secoes que esta leitura NAO aproveita. Sem isto, quem abre o
         # arquivo supoe que a tela foi lida por inteiro.
         "secoes_nao_lidas": secoes_nao_lidas(
@@ -4317,7 +4521,9 @@ def extrair(quadro: Any) -> dict:
     saida["totais"] = {"principais": len(principais),
                        "partes": len(partes),
                        "mandados": len(mandados),
-                       "movimentacoes": len(movimentacoes)}
+                       "movimentacoes": len(movimentacoes),
+                       "documentos_listados": sum(
+                           len(m.get("documentos") or []) for m in movimentacoes)}
     return saida
 
 
@@ -4351,10 +4557,26 @@ def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import elemento_visivel, permissao_efemera
 
-    antes = len(extrair(quadro).get("movimentacoes") or [])
+    leitura = extrair(quadro)
+    antes = len(leitura.get("movimentacoes") or [])
     alvo = f"texto={BOTAO_TODOS_OS_MOVIMENTOS}"
     botao = elemento_visivel(quadro, alvo)
     if botao is None:
+        # Botao ausente nao e, por si, historico incompleto. A tela do segundo
+        # grau nao tem este botao e nunca teve: ela mostra a lista de
+        # documentos inteira de uma vez. Dizer "pode estar incompleto" ali
+        # manda o advogado procurar andamento que nao falta, que e o avesso do
+        # que este aviso existe para fazer.
+        lidas = ((leitura.get("estrutura") or {}).get("colunas_dos_documentos")
+                 or [])
+        if lidas:
+            quantas = sum(tab.get("linhas_lidas") or 0 for tab in lidas)
+            return {"situacao": (
+                        f"o botao {BOTAO_TODOS_OS_MOVIMENTOS!r} nao existe "
+                        "nesta tela, e nao precisa existir: o historico veio "
+                        f"da tabela de documentos, com {quantas} linha(s). "
+                        "Confira a contagem contra a tela."),
+                    "antes": antes, "depois": antes}
         return {"situacao": f"o botao {BOTAO_TODOS_OS_MOVIMENTOS!r} nao esta na "
                             "tela; o historico pode estar incompleto",
                 "antes": antes, "depois": antes}

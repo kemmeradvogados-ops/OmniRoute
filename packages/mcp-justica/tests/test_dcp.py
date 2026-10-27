@@ -4636,7 +4636,7 @@ def test_tela_vazia_devolve_a_mesma_forma():
     assert dados["partes"] == []
     assert dados["movimentacoes"] == []
     assert dados["totais"] == {"principais": 0, "partes": 0, "mandados": 0,
-                               "movimentacoes": 0}
+                               "movimentacoes": 0, "documentos_listados": 0}
 
 
 def test_a_leitura_se_declara_nao_conferida():
@@ -4663,7 +4663,7 @@ def test_tela_ilegivel_nao_derruba_a_consulta():
 
     dados = extrair(_TelaQueRecusa())
     assert dados["totais"] == {"principais": 0, "partes": 0, "mandados": 0,
-                               "movimentacoes": 0}
+                               "movimentacoes": 0, "documentos_listados": 0}
     assert "RuntimeError" in dados["leitura"]["falha"]
 
 
@@ -9254,3 +9254,264 @@ def test_o_endereco_do_quadro_confirma_a_chegada():
     assert "MARCAS_DO_QUADRO" in fonte, (
         "sem esta prova, o segundo grau da chegada por nao confirmada com o "
         "processo inteiro diante do programa")
+
+
+# ---------------------------------------------------------------------------
+# A tabela de documentos do segundo grau
+#
+# Lida na tela real em 27/10/2026, em `www3.tjrj.jus.br/ejud/ConsultaProcesso.aspx`,
+# gravada com `--gravar-telas`. O que a tela mostrou:
+#
+#   - dez tabelas, 64 linhas, e a unica com nome e a das partes (`.tab-bord`,
+#     dentro de `div#listaPersonagens`);
+#   - procurar "movimenta" em id, classe, rotulo ou texto devolveu ZERO
+#     elemento: esta tela nao nomeia a tabela de andamentos;
+#   - oito ancoras cujo texto comeca em "Integra do(a)", todas dentro de `td`,
+#     em x=31, de y=1088 a y=1193, de quinze em quinze pixels: duas de
+#     "Despacho Peco dia para julgamento virtual", cinco de "Despacho Mero
+#     expediente" e uma de "Acordao".
+#
+# A ORDEM DAS COLUNAS nao foi observada, e por isso nao esta escrita no
+# programa. Os dois moldes abaixo existem para provar justamente isso: a mesma
+# tabela, com as colunas em ordens diferentes, tem de sair igual.
+# ---------------------------------------------------------------------------
+
+def _tela_do_segundo_grau(ordem):
+    """A tabela de documentos, com as colunas na ordem pedida.
+
+    `ordem` e uma sequencia de "documento", "data" e "descricao". Nenhum
+    numero de processo entra aqui: a tela de verdade tem um, este molde nao
+    precisa dele para nada.
+    """
+    linhas = [
+        ("05/09/2026", "Despacho Mero expediente"),
+        ("12/09/2026", "Despacho Peco dia para julgamento virtual"),
+        ("19/09/2026", "Acordao"),
+    ]
+    celulas_por_linha = []
+    for data, descricao in linhas:
+        celula = {
+            "documento": f'<td><a href="/ejud/doc.aspx?x=1">Integra do(a) '
+                         f'{descricao}</a></td>',
+            "data": f"<td>{data}</td>",
+            "descricao": f"<td>{descricao}</td>",
+        }
+        celulas_por_linha.append("".join(celula[c] for c in ordem))
+    corpo = "".join(f"<tr>{c}</tr>" for c in celulas_por_linha)
+    return ("<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\">"
+            "<title>Consulta de processo</title></head><body>"
+            "<table><tr><td>Orgao julgador:</td><td>Decima Camara</td></tr></table>"
+            f"<table>{corpo}</table>"
+            "</body></html>")
+
+
+@semNavegador
+def test_a_tabela_de_documentos_do_segundo_grau_e_lida():
+    """O historico do segundo grau vinha pela metade: a tela nao tem o botao
+    'Todos Os Movimentos', nao tem `app-movimento`, e nenhuma tabela dela diz
+    'movimenta'. O marcador e a palavra do proprio portal, 'Integra do(a)'."""
+    dados = _ler_em_navegador(_tela_do_segundo_grau(
+        ("documento", "data", "descricao")))
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 3, movimentos
+    assert [m["data"] for m in movimentos] == [
+        "05/09/2026", "12/09/2026", "19/09/2026"]
+    assert movimentos[2]["descricao"] == "Acordao"
+    assert all(m["origem"] == "tabela de documentos do segundo grau"
+               for m in movimentos)
+
+
+@semNavegador
+def test_a_ordem_das_colunas_nao_muda_a_leitura():
+    """A ordem das colunas desta tabela NAO foi observada em campo. Por isso a
+    leitura nao pode depender dela: quem decide o papel de cada celula e a
+    forma do conteudo, nao a posicao."""
+    def sem_posicao(dados):
+        return [(m["data"], m["descricao"],
+                 [d["rotulo"] for d in m.get("documentos") or []])
+                for m in dados["movimentacoes"]]
+
+    primeira = _ler_em_navegador(_tela_do_segundo_grau(
+        ("documento", "data", "descricao")))
+    segunda = _ler_em_navegador(_tela_do_segundo_grau(
+        ("data", "descricao", "documento")))
+    terceira = _ler_em_navegador(_tela_do_segundo_grau(
+        ("descricao", "documento", "data")))
+    assert sem_posicao(primeira) == sem_posicao(segunda) == sem_posicao(terceira)
+    assert len(sem_posicao(primeira)) == 3
+
+
+@semNavegador
+def test_o_documento_da_linha_e_listado_com_rotulo_e_endereco():
+    """Listado, nunca aberto nem baixado: e o mesmo contrato do e-SAJ."""
+    dados = _ler_em_navegador(_tela_do_segundo_grau(
+        ("documento", "data", "descricao")))
+    documentos = dados["movimentacoes"][0]["documentos"]
+    assert len(documentos) == 1
+    assert documentos[0]["rotulo"].startswith("Integra do(a)")
+    assert documentos[0]["endereco"].endswith("/ejud/doc.aspx?x=1")
+    assert dados["totais"]["documentos_listados"] == 3
+
+
+@semNavegador
+def test_a_descricao_nao_vira_o_rotulo_da_ancora_quando_ha_coluna_propria():
+    dados = _ler_em_navegador(_tela_do_segundo_grau(
+        ("documento", "data", "descricao")))
+    for movimento in dados["movimentacoes"]:
+        assert not movimento["descricao"].startswith("Integra")
+
+
+@semNavegador
+def test_sem_coluna_de_texto_o_rotulo_da_ancora_vira_a_descricao():
+    """Descricao vazia seria pior que o rotulo: o rotulo da ancora e conteudo
+    da tela, e e ele que diz 'Despacho' e 'Acordao'."""
+    html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+            "<table><tr><td><a href=\"/ejud/doc.aspx?x=9\">"
+            "Integra do(a) Acordao</a></td><td>19/09/2026</td></tr></table>"
+            "</body></html>")
+    dados = _ler_em_navegador(html)
+    assert dados["movimentacoes"] == [
+        {"data": "19/09/2026", "hora": "",
+         "descricao": "Integra do(a) Acordao",
+         "origem": "tabela de documentos do segundo grau",
+         "documentos": [{"rotulo": "Integra do(a) Acordao",
+                         "endereco": "/ejud/doc.aspx?x=9"}]}]
+
+
+@semNavegador
+def test_a_forma_das_colunas_e_relatada_sem_conteudo_de_processo():
+    """A ordem que eu nao vi sai no relato, para poder ser conferida contra a
+    tela em vez de continuar suposta."""
+    dados = _ler_em_navegador(_tela_do_segundo_grau(
+        ("documento", "data", "descricao")))
+    lidas = dados["estrutura"]["colunas_dos_documentos"]
+    assert len(lidas) == 1
+    assert lidas[0]["linhas_lidas"] == 3
+    assert lidas[0]["forma_por_coluna"]["0"] == {"documento": 3}
+    assert lidas[0]["forma_por_coluna"]["1"] == {"data": 3}
+    assert lidas[0]["forma_por_coluna"]["2"] == {"texto": 3}
+
+
+@semNavegador
+def test_a_linha_de_cabecalho_nao_vira_movimentacao():
+    html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+            "<table><tr><th>Documento</th><th>Data</th></tr>"
+            "<tr><td><a href=\"/ejud/doc.aspx?x=3\">Integra do(a) Despacho</a>"
+            "</td><td>01/10/2026</td></tr></table></body></html>")
+    dados = _ler_em_navegador(html)
+    assert len(dados["movimentacoes"]) == 1
+    assert dados["movimentacoes"][0]["data"] == "01/10/2026"
+
+
+@semNavegador
+def test_duas_linhas_iguais_nao_sao_deduplicadas():
+    """A deduplicacao das passadas genericas e por data+descricao. Cinco
+    despachos de 'Mero expediente' existem nesta tela de verdade; apagar o
+    segundo seria apagar andamento."""
+    html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+            "<table>"
+            "<tr><td><a href=\"/ejud/d.aspx?x=1\">Integra do(a) Despacho</a></td>"
+            "<td>01/10/2026</td><td>Mero expediente</td></tr>"
+            "<tr><td><a href=\"/ejud/d.aspx?x=2\">Integra do(a) Despacho</a></td>"
+            "<td>01/10/2026</td><td>Mero expediente</td></tr>"
+            "</table></body></html>")
+    dados = _ler_em_navegador(html)
+    assert len(dados["movimentacoes"]) == 2
+
+
+@semNavegador
+def test_tela_sem_ancora_de_integra_nao_muda_de_comportamento():
+    """A quarta passada so vale onde o marcador existe. Onde nao existe, as
+    passadas genericas continuam sendo as unicas, como sempre foram."""
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    assert dados["estrutura"]["colunas_dos_documentos"] == []
+    assert all(m["origem"] != "tabela de documentos do segundo grau"
+               for m in dados["movimentacoes"])
+
+
+def test_o_botao_ausente_nao_vira_aviso_de_historico_incompleto():
+    """Na tela do segundo grau o botao 'Todos Os Movimentos' nao existe e nao
+    precisa existir. Dizer 'pode estar incompleto' ali manda o advogado
+    procurar andamento que nao falta."""
+    from justica_mcp.dcp import mostrar_todos_os_movimentos
+
+    class _Quadro:
+        url = "https://www3.tjrj.jus.br/ejud/ConsultaProcesso.aspx"
+
+        def evaluate(self, _js):
+            return {
+                "pares": [], "partes": [], "tabelas": [], "familias": {},
+                "rotulosCandidatos": [], "secoes": [], "botoes": [],
+                "diagnostico": {}, "caixasDeMovimentacao": [],
+                "movimentacoes": [], "movimentosDoComponente": [],
+                "documentosDoSegundoGrau": [
+                    ["19/09/2026", "", "Acordao",
+                     "tabela de documentos do segundo grau",
+                     [["Integra do(a) Acordao", "/ejud/doc.aspx?x=9"]]]],
+                "colunasDosDocumentos": [
+                    {"id": "", "classe": "", "linhas_lidas": 8,
+                     "cabecalhos": [], "forma_por_coluna": {}}],
+            }
+
+        def query_selector_all(self, _s):
+            return []
+
+        def query_selector(self, _s):
+            return None
+
+    relato = mostrar_todos_os_movimentos(_Quadro(), _Guarda())
+    assert "pode estar incompleto" not in relato["situacao"]
+    assert "tabela de documentos" in relato["situacao"]
+    assert "8 linha(s)" in relato["situacao"]
+
+
+def test_sem_tabela_de_documentos_o_aviso_de_incompleto_continua():
+    """O aviso nao pode sumir da tela que de fato esconde o historico."""
+    from justica_mcp.dcp import mostrar_todos_os_movimentos
+
+    class _Quadro:
+        url = "https://www3.tjrj.jus.br/"
+
+        def evaluate(self, _js):
+            return {"pares": [], "partes": [], "tabelas": [], "familias": {},
+                    "rotulosCandidatos": [], "secoes": [], "botoes": [],
+                    "diagnostico": {}, "caixasDeMovimentacao": [],
+                    "movimentacoes": [], "movimentosDoComponente": []}
+
+        def query_selector_all(self, _s):
+            return []
+
+        def query_selector(self, _s):
+            return None
+
+    relato = mostrar_todos_os_movimentos(_Quadro(), _Guarda())
+    assert "pode estar incompleto" in relato["situacao"]
+
+
+@semNavegador
+def test_andamento_fora_da_tabela_de_documentos_nao_se_perde():
+    """A tabela de documentos nao e, por construcao, o historico inteiro: ela
+    e a tabela que tem ancora de documento. Andamento sem documento anexado
+    pode morar em outro lugar da tela, e descarta-lo seria entregar o pedaco
+    como se fosse o todo."""
+    html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+            "<table><tr><td><a href=\"/ejud/d.aspx?x=1\">Integra do(a) Acordao"
+            "</a></td><td>19/09/2026</td><td>Acordao</td></tr></table>"
+            "<table><tr><td>02/08/2026</td><td>Conclusos ao relator</td></tr>"
+            "</table></body></html>")
+    dados = _ler_em_navegador(html)
+    assinaturas = [(m["data"], m["descricao"]) for m in dados["movimentacoes"]]
+    assert ("19/09/2026", "Acordao") in assinaturas
+    assert ("02/08/2026", "Conclusos ao relator") in assinaturas
+    assert dados["estrutura"]["fora_da_tabela_de_documentos"] == 1
+
+
+@semNavegador
+def test_o_mesmo_andamento_nao_entra_duas_vezes_por_duas_origens():
+    """A linha da tabela de documentos tambem casa com a segunda passada
+    generica, que ve a celula de data. Ela nao pode sair duplicada."""
+    dados = _ler_em_navegador(_tela_do_segundo_grau(
+        ("documento", "data", "descricao")))
+    assinaturas = [(m["data"], m["descricao"]) for m in dados["movimentacoes"]]
+    assert len(assinaturas) == len(set(assinaturas)) == 3
+    assert dados["estrutura"]["fora_da_tabela_de_documentos"] == 0

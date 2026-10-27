@@ -6511,7 +6511,7 @@ def test_a_consulta_do_dcp_grava_o_arquivo_e_o_snapshot(monkeypatch, tmp_path):
     dados = _ler_a_tela_do_dcp(object(), _GuardaFalsa(), _NumeroFalso(), _IdentidadeFalsa(), estado)
 
     assert dados["totais"] == {"principais": 1, "partes": 0, "mandados": 0,
-                               "movimentacoes": 2}
+                               "movimentacoes": 2, "documentos_listados": 0}
     # Sem o botao na tela falsa, a leitura segue e avisa.
     assert "nao esta na tela" in dados["leitura"]["todos_os_movimentos"]
     gravado = json.loads(
