@@ -350,3 +350,81 @@ def test_mesmo_a_pedido_o_grupo_enorme_sai_cortado(tmp_path, capsys):
     mostrar_tela(_arquivo_com_nos(tmp_path, nos), "botoes", rotulos=True)
     saida = capsys.readouterr().out
     assert "(+35 nao mostrados)" in saida
+
+
+# ---------------------------------------------------------------------------
+# O filtro por faixa vertical
+#
+# Nascido em 27/10/2026: a tabela de documentos do segundo grau nao tem id,
+# nao tem classe e nao tem nenhuma palavra que a distinga do resto da tela. A
+# unica coisa que a separa e a altura em que ela esta, e o filtro por texto
+# cortava a listagem antes de chegar la.
+# ---------------------------------------------------------------------------
+
+def _tela_com_alturas(tmp_path):
+    import json
+
+    arquivo = tmp_path / "20261027T000000000-tela.json"
+    arquivo.write_text(json.dumps({
+        "rotulo": "tela-do-processo", "momento": "20261027T000000000",
+        "tela": {
+            "endereco": "https://exemplo/consulta", "titulo": "Consulta",
+            "area": {"l": 1120, "h": 900}, "desenho": {"l": 1135, "h": 1249},
+            "rolagem": {"x": 0, "y": 0}, "total": 4,
+            "nos": [
+                {"t": "td", "tx": "capa", "x": 31, "y": 90, "v": True},
+                {"t": "td", "tx": "documento", "x": 31, "y": 1088, "v": True},
+                {"t": "td", "tx": "outro documento", "x": 31, "y": 1193,
+                 "v": True},
+                {"t": "td", "tx": "rodape", "x": 31, "y": 1240, "v": True},
+                {"t": "td", "tx": "escondido", "x": 0, "y": 0, "v": False},
+            ],
+        },
+    }), encoding="utf-8")
+    return arquivo
+
+
+def test_a_faixa_mostra_so_o_que_esta_nela(tmp_path, capsys):
+    from justica_mcp.telas import mostrar_tela
+
+    assert mostrar_tela(str(_tela_com_alturas(tmp_path)), "nos",
+                        de_y=1080, ate_y=1200) == 0
+    saida = capsys.readouterr().out
+    assert "documento" in saida
+    assert "outro documento" in saida
+    assert "capa" not in saida
+    assert "rodape" not in saida
+
+
+def test_sem_faixa_nada_muda(tmp_path, capsys):
+    """O filtro novo nao pode mexer em quem nao o usa."""
+    from justica_mcp.telas import mostrar_tela
+
+    assert mostrar_tela(str(_tela_com_alturas(tmp_path)), "nos") == 0
+    saida = capsys.readouterr().out
+    assert "capa" in saida
+    assert "rodape" in saida
+    assert "escondido" in saida
+
+
+def test_no_sem_caixa_fica_fora_da_faixa(tmp_path, capsys):
+    """Elemento sem area na tela tem posicao zero, e zero nao quer dizer
+    'no topo': quer dizer que ninguem mediu. Deixa-lo entrar numa faixa que
+    comeca no zero encheria a listagem de coisa que nao esta na tela."""
+    from justica_mcp.telas import mostrar_tela
+
+    assert mostrar_tela(str(_tela_com_alturas(tmp_path)), "nos",
+                        de_y=0, ate_y=100) == 0
+    saida = capsys.readouterr().out
+    assert "capa" in saida
+    assert "escondido" not in saida
+
+
+def test_a_faixa_e_o_texto_valem_juntos(tmp_path, capsys):
+    from justica_mcp.telas import mostrar_tela
+
+    assert mostrar_tela(str(_tela_com_alturas(tmp_path)), "nos",
+                        contem="outro", de_y=1080, ate_y=1200) == 0
+    saida = capsys.readouterr().out
+    assert "outro documento" in saida
+    assert saida.count("y=1088") == 0

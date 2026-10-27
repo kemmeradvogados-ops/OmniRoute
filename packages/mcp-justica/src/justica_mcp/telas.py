@@ -410,10 +410,37 @@ def _linhas_de_mensagens(tela: dict) -> list[str]:
     return saida
 
 
-def _linhas_de_nos(nos: list, contem: str, teto: int) -> list[str]:
+def _na_faixa(no: dict, de_y: Optional[int], ate_y: Optional[int]) -> bool:
+    """O no esta na faixa vertical pedida.
+
+    Nascido em 27/10/2026, de uma necessidade concreta: a tabela de documentos
+    do segundo grau nao tem id, nao tem classe e nao tem nenhuma palavra que a
+    distinga do resto da tela. O unico jeito de olhar SO para ela era pela
+    posicao, e o filtro por texto nao servia para isso: a listagem cortava em
+    oitenta nos antes de chegar na altura onde ela mora.
+
+    No sem caixa (`v` falso) fica de fora quando ha faixa pedida: ele nao esta
+    na tela, e o zero da posicao dele nao quer dizer "no topo".
+    """
+    if de_y is None and ate_y is None:
+        return True
+    if not no.get("v"):
+        return False
+    y = no.get("y", 0)
+    if de_y is not None and y < de_y:
+        return False
+    if ate_y is not None and y > ate_y:
+        return False
+    return True
+
+
+def _linhas_de_nos(nos: list, contem: str, teto: int,
+                   de_y: Optional[int] = None,
+                   ate_y: Optional[int] = None) -> list[str]:
     from .portal import sem_dado_de_processo
 
-    escolhidos = [n for n in nos if _casa(n, contem)]
+    escolhidos = [n for n in nos
+                  if _casa(n, contem) and _na_faixa(n, de_y, ate_y)]
     saida = [f"  NOS ({len(escolhidos)} de {len(nos)}):"]
     for no in escolhidos[:teto]:
         texto = sem_dado_de_processo(no.get("tx") or "")
@@ -480,7 +507,9 @@ def resolver_a_tela(caminho: str):
 
 
 def mostrar_tela(caminho: str, parte: str = "resumo", contem: str = "",
-                 teto: int = 60, rotulos: bool = False) -> int:
+                 teto: int = 60, rotulos: bool = False,
+                 de_y: Optional[int] = None,
+                 ate_y: Optional[int] = None) -> int:
     """Imprime uma fatia de uma tela gravada. Nunca abre navegador."""
     import json
     import pathlib
@@ -534,7 +563,7 @@ def mostrar_tela(caminho: str, parte: str = "resumo", contem: str = "",
         if parte in ("resumo", "botoes"):
             linhas += _linhas_de_clicaveis(nos, contem, rotulos)
         if parte == "nos":
-            linhas += _linhas_de_nos(nos, contem, teto)
+            linhas += _linhas_de_nos(nos, contem, teto, de_y, ate_y)
         linhas.append("")
     print("\n".join(linhas))
     return 0

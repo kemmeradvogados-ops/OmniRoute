@@ -160,6 +160,14 @@ def main(argv: list[str] | None = None) -> int:
                          "rotulo ou no texto do elemento")
     tv.add_argument("--teto", type=int, default=60,
                     help="quantos nos imprimir em --parte nos")
+    tv.add_argument("--de-y", type=int, default=None, dest="de_y",
+                    help="em --parte nos, mostra so o que esta a partir desta "
+                         "altura na tela. Serve para olhar UMA tabela que nao "
+                         "tem id nem classe: a posicao dela sai em "
+                         "--parte tabelas")
+    tv.add_argument("--ate-y", type=int, default=None, dest="ate_y",
+                    help="em --parte nos, mostra so o que esta ate esta "
+                         "altura na tela. Usado com --de-y, recorta uma faixa")
     tv.add_argument("--rotulos", action="store_true",
                     help="mostra os rotulos de grupo grande de botoes, que por "
                          "padrao ficam omitidos porque em lista longa o rotulo "
@@ -445,7 +453,8 @@ def main(argv: list[str] | None = None) -> int:
             from .telas import mostrar_tela
 
             return mostrar_tela(args.arquivo, args.parte, args.contem,
-                                args.teto, args.rotulos)
+                                args.teto, args.rotulos,
+                                args.de_y, args.ate_y)
         if args.comando == "leituras":
             return portal.limpar_leituras(dias=args.dias,
                                           confirmar=args.confirmar)
