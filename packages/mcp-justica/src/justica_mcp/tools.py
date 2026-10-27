@@ -17,6 +17,8 @@ from .core.acesso import PortalNaoConfigurado, autenticado_habilitado, portais_c
 from .core.cofre import Cofre, CofreIndisponivel
 from .core.limite_tentativas import LimiteTentativas, TetoDeTentativasAtingido
 from .core.cnj import NumeroCNJInvalido, parse_numero
+from functools import partial
+
 from .core.estado import Estado, detalhe_do_erro
 from .core.resolver import resolver_sistema
 from .core.resiliencia import PortalIndisponivel
@@ -574,7 +576,8 @@ def registrar(mcp: Any) -> None:
             # Playwright sincrono nao roda dentro do laco de eventos; vai para
             # uma thread propria.
             dados = await asyncio.to_thread(
-                consultar_processo_estruturado, tribunal.codigo, sistema, numero.formatado
+                partial(consultar_processo_estruturado, tribunal.codigo, sistema,
+                        numero.formatado, solicitante=params.solicitante)
             )
             # A confianca sai do PROPRIO dado, e nao de uma constante: quem
             # le por estrutura nao sabe o mesmo que quem le por seletor
@@ -612,7 +615,8 @@ def registrar(mcp: Any) -> None:
             # quando ele sabia: so nao estava anotando. Conclusao errada tirada
             # de ausencia de dado custa tempo de quem investiga.
             _estado.registrar(
-                acao="consulta_processo_autenticada", numero=params.numero,
+                acao="consulta_processo_autenticada", solicitante=params.solicitante,
+                numero=params.numero,
                 tribunal=identificado["tribunal"], sistema=identificado["sistema"],
                 resultado="erro", detalhe=detalhe_do_erro(exc))
             return _tratar(exc)

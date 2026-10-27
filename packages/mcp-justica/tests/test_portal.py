@@ -8433,3 +8433,46 @@ def test_so_as_primeiras_linhas_entram():
     texto = _porque_parou(erro, 1)
     assert "linha 3" in texto
     assert "linha 4" not in texto
+
+
+# --------------------------------------------------------------------------
+# O solicitante precisa chegar na auditoria da consulta autenticada.
+#
+# Com credencial compartilhada, o portal do tribunal nao distingue quem
+# consultou: a unica resposta possivel a "quem fez este acesso" esta no
+# registro local. Em 26/10/2026 o campo saia em branco justamente na
+# ferramenta que toca o tribunal, enquanto as demais ja o gravavam.
+
+def test_a_consulta_estruturada_aceita_e_repassa_o_solicitante():
+    import inspect
+
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    assinatura = inspect.signature(consultar_processo_estruturado)
+    assert "solicitante" in assinatura.parameters
+
+    fonte = inspect.getsource(consultar_processo_estruturado)
+    assert "solicitante=solicitante" in fonte, (
+        "o solicitante precisa chegar ao registro de auditoria, e nao so "
+        "existir na assinatura"
+    )
+
+
+def test_toda_ferramenta_que_toca_o_tribunal_grava_o_solicitante():
+    """Guarda de fonte contra a reincidencia.
+
+    Vale para as ferramentas que AUTENTICAM ou pedem download: sao elas que
+    deixam rastro no tribunal e sobre as quais alguem pode perguntar, um dia,
+    quem fez o acesso.
+    """
+    import re
+    from pathlib import Path
+
+    fonte = (Path(__file__).resolve().parent.parent
+             / "src" / "justica_mcp" / "tools.py").read_text(encoding="utf-8")
+    acoes = ("consulta_processo_autenticada", "baixar_autos", "sondar_sistemas")
+    for trecho in re.findall(r"_estado\.registrar\((.*?)\)\n", fonte, re.DOTALL):
+        achado = re.search(r'acao="([^"]+)"', trecho)
+        if achado and achado.group(1) in acoes:
+            assert "solicitante" in trecho, (
+                f"a acao {achado.group(1)} grava sem solicitante")

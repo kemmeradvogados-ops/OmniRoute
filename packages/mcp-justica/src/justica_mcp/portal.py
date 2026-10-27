@@ -5784,6 +5784,7 @@ def consultar_processo_estruturado(
     *,
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
+    solicitante: Optional[str] = None,
 ) -> dict:
     """Consulta e devolve os dados, sem imprimir nada.
 
@@ -5854,8 +5855,14 @@ def consultar_processo_estruturado(
             [{"data_hora": e["data_hora"], "codigo": e["evento"], "nome": e["descricao"]}
              for e in dados["eventos"]],
         )
+        # O SOLICITANTE vem de fora e atravessa a sessao autenticada. Com
+        # credencial compartilhada, o portal do tribunal nao distingue quem
+        # consultou, e a unica resposta possivel a "quem fez este acesso"
+        # esta nesta linha. Ate 27/10/2026 ela saia em branco justamente na
+        # ferramenta que toca o tribunal.
         estado_local.registrar(
-            acao="consulta_processo_autenticada", tribunal=identidade.tribunal,
+            acao="consulta_processo_autenticada", solicitante=solicitante,
+            tribunal=identidade.tribunal,
             sistema=identidade.sistema, numero=numero.formatado,
             resultado=f"{dados['totais']['eventos']} evento(s)",
         )
