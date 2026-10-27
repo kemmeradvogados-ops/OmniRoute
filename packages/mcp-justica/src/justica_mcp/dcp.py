@@ -3624,7 +3624,8 @@ JS_DA_TELA_DO_PROCESSO = r"""
   // todos com valor lido, e sairam tres movimentacoes. Oito sumiram em
   // silencio, e o terminal nao tinha como dizer se foi por falta de descricao
   // ou por repeticao. Sao dois motivos com dois consertos diferentes.
-  const descartes = {sem_data: 0, sem_descricao: 0, repetidas: 0};
+  const descartes = {sem_data: 0, sem_descricao: 0, repetidas: 0,
+                     rotulo_de_campo: 0};
   const guardarMovimento = (data, hora, descricao, origem) => {
     descricao = corta(descricao, 300);
     if (!data) { descartes.sem_data += 1; return; }
@@ -3691,6 +3692,28 @@ JS_DA_TELA_DO_PROCESSO = r"""
       if (i === posicao) continue;
       const t = corta(celulas[i].innerText, 300);
       if (t.length > descricao.length) descricao = t;
+    }
+    // ROTULO DE CAMPO NAO E MOVIMENTACAO, e a tela diz qual e qual: o rotulo
+    // termina em dois pontos.
+    //
+    // Medido na consulta ao segundo grau de 27/10/2026. A tela devolveu doze
+    // movimentacoes, e quatro delas eram linhas da CAPA cuja celula de valor
+    // e uma data: 'Data do Movimento:' duas vezes, 'Data da Sessao:' e 'Data
+    // da Publicacao:'. A tabela e a de 56 linhas por 2 colunas, sem
+    // identificador e sem classe, que e onde a capa deste portal mora. O
+    // historico tem oito, e nao doze.
+    //
+    // A trava existia num sentido so. `guardar` ja recusava rotulo de
+    // movimento dentro da capa, desde 13/10/2026, quando a tabela de
+    // movimentos entrava inteira na capa. Faltava o inverso.
+    //
+    // O criterio e a pontuacao da propria tela, e nao uma lista de nomes:
+    // lista de nomes so pega os rotulos que alguem ja viu. Linha de
+    // movimentacao de verdade traz ato processual na descricao ('Juntada de
+    // Peticao', 'Conclusos ao relator'), que nao termina em dois pontos.
+    if (/:$/.test(descricao) && ehRotulo(descricao.replace(/:\s*$/, ''))) {
+      descartes.rotulo_de_campo += 1;
+      continue;
     }
     const dona = linha.closest('table');
     const nome = dona ? (dona.id || corta(dona.className, 30) || 'sem id') : 'sem tabela';
@@ -4045,6 +4068,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
     descartadas_sem_data: descartes.sem_data,
     descartadas_sem_descricao: descartes.sem_descricao,
     descartadas_por_repetir: descartes.repetidas,
+    descartadas_por_ser_rotulo_de_campo: descartes.rotulo_de_campo,
     chaves_por_bloco: blocos.slice(0, 8).map(b => Object.keys(b)),
     chaves_sem_valor_por_bloco: blocos.slice(0, 8)
       .map(b => Object.keys(b).filter(k => !b[k])),
@@ -4291,6 +4315,7 @@ def _diagnostico(bruto: Any) -> dict:
         return {"rotulos_de_movimento_na_tela": 0, "blocos_formados": 0,
                 "descartadas_sem_data": 0, "descartadas_sem_descricao": 0,
                 "descartadas_por_repetir": 0,
+                "descartadas_por_ser_rotulo_de_campo": 0,
                 "chaves_por_bloco": [], "chaves_sem_valor_por_bloco": []}
     return {
         "rotulos_de_movimento_na_tela":
@@ -4300,6 +4325,10 @@ def _diagnostico(bruto: Any) -> dict:
         "descartadas_sem_descricao":
             int(bruto.get("descartadas_sem_descricao") or 0),
         "descartadas_por_repetir": int(bruto.get("descartadas_por_repetir") or 0),
+        # Linha de capa recusada como movimentacao. Numero alto aqui nao e
+        # defeito: e a trava trabalhando.
+        "descartadas_por_ser_rotulo_de_campo":
+            int(bruto.get("descartadas_por_ser_rotulo_de_campo") or 0),
         "chaves_por_bloco": [[_sem_dado(c) for c in bloco]
                              for bloco in (bruto.get("chaves_por_bloco") or [])],
         "chaves_sem_valor_por_bloco":

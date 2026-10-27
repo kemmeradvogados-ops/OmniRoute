@@ -9722,3 +9722,78 @@ def test_movimento_sem_origem_nao_some_da_contagem():
     from justica_mcp.dcp import _por_origem
 
     assert _por_origem([{"data": "01/01/2026"}]) == {"(sem)": 1}
+
+
+# ---------------------------------------------------------------------------
+# Rotulo de campo nao e movimentacao
+#
+# Medido na consulta ao segundo grau de 27/10/2026: a tela devolveu DOZE
+# movimentacoes, e quatro delas eram linhas da CAPA cuja celula de valor e uma
+# data. As descricoes, lidas do arquivo gravado, foram:
+#
+#   'Data do Movimento:'
+#   'Data do Movimento:'
+#   'Data da Sessao:'
+#   'Data da Publicacao:'
+#
+# O historico tem oito. A trava existia num sentido so: `guardar` ja recusava
+# rotulo de movimento dentro da capa; faltava o inverso.
+# ---------------------------------------------------------------------------
+
+TELA_COM_CAPA_DE_DATAS = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"><title>Consulta</title></head><body>
+<table>
+  <tr><td>Classe:</td><td>Apelacao</td></tr>
+  <tr><td>Data do Movimento:</td><td>05/09/2026</td></tr>
+  <tr><td>Data da Sessao:</td><td>12/09/2026</td></tr>
+  <tr><td>Data da Publicacao:</td><td>19/09/2026</td></tr>
+</table>
+<table>
+  <tr><td>01/10/2026</td><td>Conclusos ao relator</td></tr>
+</table>
+</body></html>"""
+
+
+@semNavegador
+def test_linha_de_capa_com_data_nao_vira_movimentacao():
+    dados = _ler_em_navegador(TELA_COM_CAPA_DE_DATAS)
+    descricoes = [m["descricao"] for m in dados["movimentacoes"]]
+    assert "Data do Movimento:" not in descricoes
+    assert "Data da Sessao:" not in descricoes
+    assert "Data da Publicacao:" not in descricoes
+
+
+@semNavegador
+def test_a_movimentacao_de_verdade_continua_entrando():
+    """A trava nao pode pegar ato processual: ele nao termina em dois pontos."""
+    dados = _ler_em_navegador(TELA_COM_CAPA_DE_DATAS)
+    descricoes = [m["descricao"] for m in dados["movimentacoes"]]
+    assert "Conclusos ao relator" in descricoes
+    assert len(dados["movimentacoes"]) == 1
+
+
+@semNavegador
+def test_a_trava_se_declara_no_diagnostico():
+    """Numero alto aqui nao e defeito: e a trava trabalhando. Sem o contador,
+    tres linhas sumiriam em silencio e ninguem saberia por que."""
+    dados = _ler_em_navegador(TELA_COM_CAPA_DE_DATAS)
+    diagnostico = dados["estrutura"]["diagnostico_dos_blocos"]
+    assert diagnostico["descartadas_por_ser_rotulo_de_campo"] == 3
+
+
+@semNavegador
+def test_a_capa_continua_sendo_lida_apesar_da_trava():
+    """Recusar a linha como MOVIMENTACAO nao a tira da capa: sao dois
+    destinos diferentes para a mesma linha."""
+    dados = _ler_em_navegador(TELA_COM_CAPA_DE_DATAS)
+    assert dados["principais"].get("Classe") == "Apelacao"
+
+
+@semNavegador
+def test_as_movimentacoes_da_tela_de_exemplo_nao_mudaram():
+    """A tabela de movimentos de duas colunas, com ato processual na segunda,
+    nao pode ser atingida pela trava nova."""
+    dados = _ler_em_navegador(TELA_DE_EXEMPLO)
+    descricoes = [m["descricao"] for m in dados["movimentacoes"]]
+    assert "Juntada de Peticao" in descricoes
+    assert "Conclusao ao Juiz" in descricoes
