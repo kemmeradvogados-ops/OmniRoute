@@ -8572,3 +8572,26 @@ def test_a_consulta_do_servidor_nao_passa_seletor_e_por_isso_depende_da_tabela()
     chamada = inspect.getsource(consultar_processo_estruturado)
     assert "campo_usuario" not in chamada
     assert "seletores_do_sistema" in inspect.getsource(autenticar)
+
+
+# --------------------------------------------------------------------------
+# A consulta do servidor grava a tela.
+#
+# Em 27/10/2026 a leitura do registro de segundo grau devolveu "1 rotulo, 0
+# movimentacoes" e nao deixou nada no disco. Uma autenticacao paga, um leitor
+# que nao reconheceu a pagina, e nenhuma prova do que havia nela: a pergunta
+# seguinte custaria outra autenticacao. A varredura de sistemas ja ligava a
+# gravacao por conta propria; aqui faltava.
+
+def test_a_consulta_do_servidor_liga_a_gravacao_da_tela():
+    import inspect
+
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    fonte = inspect.getsource(consultar_processo_estruturado)
+    assert "ligar_gravacao()" in fonte, (
+        "sem gravar a tela, um leitor que nao reconhece a pagina nao deixa "
+        "prova nenhuma, e investigar custa outra autenticacao")
+    # E tem de ligar ANTES de autenticar, senao a tela do login e a da busca
+    # ja se perderam quando a leitura falha.
+    assert fonte.index("ligar_gravacao()") < fonte.index("codigo = autenticar(")

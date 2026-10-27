@@ -5869,6 +5869,18 @@ def consultar_processo_estruturado(
         )
 
     config = config_portal(tribunal, sistema)
+
+    # GRAVA A TELA, sempre. A consulta do servidor nao gravava, e em
+    # 27/10/2026 a leitura do registro de segundo grau devolveu "1 rotulo, 0
+    # movimentacoes" sem deixar nada no disco para olhar. Uma autenticacao
+    # paga, um leitor que nao reconheceu a pagina, e nenhuma prova do que
+    # havia nela: a pergunta seguinte custaria outra autenticacao.
+    #
+    # A varredura de sistemas ja liga a gravacao por conta propria, pelo
+    # mesmo motivo. Aqui faltava.
+    from .telas import ligar_gravacao
+
+    ligar_gravacao()
     guardado: dict = {}
 
     def capturar(pagina, guarda, estado_local, identidade):
