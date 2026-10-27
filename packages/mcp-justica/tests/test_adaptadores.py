@@ -176,3 +176,53 @@ def test_sem_arquivo_nao_afirma_que_sao_iguais(tmp_path, monkeypatch):
     monkeypatch.setattr(conf, "raiz_do_pacote", lambda: tmp_path)
     texto = mod.AdaptadorDataJud(chave="c" * 60)._diagnostico_do_401()
     assert "nao sei dizer" in texto
+
+
+# --------------------------------------------------------------------------
+# Tempo esgotado na base nacional: o limite era curto demais.
+#
+# Medido na maquina do escritorio em 27/10/2026: a consulta por numero de
+# processo levou 37,2s, contra fracao de segundo para uma consulta vazia no
+# mesmo indice. O limite de 30s cortava antes da resposta, e o advogado lia
+# "tempo esgotado" sobre uma interface que estava no ar.
+
+def test_o_padrao_tem_folga_sobre_o_pior_observado():
+    from justica_mcp.adapters.datajud import SEGUNDOS_PADRAO
+
+    assert SEGUNDOS_PADRAO >= 37.2 * 2, (
+        "o padrao precisa de folga sobre os 37,2s medidos em campo")
+
+
+def test_o_operador_ajusta_sem_versao_nova(monkeypatch):
+    from justica_mcp.adapters.datajud import tempo_limite
+
+    monkeypatch.setenv("JUSTICA_DATAJUD_SEGUNDOS", "150")
+    assert tempo_limite() == 150
+
+
+def test_valor_torto_cai_no_padrao_em_vez_de_quebrar(monkeypatch):
+    from justica_mcp.adapters.datajud import SEGUNDOS_PADRAO, tempo_limite
+
+    for torto in ("abc", "", "0", "-5"):
+        monkeypatch.setenv("JUSTICA_DATAJUD_SEGUNDOS", torto)
+        assert tempo_limite() == SEGUNDOS_PADRAO, torto
+
+
+def test_o_recado_do_tempo_esgotado_diz_quanto_e_como_mudar():
+    import inspect
+
+    from justica_mcp.adapters.datajud import AdaptadorDataJud
+
+    # O texto e quebrado em varias linhas no fonte, entao as aspas e as
+    # quebras saem antes da comparacao: o que se confere e a FRASE, e nao
+    # como ela foi digitada.
+    import re
+
+    fonte = inspect.getsource(AdaptadorDataJud._buscar)
+    frase = " ".join(re.sub(r'"\s*\n\s*"', "", fonte).split())
+    assert "JUSTICA_DATAJUD_SEGUNDOS" in frase
+    assert "nao respondeu em" in frase
+    # E precisa dizer que repetir nao custa tentativa: senao o advogado
+    # aplica a regra do "nao repita diante de erro", que vale para o portal
+    # autenticado e nao para esta consulta.
+    assert "nao custa tentativa de autenticacao" in frase

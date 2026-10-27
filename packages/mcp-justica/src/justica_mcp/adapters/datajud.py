@@ -25,6 +25,31 @@ from .base import AdaptadorBase
 
 BASE = "https://api-publica.datajud.cnj.jus.br"
 
+# QUANTO ESPERAR, e por que nao sao mais os 30 segundos do inicio.
+#
+# Medido na maquina do escritorio em 27/10/2026: a consulta por numero de
+# processo no indice do Rio levou 37,2s, contra fracao de segundo para uma
+# consulta vazia no mesmo indice. O limite de 30s cortava a chamada antes da
+# resposta, e o advogado recebia "tempo esgotado" tres vezes seguidas sobre
+# uma interface que estava no ar e respondendo.
+#
+# A licao do episodio esta na diferenca entre as duas medicoes: a consulta
+# vazia respondia rapido e foi usada para concluir "a chave e a rede estao
+# boas". Estavam, e a conclusao nao servia, porque media outro caminho.
+#
+# 90s da folga de duas vezes e meia sobre o pior observado. O operador ajusta
+# por `JUSTICA_DATAJUD_SEGUNDOS` sem precisar de versao nova.
+SEGUNDOS_PADRAO = 90
+
+
+def tempo_limite() -> float:
+    bruto = (os.environ.get("JUSTICA_DATAJUD_SEGUNDOS") or "").strip()
+    try:
+        valor = float(bruto)
+    except ValueError:
+        return SEGUNDOS_PADRAO
+    return valor if valor > 0 else SEGUNDOS_PADRAO
+
 _OBS_FONTE = (
     "DataJud replica a base nacional e pode atrasar em relacao ao portal do "
     "tribunal. Nao substitui a consulta autenticada para fins de prazo."
@@ -126,10 +151,25 @@ class AdaptadorDataJud(AdaptadorBase):
 
     async def _buscar(self, tribunal: Tribunal, consulta: dict[str, Any]) -> dict[str, Any]:
         url = f"{BASE}/{tribunal.alias_datajud}/_search"
-        async with httpx.AsyncClient(timeout=30) as cliente:
-            resposta = await self._requisitar(
-                cliente, method="POST", url=url, headers=self._cabecalhos(), json=consulta
-            )
+        segundos = tempo_limite()
+        try:
+            async with httpx.AsyncClient(timeout=segundos) as cliente:
+                resposta = await self._requisitar(
+                    cliente, method="POST", url=url,
+                    headers=self._cabecalhos(), json=consulta
+                )
+        except httpx.TimeoutException as exc:
+            # O tempo esgotado precisa dizer QUANTO se esperou e como mudar.
+            # Sem isso, "tempo esgotado" nao distingue interface fora do ar de
+            # limite curto demais, que foi o caso em 26/10/2026.
+            raise TimeoutError(
+                f"A base nacional nao respondeu em {segundos:.0f}s. A consulta "
+                "por numero de processo e mais pesada que as demais e pode "
+                "passar disso em rede lenta. Para esperar mais, o operador "
+                "define JUSTICA_DATAJUD_SEGUNDOS no .env. A interface pode "
+                "tambem estar lenta no momento: tentar de novo nao custa "
+                "tentativa de autenticacao nenhuma."
+            ) from exc
         if resposta.status_code == 401:
             raise PermissionError(self._diagnostico_do_401())
         if resposta.status_code == 403:
