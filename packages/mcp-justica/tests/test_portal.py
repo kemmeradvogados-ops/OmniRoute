@@ -8347,3 +8347,41 @@ def test_todos_os_seletores_da_integra_foram_lidos_de_tela_real():
         "#btnDownloadCompletoRS",
         "#btnDownloadCompletoTRF4",
     )
+
+
+# --------------------------------------------------------------------------
+# "Consulta nao concluida (codigo 1)" nao diz nada a ninguem.
+#
+# `autenticar` explica por escrito cada recusa ANTES do login: credencial
+# ausente, sem semente e sem janela, teto atingido, sistema sem seletor. Todas
+# essas explicacoes vao para o ERRO PADRAO. A consulta estruturada capturava
+# so a saida padrao, entao elas se perdiam. Em 26/10/2026 o texto inutil
+# apareceu tres vezes no mesmo dia.
+
+def test_a_explicacao_do_erro_padrao_vira_a_mensagem():
+    from justica_mcp.portal import _porque_parou
+
+    erro = ("\n  [PARADO] Sem semente e sem janela, nao ha a quem perguntar.\n"
+            "  Rode pela linha de comando, sem --oculto.\n")
+    texto = _porque_parou(erro, 1)
+    assert "Sem semente" in texto
+    assert "parou antes de autenticar" in texto
+
+
+def test_sem_explicacao_o_texto_admite_que_nao_sabe():
+    from justica_mcp.portal import _porque_parou
+
+    texto = _porque_parou("", 1)
+    assert "nao explicou por que" in texto
+    assert "codigo 1" in texto
+
+
+def test_so_as_primeiras_linhas_entram():
+    # O resto costuma ser instrucao de linha de comando, que nao ajuda quem
+    # pediu pelo Claude.
+    from justica_mcp.portal import _porque_parou
+
+    erro = "\n".join(f"linha {i}" for i in range(1, 9))
+    texto = _porque_parou(erro, 1)
+    assert "linha 3" in texto
+    assert "linha 4" not in texto

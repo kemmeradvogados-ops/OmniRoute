@@ -5839,14 +5839,43 @@ def consultar_processo_estruturado(
 
     # A saida do fluxo interativo nao interessa aqui; o que importa e o
     # dicionario. Capturar evita poluir o canal do servidor.
-    with redirect_stdout(io.StringIO()):
+    #
+    # O ERRO PADRAO TAMBEM E CAPTURADO, e isso nao e detalhe. `autenticar`
+    # explica por escrito cada recusa ANTES do login (credencial ausente, sem
+    # semente e sem janela, teto atingido, sistema sem seletor), e todas essas
+    # explicacoes vao para o erro padrao. Capturando so a saida padrao, elas
+    # se perdiam e o advogado recebia "Consulta nao concluida (codigo 1)",
+    # que nao diz nada. Em 26/10/2026 esse texto apareceu tres vezes no mesmo
+    # dia sem que ninguem pudesse agir sobre ele.
+    from contextlib import redirect_stderr
+
+    saida, erros = io.StringIO(), io.StringIO()
+    with redirect_stdout(saida), redirect_stderr(erros):
         codigo = autenticar(
             config.url, tribunal, sistema, confirmado=True, perfil=config.perfil,
             oculto=True, cofre=cofre, estado=estado, apos_autenticar=capturar,
         )
     if "dados" not in guardado:
-        raise RuntimeError(guardado.get("erro") or f"Consulta nao concluida (codigo {codigo}).")
+        raise RuntimeError(
+            guardado.get("erro") or _porque_parou(erros.getvalue(), codigo))
     return guardado["dados"]
+
+
+def _porque_parou(erro_padrao: str, codigo: int) -> str:
+    """Transforma o que `autenticar` escreveu no erro padrao numa frase.
+
+    Sem isto a unica informacao que sobrava era o codigo de saida, e um
+    numero nao diz a ninguem que falta a semente do segundo fator, que a
+    credencial nao esta no cofre ou que o teto da hora foi atingido.
+    """
+    linhas = [l.strip() for l in (erro_padrao or "").splitlines() if l.strip()]
+    if not linhas:
+        return (f"Consulta nao concluida (codigo {codigo}) e o programa nao "
+                "explicou por que. Rode o mesmo pedido pela linha de comando "
+                "para ver a tela inteira.")
+    # As primeiras linhas sao a explicacao; o resto costuma ser instrucao de
+    # linha de comando, que nao ajuda quem pediu pelo Claude.
+    return "A consulta parou antes de autenticar: " + " ".join(linhas[:3])
 
 
 def _paginas_pedidas(bruto: Any) -> tuple:

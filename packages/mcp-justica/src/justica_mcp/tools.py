@@ -543,9 +543,13 @@ def registrar(mcp: Any) -> None:
                 "do advogado, e e decisao do operador. Informe isso a ele em vez de "
                 "tentar outro caminho.",
             )
+        # O que ja se sabe quando a falha acontece. Preenchido conforme se
+        # descobre, para que o registro de erro diga tanto quanto o de sucesso.
+        identificado: dict = {"tribunal": None, "sistema": None}
         try:
             numero = parse_numero(params.numero)
             tribunal = identificar_tribunal(numero.chave_segmento_tribunal)
+            identificado["tribunal"] = tribunal.codigo
             LimiteTentativas.do_ambiente(_estado).exigir_folga()
 
             sistema, duvida = _sistema_pedido_ou_resolvido(
@@ -557,6 +561,7 @@ def registrar(mcp: Any) -> None:
                     "sistema_indeterminado",
                     f"Pergunte ao advogado e repita com `sistema`. {duvida}".strip(),
                 )
+            identificado["sistema"] = sistema
             if sistema not in SISTEMAS_AUTENTICADOS:
                 return _erro(
                     f"Consulta autenticada ainda nao implementada para {sistema!r}.",
@@ -601,8 +606,15 @@ def registrar(mcp: Any) -> None:
         except PermissionError as exc:
             return _erro(str(exc), "acesso_desligado", None)
         except Exception as exc:
-            _estado.registrar(acao="consulta_processo_autenticada", numero=params.numero,
-                              resultado="erro", detalhe=detalhe_do_erro(exc))
+            # Tribunal e sistema entram NO REGISTRO DE ERRO tambem. Sem eles a
+            # auditoria mostrava a falha com o campo do sistema vazio, e a
+            # leitura natural disso era "o programa nao sabia o sistema",
+            # quando ele sabia: so nao estava anotando. Conclusao errada tirada
+            # de ausencia de dado custa tempo de quem investiga.
+            _estado.registrar(
+                acao="consulta_processo_autenticada", numero=params.numero,
+                tribunal=identificado["tribunal"], sistema=identificado["sistema"],
+                resultado="erro", detalhe=detalhe_do_erro(exc))
             return _tratar(exc)
 
     @mcp.tool(name="justica_pecas_do_processo",
