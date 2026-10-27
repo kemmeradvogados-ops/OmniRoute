@@ -175,6 +175,16 @@ class PecasInput(NumeroInput):
 
 class ConsultaAutenticadaInput(NumeroInput):
     sistema: Optional[str] = CAMPO_SISTEMA
+    linha: int = Field(
+        default=1, ge=1, le=50,
+        description=(
+            "Qual linha da lista de resultado abrir, quando o mesmo numero "
+            "aparece em mais de uma. No Portal de Servicos do Rio de Janeiro "
+            "isso e corriqueiro: havendo recurso, cada grau ou serventia e "
+            "uma linha, com historico proprio. A resposta da primeira "
+            "consulta traz `outros_registros` descrevendo todas; leia ao "
+            "advogado e repita com a linha que ele escolher."),
+    )
 
 
 class SondarSistemasInput(BaseModel):
@@ -577,7 +587,8 @@ def registrar(mcp: Any) -> None:
             # uma thread propria.
             dados = await asyncio.to_thread(
                 partial(consultar_processo_estruturado, tribunal.codigo, sistema,
-                        numero.formatado, solicitante=params.solicitante)
+                        numero.formatado, solicitante=params.solicitante,
+                        linha=params.linha)
             )
             # A confianca sai do PROPRIO dado, e nao de uma constante: quem
             # le por estrutura nao sabe o mesmo que quem le por seletor

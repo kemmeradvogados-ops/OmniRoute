@@ -5766,7 +5766,8 @@ BOTAO_BUSCA = "button[name=btnPesquisaRapidaSubmit]"
 
 
 def _capturar_dcp(pagina, guarda, estado_local, identidade, numero,
-                  perfil, url_de_login: str, guardado: dict) -> int:
+                  perfil, url_de_login: str, guardado: dict,
+                  linha: int = 1) -> int:
     """O caminho do DCP para a ferramenta do servidor. SOMENTE LEITURA.
 
     Faz o mesmo que o comando de terminal faz ate a tela do processo, e para
@@ -5807,7 +5808,7 @@ def _capturar_dcp(pagina, guarda, estado_local, identidade, numero,
     da_lista: dict = {}
     try:
         buscar_dcp(pagina, guarda, numero, url_de_login, segundos,
-                   relato=da_lista)
+                   linha=linha, relato=da_lista)
     except ConsultaIndisponivel as exc:
         guardado["erro"] = f"A busca nao chegou ao processo: {exc}"
         return 1
@@ -5829,8 +5830,9 @@ def _capturar_dcp(pagina, guarda, estado_local, identidade, numero,
                 f"numero {da_lista.get('escolhida')} foi aberta. Cada linha "
                 "costuma ser o processo num grau ou numa serventia "
                 "diferente, com historico proprio. O que vem abaixo e a "
-                "leitura de UMA delas: diga isso ao advogado e pergunte se "
-                "ele quer outra."
+                "leitura de UMA delas. Mostre a lista ao advogado, pergunte "
+                "qual ele quer e repita a consulta com `linha` igual ao "
+                "numero dela. Cada repeticao custa uma tentativa."
             ),
         }
     guardado["dados"] = dados
@@ -5845,6 +5847,7 @@ def consultar_processo_estruturado(
     cofre: Optional[Cofre] = None,
     estado: Optional[Estado] = None,
     solicitante: Optional[str] = None,
+    linha: int = 1,
 ) -> dict:
     """Consulta e devolve os dados, sem imprimir nada.
 
@@ -5881,7 +5884,7 @@ def consultar_processo_estruturado(
         if identidade.sistema == "dcp":
             return _capturar_dcp(
                 pagina, guarda, estado_local, identidade, numero,
-                config.perfil, config.url, guardado)
+                config.perfil, config.url, guardado, linha=linha)
         atual = pagina.url
         campo = elemento_visivel(pagina, BUSCA_RAPIDA)
         botao = elemento_visivel(pagina, BOTAO_BUSCA)

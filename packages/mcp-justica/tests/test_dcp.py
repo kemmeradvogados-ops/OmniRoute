@@ -9124,3 +9124,48 @@ def test_uma_linha_so_nao_gera_aviso():
 
     fonte = inspect.getsource(_capturar_dcp)
     assert "if linhas and linhas > 1:" in fonte
+
+
+# --------------------------------------------------------------------------
+# Escolher QUAL linha abrir.
+#
+# Em 27/10/2026 a consulta autenticada funcionou pela primeira vez e abriu a
+# primeira das cinco linhas, que era o primeiro grau. A que interessava era a
+# Apelacao Civel de 2026, na quinta. O programa sempre soube escolher linha,
+# pela linha de comando; faltava a ferramenta do servidor poder pedir.
+
+def test_a_ferramenta_aceita_escolher_a_linha():
+    from justica_mcp.tools import ConsultaAutenticadaInput
+
+    campo = ConsultaAutenticadaInput.model_fields["linha"]
+    assert campo.default == 1, "abrir a primeira continua sendo o padrao"
+    entrada = ConsultaAutenticadaInput(numero="0000001-86.2013.8.19.0078", linha=5)
+    assert entrada.linha == 5
+
+
+def test_a_linha_atravessa_ate_a_busca():
+    """Guarda do caminho inteiro.
+
+    Sao quatro saltos entre a ferramenta e a busca. Quebrando um, a escolha
+    do advogado e silenciosamente ignorada e ele recebe a primeira linha
+    achando que pediu a quinta, que e pior do que receber um erro.
+    """
+    import inspect
+
+    from justica_mcp.portal import _capturar_dcp, consultar_processo_estruturado
+
+    assert "linha" in inspect.signature(consultar_processo_estruturado).parameters
+    assert "linha" in inspect.signature(_capturar_dcp).parameters
+    assert "linha=linha" in inspect.getsource(_capturar_dcp)
+    assert "linha=linha" in inspect.getsource(consultar_processo_estruturado)
+
+
+def test_o_aviso_ensina_a_escolher_outra():
+    import inspect
+
+    from justica_mcp.portal import _capturar_dcp
+
+    fonte = inspect.getsource(_capturar_dcp)
+    assert "`linha`" in fonte
+    # E precisa lembrar do custo: cada repeticao autentica de novo.
+    assert "custa uma tentativa" in fonte
