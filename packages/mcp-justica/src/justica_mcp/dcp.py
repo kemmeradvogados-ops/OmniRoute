@@ -2850,11 +2850,21 @@ def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
 
 
 def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
-           segundos: int = 45, linha: int = 1) -> Any:
+           segundos: int = 45, linha: int = 1,
+           relato: Optional[dict] = None) -> Any:
     """Abre a consulta, digita o numero e pesquisa. Devolve o quadro usado.
 
     Somente leitura: preenche e pesquisa. Nao abre o visualizador e nao baixa
     nada, porque abrir os autos e ato separado.
+
+    `relato`, quando dado, e PREENCHIDO com o que a lista de resultado disse:
+    quantas linhas trazem este numero, qual foi aberta e como a tela descreve
+    cada uma. Ate 27/10/2026 essa informacao so era impressa na linha de
+    comando e se perdia na ferramenta do servidor, de modo que o advogado
+    recebia a leitura de UMA linha sem saber que havia outras. No Portal de
+    Servicos do Rio de Janeiro isso e corriqueiro: havendo recurso, o mesmo
+    numero aparece em mais de uma linha, uma por grau ou serventia, cada uma
+    com historico proprio.
     """
     from .core.guarda_navegacao import Acao, Permissao
     from .portal import _assentar, permissao_efemera, preencher_conferindo
@@ -2936,6 +2946,8 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     # nela. Ver o bloco em `abrir_o_processo_da_lista`.
     aberto = abrir_o_processo_da_lista(atual, guarda, numero, pagina.url,
                                        segundos, linha)
+    if relato is not None:
+        relato.update(aberto)
     print(f"  Lista de resultado: {aberto['situacao']}.")
     if aberto["clicado"]:
         _assentar(pagina, segundos)

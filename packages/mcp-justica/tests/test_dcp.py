@@ -9080,3 +9080,47 @@ def test_pular_chega_aos_dois_caminhos_do_percurso():
     from justica_mcp import portal
 
     assert fonte_do_portal("dcp").count("pular=paginas_a_pular") == 2
+
+
+# --------------------------------------------------------------------------
+# Mais de uma linha com o mesmo numero: o advogado precisa saber.
+#
+# No Portal de Servicos do Rio de Janeiro isso e corriqueiro. Havendo
+# Apelacao Civel ou Agravo de Instrumento, a busca devolve uma linha por grau
+# ou serventia, cada uma com historico proprio. O programa ja sabia disso e
+# ja escolhia a linha certa conferindo digito por digito, mas so IMPRIMIA o
+# aviso na linha de comando: pela ferramenta do servidor, a informacao se
+# perdia e a leitura de uma linha chegava como se fosse a do processo todo.
+
+def test_buscar_aceita_relato_e_o_preenche():
+    import inspect
+
+    from justica_mcp.dcp import buscar
+
+    assert "relato" in inspect.signature(buscar).parameters
+    fonte = inspect.getsource(buscar)
+    assert "relato.update(aberto)" in fonte, (
+        "o relato precisa receber o que a lista de resultado disse")
+
+
+def test_a_consulta_do_servidor_avisa_sobre_as_outras_linhas():
+    import inspect
+
+    from justica_mcp.portal import _capturar_dcp
+
+    fonte = inspect.getsource(_capturar_dcp)
+    assert "relato=da_lista" in fonte
+    assert '"outros_registros"' in fonte
+    # O aviso precisa dizer que a leitura e de UMA linha. Sem essa frase, o
+    # numero sozinho nao impede a conclusao errada.
+    assert "leitura de UMA delas" in fonte
+
+
+def test_uma_linha_so_nao_gera_aviso():
+    """Aviso em todo processo viraria ruido, e ruido se aprende a ignorar."""
+    import inspect
+
+    from justica_mcp.portal import _capturar_dcp
+
+    fonte = inspect.getsource(_capturar_dcp)
+    assert "if linhas and linhas > 1:" in fonte

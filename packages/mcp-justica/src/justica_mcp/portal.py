@@ -5765,14 +5765,35 @@ def _capturar_dcp(pagina, guarda, estado_local, identidade, numero,
         _assentar(pagina, segundos)
         pagina = reencontrar_o_portal(pagina, 15)
 
+    da_lista: dict = {}
     try:
-        buscar_dcp(pagina, guarda, numero, url_de_login, segundos)
+        buscar_dcp(pagina, guarda, numero, url_de_login, segundos,
+                   relato=da_lista)
     except ConsultaIndisponivel as exc:
         guardado["erro"] = f"A busca nao chegou ao processo: {exc}"
         return 1
 
     dados = _ler_a_tela_do_dcp(pagina, guarda, numero, identidade,
                                estado_local, segundos)
+    # O MESMO NUMERO EM MAIS DE UMA LINHA e o caso do recurso: havendo
+    # Apelacao Civel ou Agravo de Instrumento, a busca devolve uma linha por
+    # grau ou serventia, cada uma com historico proprio. A leitura entregue
+    # e de UMA delas, e omitir isso faria o advogado tomar a parte pelo todo.
+    linhas = da_lista.get("linhas")
+    if linhas and linhas > 1:
+        dados["outros_registros"] = {
+            "quantos": linhas,
+            "aberto": da_lista.get("escolhida"),
+            "como_a_tela_descreve": da_lista.get("descricoes") or [],
+            "aviso": (
+                f"A busca devolveu {linhas} linhas com este numero e a de "
+                f"numero {da_lista.get('escolhida')} foi aberta. Cada linha "
+                "costuma ser o processo num grau ou numa serventia "
+                "diferente, com historico proprio. O que vem abaixo e a "
+                "leitura de UMA delas: diga isso ao advogado e pergunte se "
+                "ele quer outra."
+            ),
+        }
     guardado["dados"] = dados
     return 0
 
