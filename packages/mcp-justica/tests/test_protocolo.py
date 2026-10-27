@@ -41,38 +41,66 @@ def _medida(segundos=None, respondeu=True, resposta=None):
     return {"respondeu": respondeu, "segundos": segundos, "resposta": resposta}
 
 
+def _sem_lancador(monkeypatch):
+    """Nenhum lancador a medir: o veredito cai no tempo do Python.
+
+    Imita a maquina em que o `node` nao esta no caminho, que e situacao real
+    e precisa continuar produzindo relato util.
+    """
+    monkeypatch.setattr(
+        protocolo, "medir_pelo_lancador",
+        lambda *a, **k: {"respondeu": None, "segundos": None,
+                         "motivo": "nao ha lancador"})
+
+
+def _lancador(monkeypatch, segundos):
+    monkeypatch.setattr(
+        protocolo, "medir_pelo_lancador",
+        lambda *a, **k: {"respondeu": True, "segundos": segundos, "motivo": ""})
+
+
 def _ok(versoes=("2026-07-28",)):
     return {"jsonrpc": "2.0", "id": 1,
             "result": {"supportedVersions": list(versoes)}}
 
 
-def test_rapido_com_folga_diz_que_deveria_funcionar(monkeypatch):
+def test_rapido_pelo_lancador_diz_que_deveria_funcionar(monkeypatch):
+    _lancador(monkeypatch, 0.09)
     monkeypatch.setattr(protocolo, "medir_sonda",
-                        lambda *a, **k: _medida(0.9, resposta=_ok()))
+                        lambda *a, **k: _medida(8.5, resposta=_ok()))
     r = protocolo.relatorio()
+    # O ponto da mudanca de 27/10/2026: o Python lento NAO condena mais a
+    # extensao, porque quem responde a sonda e o lancador.
     assert "com folga" in r["veredito"]
+    assert "8.50s para subir" in r["veredito"]
     assert r["versoes_declaradas"] == ["2026-07-28"]
 
 
-def test_dentro_do_limite_mas_na_linha_nao_declara_vitoria(monkeypatch):
+def test_sem_lancador_o_relato_usa_o_tempo_do_python(monkeypatch):
+    _sem_lancador(monkeypatch)
     monkeypatch.setattr(protocolo, "medir_sonda",
                         lambda *a, **k: _medida(3.6, resposta=_ok()))
     r = protocolo.relatorio()
-    assert "SEM FOLGA" in r["veredito"]
+    assert "nao ha lancador" in r["veredito"]
+    assert "3.60s" in r["veredito"]
 
 
-def test_alem_do_limite_explica_que_o_atraso_e_a_causa(monkeypatch):
+def test_lento_nos_dois_caminhos_explica_e_da_o_contorno(monkeypatch):
+    _lancador(monkeypatch, 9.0)
     monkeypatch.setattr(protocolo, "medir_sonda",
                         lambda *a, **k: _medida(5.2, resposta=_ok()))
     r = protocolo.relatorio()
     assert "ALEM" in r["veredito"]
-    assert "chega atrasado, nao fala errado" in r["veredito"]
-    # As conversas comuns nao sao afetadas, e o veredito precisa dizer isso:
-    # sem essa frase a equipe conclui que a extensao esta quebrada.
-    assert "conversas comuns" in r["veredito"]
+    # Sem o contorno a equipe conclui que a extensao esta quebrada.
+    assert "noutra conversa" in r["veredito"]
+    # E NAO nomeia Cowork nem Code: em 26/10/2026 uma conversa comum tambem
+    # falhou, entao atribuir a falha a essas sessoes era afirmar o que nao
+    # se verificou.
+    assert "Cowork" not in r["veredito"]
 
 
 def test_sem_resposta_nao_e_tratado_como_lentidao(monkeypatch):
+    _sem_lancador(monkeypatch)
     monkeypatch.setattr(protocolo, "medir_sonda",
                         lambda *a, **k: _medida(None, respondeu=False))
     r = protocolo.relatorio()
@@ -83,6 +111,7 @@ def test_sem_resposta_nao_e_tratado_como_lentidao(monkeypatch):
 def test_erro_do_servidor_nao_vira_sucesso(monkeypatch):
     erro = {"jsonrpc": "2.0", "id": 1,
             "error": {"code": -32602, "message": "faltou chave"}}
+    _sem_lancador(monkeypatch)
     monkeypatch.setattr(protocolo, "medir_sonda",
                         lambda *a, **k: _medida(0.5, resposta=erro))
     r = protocolo.relatorio()
@@ -93,6 +122,7 @@ def test_erro_do_servidor_nao_vira_sucesso(monkeypatch):
 def test_o_veredito_nunca_fala_de_versao_publicada(monkeypatch):
     # O erro que originou este arquivo. Se alguem reintroduzir a pergunta
     # errada, este teste cai.
+    _lancador(monkeypatch, 9.0)
     monkeypatch.setattr(protocolo, "medir_sonda",
                         lambda *a, **k: _medida(5.2, resposta=_ok()))
     texto = protocolo.relatorio()["veredito"].lower()
@@ -101,12 +131,16 @@ def test_o_veredito_nunca_fala_de_versao_publicada(monkeypatch):
 
 
 def test_mostrar_imprime_e_devolve_zero(capsys, monkeypatch):
+    _lancador(monkeypatch, 0.09)
     monkeypatch.setattr(protocolo, "medir_sonda",
                         lambda *a, **k: _medida(0.9, resposta=_ok()))
     assert protocolo.mostrar() == 0
     saida = capsys.readouterr().out
     assert protocolo.revisao_servida() in saida
-    assert "server/discover" in saida
+    # Os DOIS caminhos aparecem, e nomeados: quem le precisa saber que o
+    # tempo do Python e o do lancador medem coisas diferentes.
+    assert "Servidor Python responde em" in saida
+    assert "Pelo lancador" in saida
 
 
 def test_a_sonda_de_verdade_responde_e_declara_a_revisao():
@@ -117,3 +151,14 @@ def test_a_sonda_de_verdade_responde_e_declara_a_revisao():
     assert "error" not in corpo, corpo.get("error")
     versoes = corpo["result"]["supportedVersions"]
     assert protocolo.revisao_servida() in versoes
+
+
+def test_a_sonda_pelo_lancador_responde_de_verdade():
+    """Sem simulacao: sobe o lancador e mede. Pulado onde nao ha `node`."""
+    import pytest
+
+    medida = protocolo.medir_pelo_lancador()
+    if medida.get("respondeu") is None:
+        pytest.skip(medida.get("motivo") or "lancador indisponivel")
+    assert medida["respondeu"], "o lancador nao respondeu a sonda"
+    assert medida["segundos"] < protocolo.JANELA_DA_SONDA_S
