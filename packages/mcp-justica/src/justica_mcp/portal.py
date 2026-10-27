@@ -854,10 +854,12 @@ def ensaiar_login(
     tribunal: str,
     sistema: str,
     *,
-    campo_usuario: str = "#txtUsuario",
-    campo_senha: str = "#pwdSenha",
-    campo_senha_oculto: str = "input[name=pwdSenha]",
-    botao_entrar: str = "#sbmEntrar",
+    # Mesma armadilha de `autenticar`: padrao fixo aqui vale para TODO
+    # sistema. `None` significa "pegue da tabela do sistema".
+    campo_usuario: Optional[str] = None,
+    campo_senha: Optional[str] = None,
+    campo_senha_oculto: Optional[str] = None,
+    botao_entrar: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 30,
     espera_humana: int = ESPERA_HUMANA_PADRAO,
@@ -886,6 +888,18 @@ def ensaiar_login(
         return 2
 
     identidade = Identidade(tribunal, sistema)
+
+    # A tabela do sistema preenche o que nao veio. Quem passou, manda.
+    da_tabela = seletores_do_sistema(identidade.sistema)
+    if campo_usuario is None:
+        campo_usuario = da_tabela["campo_usuario"]
+    if campo_senha is None:
+        campo_senha = da_tabela["campo_senha"]
+    if campo_senha_oculto is None:
+        campo_senha_oculto = da_tabela["campo_senha_oculto"]
+    if botao_entrar is None:
+        botao_entrar = da_tabela["botao_entrar"]
+
     cofre = cofre or Cofre()
     try:
         login = cofre._login(identidade)
@@ -3008,12 +3022,21 @@ def autenticar(
     sistema: str,
     *,
     confirmado: bool = False,
-    campo_usuario: str = "#txtUsuario",
-    campo_senha: str = "#pwdSenha",
-    campo_senha_oculto: str = "input[name=pwdSenha]",
-    botao_entrar: str = "#sbmEntrar",
-    campo_codigo: str = "#txtAcessoCodigo",
-    botao_validar: str = "#btnValidar",
+    # SEM PADRAO FIXO, de proposito. Ate 27/10/2026 estes campos nasciam com
+    # os seletores do eproc, e quem chamasse sem passa-los procurava
+    # `#txtUsuario` em QUALQUER portal. A linha de comando nao sentia, porque
+    # `completar_seletores` preenche pelo sistema antes de chamar; a
+    # ferramenta do servidor chamava direto e ia com os do eproc para o
+    # Portal de Servicos, cuja tela usa `#usuario`. Dava "campo de usuario
+    # nao encontrado", sempre, e o diagnostico apontava para a tela do
+    # portal quando o defeito era o parametro. `None` aqui significa "pegue
+    # da tabela do sistema"; valor passado continua vencendo a tabela.
+    campo_usuario: Optional[str] = None,
+    campo_senha: Optional[str] = None,
+    campo_senha_oculto: Optional[str] = None,
+    botao_entrar: Optional[str] = None,
+    campo_codigo: Optional[str] = None,
+    botao_validar: Optional[str] = None,
     perfil: Optional[str] = None,
     oculto: bool = False,
     segundos: int = 45,
@@ -3058,6 +3081,22 @@ def autenticar(
         return 2
 
     identidade = Identidade(tribunal, sistema)
+
+    # A tabela do sistema preenche o que nao veio. Quem passou, manda.
+    da_tabela = seletores_do_sistema(identidade.sistema)
+    if campo_usuario is None:
+        campo_usuario = da_tabela["campo_usuario"]
+    if campo_senha is None:
+        campo_senha = da_tabela["campo_senha"]
+    if campo_senha_oculto is None:
+        campo_senha_oculto = da_tabela["campo_senha_oculto"]
+    if botao_entrar is None:
+        botao_entrar = da_tabela["botao_entrar"]
+    if campo_codigo is None:
+        campo_codigo = da_tabela["campo_codigo"]
+    if botao_validar is None:
+        botao_validar = da_tabela["botao_validar"]
+
     cofre = cofre or Cofre()
     estado = estado or Estado()
     try:

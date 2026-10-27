@@ -8514,3 +8514,61 @@ def test_toda_ferramenta_que_toca_o_tribunal_grava_o_solicitante():
         if achado and achado.group(1) in acoes:
             assert "solicitante" in trecho, (
                 f"a acao {achado.group(1)} grava sem solicitante")
+
+
+# --------------------------------------------------------------------------
+# O seletor de login vem do SISTEMA, e nao do eproc.
+#
+# Causa-raiz da consulta autenticada que falhou o dia inteiro em 26 e
+# 27/10/2026 com "campo de usuario nao encontrado". `autenticar` nascia com
+# os seletores do eproc como padrao. A linha de comando nao sentia, porque
+# `completar_seletores` preenche pelo sistema antes de chamar; a ferramenta
+# do servidor chamava direto e procurava `#txtUsuario` no Portal de
+# Servicos, cuja tela usa `#usuario`.
+#
+# O download funcionava na mesma hora, no mesmo portal, com a mesma
+# credencial: ele passa pela linha de comando. Foi esse contraste, visto na
+# auditoria, que apontou o defeito.
+
+def test_autenticar_nao_tem_mais_seletor_de_eproc_como_padrao():
+    import inspect
+
+    from justica_mcp.portal import autenticar
+
+    from justica_mcp.portal import ensaiar_login
+
+    parametros = list(inspect.signature(autenticar).parameters.items())
+    parametros += list(inspect.signature(ensaiar_login).parameters.items())
+    for nome, p in parametros:
+        if nome.startswith(("campo_", "botao_")):
+            assert p.default is None, (
+                f"{nome} voltou a ter padrao fixo: qualquer valor aqui vale "
+                "para TODOS os sistemas, e foi assim que o eproc virou padrao "
+                "do Portal de Servicos")
+
+
+def test_cada_sistema_tem_o_proprio_campo_de_usuario():
+    from justica_mcp.portal import SELETORES_POR_SISTEMA, seletores_do_sistema
+
+    usuarios = {s: seletores_do_sistema(s)["campo_usuario"]
+                for s in SELETORES_POR_SISTEMA}
+    # Se todos fossem iguais, o defeito nao teria como aparecer, e este teste
+    # nao estaria guardando nada.
+    assert len(set(usuarios.values())) > 1, usuarios
+    assert usuarios["dcp"] != usuarios["eproc"]
+
+
+def test_a_consulta_do_servidor_nao_passa_seletor_e_por_isso_depende_da_tabela():
+    """Guarda do contrato entre os dois.
+
+    A consulta estruturada chama `autenticar` sem seletor nenhum. Isso so e
+    correto enquanto `autenticar` resolver pela tabela do sistema. Mudando um
+    dos dois sem o outro, volta o defeito.
+    """
+    import inspect
+
+    from justica_mcp.portal import autenticar, consultar_processo_estruturado
+
+    chamada = inspect.getsource(consultar_processo_estruturado)
+    assert "campo_usuario" not in chamada
+    assert "seletores_do_sistema" in inspect.getsource(autenticar)
