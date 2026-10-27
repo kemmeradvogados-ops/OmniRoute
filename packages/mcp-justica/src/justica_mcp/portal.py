@@ -8252,7 +8252,8 @@ def mostrar_estrutura(caminho: str) -> int:
     linhas.append(f"  totais: principais={totais.get('principais', 0)} "
                   f"partes={totais.get('partes', 0)} "
                   f"mandados={totais.get('mandados', 0)} "
-                  f"movimentacoes={totais.get('movimentacoes', 0)}")
+                  f"movimentacoes={totais.get('movimentacoes', 0)} "
+                  f"documentos_listados={totais.get('documentos_listados', 0)}")
     if _conferido:
         conferidos = [k for k, v in _conferido.items() if v]
         pendentes = [k for k, v in _conferido.items() if not v]
@@ -8315,6 +8316,37 @@ def mostrar_estrutura(caminho: str) -> int:
 
     linhas.append(f"  COMPONENTES DE MOVIMENTO: "
                   f"{estrutura.get('componentes_de_movimento', 0)}")
+
+    # A TABELA DE DOCUMENTOS DO SEGUNDO GRAU.
+    #
+    # Em 27/10/2026 a leitura dela passou a funcionar e este relatorio nao a
+    # mostrava: o dado era gravado no arquivo e nao chegava a quem precisava
+    # dele. E o mesmo defeito que este projeto vem consertando o dia todo, e
+    # aqui fui eu quem o cometeu, no mesmo dia.
+    documentos = estrutura.get("colunas_dos_documentos") or []
+    linhas.append(f"  TABELA DE DOCUMENTOS ({len(documentos)}):")
+    if not documentos:
+        linhas.append("    (nenhuma: esta tela nao tem ancora de documento)")
+    for tabela in documentos:
+        de_onde = tabela.get("de_onde_veio_a_data") or {}
+        onde = ", ".join(f"{k}={v}" for k, v in sorted(de_onde.items()) if v)
+        linhas.append(
+            f"    id={tabela.get('id') or '-'}  classe="
+            f"{(tabela.get('classe') or '-')[:40]}  "
+            f"documentos={tabela.get('documentos', 0)}  "
+            f"linhas_sem_documento={tabela.get('linhas_sem_documento', 0)}")
+        linhas.append(f"      de onde veio a data: {onde or '(nenhuma data)'}")
+        forma = tabela.get("forma_por_coluna") or {}
+        if forma:
+            partes = []
+            for coluna in sorted(forma, key=lambda c: int(c) if str(c).isdigit() else 0):
+                contagem = ", ".join(f"{k} x{v}" for k, v in
+                                     sorted((forma[coluna] or {}).items()))
+                partes.append(f"coluna {coluna}: {contagem}")
+            for parte in partes:
+                linhas.append(f"      {parte}")
+    linhas.append(f"  ANDAMENTOS FORA DA TABELA DE DOCUMENTOS: "
+                  f"{estrutura.get('fora_da_tabela_de_documentos', 0)}")
     linhas.append(f"  DIAGNOSTICO DOS BLOCOS: "
                   f"{estrutura.get('diagnostico_dos_blocos') or '(sem)'}")
     caixas = estrutura.get("caixas_de_movimentacao") or []

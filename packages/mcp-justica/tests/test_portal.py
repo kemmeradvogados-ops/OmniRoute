@@ -8703,3 +8703,81 @@ def test_o_processo_entra_mesmo_com_a_recaida(monkeypatch):
     """Avisar nao e recusar: a consulta segue, so que dizendo o que usou."""
     args = _completar(monkeypatch, grau=2)
     assert args.processo == ["0000001-02.2020.8.19.0001"]
+
+
+# ---------------------------------------------------------------------------
+# O relatorio de estrutura mostra a tabela de documentos
+#
+# Em 27/10/2026 a leitura da tabela de documentos do segundo grau passou a
+# funcionar e este relatorio nao a mostrava: o dado era gravado no arquivo e
+# nao chegava a quem precisava dele. Mesmo defeito de familia que o projeto
+# vinha consertando no mesmo dia.
+# ---------------------------------------------------------------------------
+
+def _consulta_gravada(tmp_path, documentos):
+    import json
+
+    arquivo = tmp_path / "consulta.json"
+    arquivo.write_text(json.dumps({
+        "totais": {"principais": 30, "partes": 4, "mandados": 0,
+                   "movimentacoes": 12, "documentos_listados": 8},
+        "leitura": {"tela_do_processo_confirmada": True,
+                    "endereco_do_quadro": "/ejud/ConsultaProcesso.aspx",
+                    "todos_os_movimentos": "o botao nao existe nesta tela",
+                    "paginas_de_movimentacao": "a tela nao tem paginacao",
+                    "conferido": {}},
+        "estrutura": {
+            "tabelas": [], "familias": {}, "rotulos_candidatos": [],
+            "secoes": [], "botoes": [], "rotulos_lidos": [],
+            "diagnostico_dos_blocos": {}, "caixas_de_movimentacao": [],
+            "componentes_de_movimento": 0,
+            "colunas_dos_documentos": documentos,
+            "fora_da_tabela_de_documentos": 4,
+        },
+    }), encoding="utf-8")
+    return str(arquivo)
+
+
+def test_a_estrutura_mostra_de_onde_veio_a_data(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    caminho = _consulta_gravada(tmp_path, [{
+        "id": "", "classe": "", "linhas_lidas": 8, "documentos": 8,
+        "linhas_sem_documento": 0,
+        "de_onde_veio_a_data": {"antes": 8, "depois": 0, "celula_irma": 0,
+                                "nao_achada": 0},
+        "cabecalhos": [], "forma_por_coluna": {"0": {"documento": 1}},
+    }])
+    assert mostrar_estrutura(caminho) == 0
+    saida = capsys.readouterr().out
+    assert "TABELA DE DOCUMENTOS (1)" in saida
+    assert "documentos=8" in saida
+    assert "antes=8" in saida
+    assert "ANDAMENTOS FORA DA TABELA DE DOCUMENTOS: 4" in saida
+    assert "documentos_listados=8" in saida
+
+
+def test_sem_data_nenhuma_o_relatorio_diz_isso(tmp_path, capsys):
+    """O caso que importa diagnosticar: os documentos foram achados e as
+    datas nao. Sem esta linha, 'oito documentos' pareceria sucesso."""
+    from justica_mcp.portal import mostrar_estrutura
+
+    caminho = _consulta_gravada(tmp_path, [{
+        "id": "", "classe": "", "linhas_lidas": 8, "documentos": 8,
+        "linhas_sem_documento": 0,
+        "de_onde_veio_a_data": {"antes": 0, "depois": 0, "celula_irma": 0,
+                                "nao_achada": 8},
+        "cabecalhos": [], "forma_por_coluna": {},
+    }])
+    assert mostrar_estrutura(caminho) == 0
+    saida = capsys.readouterr().out
+    assert "nao_achada=8" in saida
+
+
+def test_tela_sem_tabela_de_documentos_diz_que_nao_tem(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    assert mostrar_estrutura(_consulta_gravada(tmp_path, [])) == 0
+    saida = capsys.readouterr().out
+    assert "TABELA DE DOCUMENTOS (0)" in saida
+    assert "esta tela nao tem ancora de documento" in saida
