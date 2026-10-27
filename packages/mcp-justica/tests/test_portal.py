@@ -8411,17 +8411,55 @@ def test_a_explicacao_do_erro_padrao_vira_a_mensagem():
 
     erro = ("\n  [PARADO] Sem semente e sem janela, nao ha a quem perguntar.\n"
             "  Rode pela linha de comando, sem --oculto.\n")
-    texto = _porque_parou(erro, 1)
+    texto = _porque_parou(erro, "", 1)
     assert "Sem semente" in texto
-    assert "parou antes de autenticar" in texto
+    assert "A consulta parou" in texto
 
 
-def test_sem_explicacao_o_texto_admite_que_nao_sabe():
+def test_a_explicacao_da_saida_padrao_tambem_vira_mensagem():
+    """O defeito de 27/10/2026.
+
+    A consulta devolveu "o programa nao explicou por que" sobre uma recusa
+    que ESTAVA explicada, na saida padrao, que era capturada e descartada.
+    `autenticar` escreve ora num canal, ora no outro, sem convencao.
+    """
     from justica_mcp.portal import _porque_parou
 
-    texto = _porque_parou("", 1)
-    assert "nao explicou por que" in texto
+    saida = ("AUTENTICACAO COMPLETA\n"
+             "Endereco: https://exemplo\n"
+             "Credencial: TJRJ/dcp (lida do cofre, nunca impressa)\n"
+             "  [PARADO] A tela de entrada do sistema nunca foi lida.\n")
+    texto = _porque_parou("", saida, 1)
+    assert "[PARADO]" in texto
+    assert "nunca foi lida" in texto
+    # O banner e o endereco nao entram: sao progresso, nao explicacao.
+    assert "AUTENTICACAO COMPLETA" not in texto
+
+
+def test_sem_marca_as_ultimas_linhas_sao_a_aposta():
+    """A explicacao vem imediatamente antes de o programa desistir."""
+    from justica_mcp.portal import _porque_parou
+
+    texto = _porque_parou("", "primeira\nsegunda\nterceira\nquarta\nquinta", 1)
+    assert texto.endswith("terceira quarta quinta")
+    assert "primeira" not in texto
+
+
+def test_sem_nada_escrito_o_texto_admite_que_nao_sabe():
+    from justica_mcp.portal import _porque_parou
+
+    texto = _porque_parou("", "", 1)
+    assert "nao escreveu nada" in texto
     assert "codigo 1" in texto
+
+
+def test_o_erro_padrao_tem_precedencia_sobre_a_saida():
+    from justica_mcp.portal import _porque_parou
+
+    texto = _porque_parou("  [PARADO] motivo do erro padrao\n",
+                          "  [PARADO] motivo da saida\n", 1)
+    assert "erro padrao" in texto
+    assert "da saida" not in texto
 
 
 def test_so_as_primeiras_linhas_entram():
@@ -8430,7 +8468,7 @@ def test_so_as_primeiras_linhas_entram():
     from justica_mcp.portal import _porque_parou
 
     erro = "\n".join(f"linha {i}" for i in range(1, 9))
-    texto = _porque_parou(erro, 1)
+    texto = _porque_parou(erro, "", 1)
     assert "linha 3" in texto
     assert "linha 4" not in texto
 

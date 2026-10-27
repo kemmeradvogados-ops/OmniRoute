@@ -5910,25 +5910,47 @@ def consultar_processo_estruturado(
         )
     if "dados" not in guardado:
         raise RuntimeError(
-            guardado.get("erro") or _porque_parou(erros.getvalue(), codigo))
+            guardado.get("erro")
+            or _porque_parou(erros.getvalue(), saida.getvalue(), codigo))
     return guardado["dados"]
 
 
-def _porque_parou(erro_padrao: str, codigo: int) -> str:
-    """Transforma o que `autenticar` escreveu no erro padrao numa frase.
+# As marcas com que o programa anuncia que parou. Elas existem desde sempre no
+# relato da linha de comando, e sao o jeito confiavel de achar a explicacao no
+# meio do resto: banner, endereco, rotulo da credencial e progresso.
+MARCAS_DE_PARADA = ("[PARADO]", "[FALHA]", "[ATENCAO]")
 
-    Sem isto a unica informacao que sobrava era o codigo de saida, e um
-    numero nao diz a ninguem que falta a semente do segundo fator, que a
-    credencial nao esta no cofre ou que o teto da hora foi atingido.
+
+def _porque_parou(erro_padrao: str, saida_padrao: str, codigo: int) -> str:
+    """Transforma o que `autenticar` escreveu numa frase, venha de onde vier.
+
+    OS DOIS CANAIS, e nao so um. `autenticar` explica suas recusas ora no
+    erro padrao, ora na saida padrao, sem convencao: credencial ausente e
+    falta de semente vao para o erro; sistema sem seletor, botao invisivel e
+    as recusas de dentro do navegador vao para a saida.
+
+    Em 26/10/2026 passei a capturar so o erro padrao, e em 27/10 a consulta
+    falhou de novo devolvendo "o programa nao explicou por que" sobre uma
+    recusa que ESTAVA explicada, na saida padrao, que eu capturava e
+    descartava. Ou seja: a correcao anterior olhou metade do problema.
     """
-    linhas = [l.strip() for l in (erro_padrao or "").splitlines() if l.strip()]
+    def uteis(texto: str) -> list:
+        return [l.strip() for l in (texto or "").splitlines() if l.strip()]
+
+    linhas = uteis(erro_padrao)
+    if not linhas:
+        # Na saida padrao a explicacao vem marcada; o resto e progresso.
+        todas = uteis(saida_padrao)
+        marcadas = [l for l in todas if any(m in l for m in MARCAS_DE_PARADA)]
+        # Sem marca, as ULTIMAS linhas sao a melhor aposta: a explicacao vem
+        # imediatamente antes de o programa desistir.
+        linhas = marcadas or todas[-3:]
+
     if not linhas:
         return (f"Consulta nao concluida (codigo {codigo}) e o programa nao "
-                "explicou por que. Rode o mesmo pedido pela linha de comando "
+                "escreveu nada. Rode o mesmo pedido pela linha de comando "
                 "para ver a tela inteira.")
-    # As primeiras linhas sao a explicacao; o resto costuma ser instrucao de
-    # linha de comando, que nao ajuda quem pediu pelo Claude.
-    return "A consulta parou antes de autenticar: " + " ".join(linhas[:3])
+    return "A consulta parou: " + " ".join(linhas[:3])
 
 
 def _paginas_pedidas(bruto: Any) -> tuple:
