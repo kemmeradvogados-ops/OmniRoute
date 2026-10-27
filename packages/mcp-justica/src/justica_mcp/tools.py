@@ -754,6 +754,59 @@ def registrar(mcp: Any) -> None:
         except Exception as exc:
             return _tratar(exc)
 
+    @mcp.tool(name="justica_consulta_gravada",
+              annotations=somente_leitura("Ultima consulta ja gravada"))
+    async def justica_consulta_gravada(params: NumeroInput) -> str:
+        """A ULTIMA consulta autenticada deste processo, lida do disco.
+
+        DE GRACA e instantanea: nao abre portal, nao autentica e nao gasta
+        tentativa. Toda consulta autenticada grava o resultado antes de
+        responder, e esta ferramenta devolve o que ficou gravado.
+
+        Use ANTES de pedir consulta autenticada de novo, e sempre que uma
+        consulta parecer ter se perdido: em 27/10/2026 uma delas executou,
+        leu a tela e gravou, e mesmo assim ninguem viu o resultado, porque a
+        entrega demorou mais do que o cliente esperou. O dado estava no disco
+        o tempo todo.
+
+        A resposta diz QUANDO foi coletada. Consulta gravada e uma fotografia
+        daquele momento, nao o estado de agora: para prazo, confira a data
+        antes de usar.
+        """
+        try:
+            from .portal import consultas_gravadas
+
+            numero = parse_numero(params.numero)
+            achados = consultas_gravadas(numero.apenas_digitos)
+            if not achados:
+                return _erro(
+                    f"Nenhuma consulta autenticada gravada para "
+                    f"{numero.formatado}.",
+                    "sem_consulta_gravada",
+                    "Peca `justica_consultar_processo_autenticado` uma vez. "
+                    "O resultado dela fica gravado e volta por aqui depois, "
+                    "sem custo.",
+                )
+            import json as _json_mod
+            from datetime import datetime, timezone
+
+            arquivo = achados[0]
+            dados = _json_mod.loads(arquivo.read_text(encoding="utf-8"))
+            quando = datetime.fromtimestamp(
+                arquivo.stat().st_mtime, timezone.utc).isoformat()
+            dados["gravada_em"] = quando
+            dados["consultas_gravadas"] = len(achados)
+            dados["aviso"] = (
+                "Fotografia do momento da coleta, e nao o estado de agora. "
+                "Diga a data ao advogado antes de usar para prazo.")
+            _estado.registrar(
+                acao="consulta_gravada", solicitante=params.solicitante,
+                tribunal="", numero=numero.formatado,
+                resultado=f"gravada em {quando}")
+            return _json(dados)
+        except Exception as exc:
+            return _tratar(exc)
+
     @mcp.tool(name="justica_processos_guardados",
               annotations=somente_leitura("Processos na pasta de copias"))
     async def justica_processos_guardados(onde: str = ONDE_ACERVO,

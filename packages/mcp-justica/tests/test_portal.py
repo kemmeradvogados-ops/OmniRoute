@@ -8595,3 +8595,50 @@ def test_a_consulta_do_servidor_liga_a_gravacao_da_tela():
     # E tem de ligar ANTES de autenticar, senao a tela do login e a da busca
     # ja se perderam quando a leitura falha.
     assert fonte.index("ligar_gravacao()") < fonte.index("codigo = autenticar(")
+
+
+# --------------------------------------------------------------------------
+# A consulta gravada e alcancavel sem autenticar de novo.
+#
+# Em 27/10/2026 uma consulta autenticada foi paga, executou, leu a tela e
+# gravou o resultado, e mesmo assim ninguem o viu: a entrega passou de
+# sessenta segundos e a chamada foi encerrada antes. O dado estava no disco o
+# tempo todo, e nao havia como alcanca-lo sem pagar outra autenticacao.
+
+def test_consultas_gravadas_vem_da_mais_nova_para_a_mais_velha(tmp_path, monkeypatch):
+    import time
+
+    from justica_mcp.core import estado as mod_estado
+    from justica_mcp.portal import consultas_gravadas
+
+    monkeypatch.setattr(mod_estado, "diretorio_estado", lambda: tmp_path)
+    pasta = tmp_path / "consultas"
+    pasta.mkdir()
+    for nome in ("00000018620138190078-20261026T000000Z.json",
+                 "00000018620138190078-20261027T000000Z.json"):
+        (pasta / nome).write_text("{}", encoding="utf-8")
+        time.sleep(0.01)
+
+    achados = consultas_gravadas("00000018620138190078")
+    assert len(achados) == 2
+    assert achados[0].name.endswith("20261027T000000Z.json")
+
+
+def test_processo_sem_consulta_devolve_lista_vazia(tmp_path, monkeypatch):
+    from justica_mcp.core import estado as mod_estado
+    from justica_mcp.portal import consultas_gravadas
+
+    monkeypatch.setattr(mod_estado, "diretorio_estado", lambda: tmp_path)
+    assert consultas_gravadas("00000000000000000000") == []
+
+
+def test_o_numero_de_um_processo_nao_traz_o_de_outro(tmp_path, monkeypatch):
+    from justica_mcp.core import estado as mod_estado
+    from justica_mcp.portal import consultas_gravadas
+
+    monkeypatch.setattr(mod_estado, "diretorio_estado", lambda: tmp_path)
+    pasta = tmp_path / "consultas"
+    pasta.mkdir()
+    (pasta / "00111111120158190001-20261027T000000Z.json").write_text(
+        "{}", encoding="utf-8")
+    assert consultas_gravadas("00222222220168190002") == []

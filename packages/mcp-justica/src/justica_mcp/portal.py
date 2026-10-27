@@ -3911,6 +3911,31 @@ def autenticar(
 
 
 
+def consultas_gravadas(chave: str) -> list:
+    """As consultas ja gravadas deste processo, da mais nova para a mais velha.
+
+    POR QUE ISTO E UMA FERRAMENTA, E NAO SO UM DETALHE INTERNO
+
+    Em 27/10/2026 uma consulta autenticada foi paga, executou, leu a tela e
+    GRAVOU o resultado, e mesmo assim ninguem o viu: a entrega ao cliente
+    passou de sessenta segundos e a chamada foi encerrada antes. O dado
+    estava no disco o tempo todo, e nao havia como alcanca-lo sem autenticar
+    de novo.
+
+    Autenticacao e o recurso caro deste programa. Pagar duas vezes pelo mesmo
+    dado, tendo ele gravado, e o desperdicio que esta funcao evita.
+    """
+    import pathlib as _pathlib
+
+    from .core.estado import diretorio_estado
+
+    pasta = diretorio_estado() / "consultas"
+    if not pasta.is_dir():
+        return []
+    achados = [a for a in pasta.glob(f"{chave}-*.json") if a.is_file()]
+    return sorted(achados, key=lambda a: a.stat().st_mtime, reverse=True)
+
+
 def _gravar_consulta(dados: dict, chave: str) -> "pathlib.Path":
     """Grava a consulta em arquivo local, no diretorio de estado do servidor."""
     import json
