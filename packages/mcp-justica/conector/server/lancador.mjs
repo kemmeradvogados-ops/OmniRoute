@@ -130,8 +130,89 @@ const filho = spawn(python, ["-m", "justica_mcp.server"], {
 for (const canal of [process.stdin, process.stdout, filho.stdin, filho.stdout]) {
   if (canal) canal.on("error", () => { /* o outro lado fechou */ });
 }
-process.stdin.pipe(filho.stdin);
+/**
+ * A SONDA DE ERA, respondida aqui e nao pelo Python.
+ *
+ * Antes de aceitar a extensao, o aplicativo sobe um processo so para
+ * perguntar qual revisao de protocolo o servidor fala, e espera QUATRO
+ * SEGUNDOS pela resposta. Medido no registro dele em 26/10/2026: 4,001s,
+ * 4,001s, 4,010s e 4,004s, sempre terminando em "legacy (sibling did not
+ * complete the exchange)".
+ *
+ * O servidor responde certo, so que tarde. Numa maquina Windows do
+ * escritorio foram 8,55s do nascimento do processo ate a primeira resposta,
+ * contra 0,7s em Linux; so carregar a biblioteca leva de 2,6s a 4,5s la. O
+ * nosso codigo custa 0,07s desse total, entao nao ha o que otimizar do nosso
+ * lado: o peso e da biblioteca, que precisa estar carregada para responder.
+ *
+ * Este processo, porem, ja esta de pe. Ele responde em milissegundos.
+ *
+ * O QUE ISSO CUSTA, dito sem disfarce: o lancador afirma, em nome de um
+ * servidor que ainda nao subiu, o que esse servidor vai dizer. Mudando a
+ * biblioteca de revisao sem mudar estas constantes, ele mentiria. O teste
+ * `test_o_descritor_do_lancador_bate_com_o_servidor_de_verdade` sobe o
+ * servidor Python, faz a mesma pergunta e exige resposta identica, de modo
+ * que a divergencia nao passa em silencio.
+ *
+ * E so vale ANTES de o Python falar. Depois da primeira resposta dele, tudo
+ * passa direto, sem este arquivo olhar.
+ */
+const REVISOES_SERVIDAS = ["2026-07-28"];
+const CAPACIDADES = {
+  prompts: { listChanged: true },
+  resources: { listChanged: true, subscribe: true },
+  tools: { listChanged: true },
+};
+
+function ehSondaDeEra(linha) {
+  try {
+    const pedido = JSON.parse(linha);
+    return pedido && pedido.method === "server/discover" && pedido.id !== undefined;
+  } catch {
+    return false; // linha partida ou ainda incompleta: segue o fluxo normal
+  }
+}
+
+function respostaDaSonda(linha) {
+  const pedido = JSON.parse(linha);
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    id: pedido.id,
+    result: {
+      cacheScope: "private",
+      capabilities: CAPACIDADES,
+      resultType: "complete",
+      supportedVersions: REVISOES_SERVIDAS,
+      ttlMs: 0,
+    },
+  }) + "\n";
+}
+
+let filhoJaFalou = false;
+filho.stdout.on("data", () => { filhoJaFalou = true; });
 filho.stdout.pipe(process.stdout);
+
+// Leitura por LINHA, e nao `pipe`, porque e preciso olhar cada mensagem
+// antes de repassar. O pedaco que chega pode conter meia linha, entao o
+// resto fica guardado ate a proxima vez.
+let resto = "";
+process.stdin.on("data", (pedaco) => {
+  resto += pedaco.toString("utf8");
+  let quebra;
+  while ((quebra = resto.indexOf("\n")) >= 0) {
+    const linha = resto.slice(0, quebra + 1);
+    resto = resto.slice(quebra + 1);
+    if (!filhoJaFalou && ehSondaDeEra(linha)) {
+      process.stdout.write(respostaDaSonda(linha));
+      continue;
+    }
+    try { filho.stdin.write(linha); } catch { /* o filho ja morreu */ }
+  }
+});
+process.stdin.on("end", () => {
+  try { if (resto) filho.stdin.write(resto); } catch { /* idem */ }
+  try { filho.stdin.end(); } catch { /* idem */ }
+});
 
 filho.on("error", (erro) => {
   desistir("Nao foi possivel iniciar o servidor.", [

@@ -223,7 +223,11 @@ def test_o_lancador_liga_os_canos_em_vez_de_herdar():
     """
     texto = _LANCADOR.read_text(encoding="utf-8")
     assert 'stdio: ["pipe", "pipe", "inherit"]' in texto
-    assert "process.stdin.pipe(filho.stdin)" in texto
+    # A entrada deixou de ser `pipe` direto em 27/10/2026, quando o lancador
+    # passou a OLHAR cada mensagem para responder a sonda de era. O que esta
+    # guarda protege continua valendo: a entrada do aplicativo chega ao filho
+    # por cano explicito, e nao por descritor herdado.
+    assert "filho.stdin.write(linha)" in texto
     assert "filho.stdout.pipe(process.stdout)" in texto
 
 
@@ -412,3 +416,105 @@ def test_a_regra_do_molde_bate_com_a_do_python(valor, descartado):
 
     vazio = not valor.strip()
     assert (vazio or parece_molde_nao_substituido(valor)) is descartado
+
+
+# --------------------------------------------------------------------------
+# O lancador responde a sonda de era, e isso precisa de guarda.
+#
+# O aplicativo concede quatro segundos. O servidor Python responde certo, mas
+# na maquina do escritorio levava 8,55s do nascimento ate a primeira resposta,
+# e 91% desse custo e carregar a biblioteca, que precisa estar carregada para
+# responder. O lancador ja esta de pe e responde em 0,04s.
+#
+# O preco: ele afirma, em nome de um servidor que ainda nao subiu, o que esse
+# servidor vai dizer. Mudando a biblioteca de revisao sem mudar as constantes
+# do lancador, ele mentiria. Estes testes existem para isso nao passar em
+# silencio.
+
+def _constante_do_lancador(nome: str):
+    """Le um literal do lancador e o converte para objeto Python.
+
+    Sem depender de `node` instalado: os dois literais sao simples, e a
+    conversao so precisa pos aspas nas chaves soltas do JavaScript.
+    """
+    import re
+
+    fonte = (CONECTOR / "server" / "lancador.mjs").read_text(encoding="utf-8")
+    achado = re.search(rf"const {nome} = (.+?);\n", fonte, re.DOTALL)
+    assert achado, f"constante {nome} nao encontrada no lancador"
+    bruto = achado.group(1)
+    bruto = re.sub(r"(\w+):", r'"\1":', bruto)          # chaves sem aspas
+    bruto = re.sub(r",(\s*[}\]])", r"\1", bruto)         # virgula sobrando
+    return json.loads(bruto)
+
+
+def _descritor_do_servidor_de_verdade() -> dict:
+    """Sobe o servidor Python num processo novo e faz a mesma pergunta."""
+    import os
+    import subprocess
+    import sys
+    import threading
+
+    pedido = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "server/discover",
+        "params": {"_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }},
+    })
+    filho = subprocess.Popen(
+        [sys.executable, "-m", "justica_mcp.server"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=str(RAIZ), text=True, bufsize=1,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    recebido: list = []
+
+    def ler() -> None:
+        linha = filho.stdout.readline() if filho.stdout else ""
+        if linha:
+            recebido.append(linha)
+
+    leitor = threading.Thread(target=ler, daemon=True)
+    leitor.start()
+    try:
+        filho.stdin.write(pedido + "\n")
+        filho.stdin.flush()
+        leitor.join(timeout=30)
+    finally:
+        filho.kill()
+    assert recebido, "o servidor Python nao respondeu a `server/discover`"
+    return json.loads(recebido[0])["result"]
+
+
+def test_o_descritor_do_lancador_bate_com_o_servidor_de_verdade():
+    """A guarda da mentira possivel.
+
+    O lancador responde pelo servidor antes de ele subir. Se o que ele afirma
+    deixar de ser verdade, este teste cai.
+    """
+    real = _descritor_do_servidor_de_verdade()
+    assert _constante_do_lancador("REVISOES_SERVIDAS") == real["supportedVersions"]
+    assert _constante_do_lancador("CAPACIDADES") == real["capabilities"]
+
+
+def test_a_sonda_so_e_respondida_antes_de_o_python_falar():
+    """Depois da primeira resposta do servidor, tudo passa direto.
+
+    Sem essa condicao o lancador continuaria respondendo por ele a cada nova
+    sondagem, inclusive depois de o servidor ter mudado de estado.
+    """
+    fonte = (CONECTOR / "server" / "lancador.mjs").read_text(encoding="utf-8")
+    assert "filhoJaFalou" in fonte
+    assert "!filhoJaFalou && ehSondaDeEra(linha)" in fonte
+
+
+def test_o_lancador_le_por_linha_e_guarda_o_resto():
+    """Pedaco que chega pode conter meia linha. Repassar meia mensagem
+    quebraria o protocolo de um jeito dificil de diagnosticar."""
+    fonte = (CONECTOR / "server" / "lancador.mjs").read_text(encoding="utf-8")
+    assert "let resto" in fonte
+    assert "process.stdin.pipe" not in fonte, (
+        "a leitura por linha substituiu o `pipe`: deixar os dois faria cada "
+        "mensagem chegar duas vezes ao servidor"
+    )
