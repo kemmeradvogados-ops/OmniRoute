@@ -4998,7 +4998,11 @@ def test_sem_o_botao_do_historico_a_leitura_avisa():
             return []
 
     situacao = mostrar_todos_os_movimentos(_QuadroSemBotao(), _Guarda())
-    assert "nao esta na tela" in situacao["situacao"]
+    # A redacao mudou em 28/10/2026, quando se descobriu que o mesmo comando
+    # tem duas caras e que a recusa precisava nomear as duas. O que o teste
+    # guarda e o mesmo: sem o comando na tela, a leitura AVISA.
+    assert "nem o botao" in situacao["situacao"]
+    assert "nem o icone" in situacao["situacao"]
     assert "incompleto" in situacao["situacao"]
 
 
@@ -9434,40 +9438,19 @@ def test_tela_sem_ancora_de_integra_nao_muda_de_comportamento():
                for m in dados["movimentacoes"])
 
 
-def test_o_botao_ausente_nao_vira_aviso_de_historico_incompleto():
-    """Na tela do segundo grau o botao 'Todos Os Movimentos' nao existe e nao
-    precisa existir. Dizer 'pode estar incompleto' ali manda o advogado
-    procurar andamento que nao falta."""
-    from justica_mcp.dcp import mostrar_todos_os_movimentos
-
-    class _Quadro:
-        url = "https://www3.tjrj.jus.br/ejud/ConsultaProcesso.aspx"
-
-        def evaluate(self, _js):
-            return {
-                "pares": [], "partes": [], "tabelas": [], "familias": {},
-                "rotulosCandidatos": [], "secoes": [], "botoes": [],
-                "diagnostico": {}, "caixasDeMovimentacao": [],
-                "movimentacoes": [], "movimentosDoComponente": [],
-                "documentosDoSegundoGrau": [
-                    ["19/09/2026", "", "Acordao",
-                     "tabela de documentos do segundo grau",
-                     [["Integra do(a) Acordao", "/ejud/doc.aspx?x=9"]]]],
-                "colunasDosDocumentos": [
-                    {"id": "", "classe": "", "linhas_lidas": 8,
-                     "cabecalhos": [], "forma_por_coluna": {}}],
-            }
-
-        def query_selector_all(self, _s):
-            return []
-
-        def query_selector(self, _s):
-            return None
-
-    relato = mostrar_todos_os_movimentos(_Quadro(), _Guarda())
-    assert "pode estar incompleto" not in relato["situacao"]
-    assert "tabela de documentos" in relato["situacao"]
-    assert "8 linha(s)" in relato["situacao"]
+# REMOVIDO EM 28/10/2026: `test_o_botao_ausente_nao_vira_aviso_de_historico_incompleto`.
+#
+# Ele exigia que a ferramenta dissesse, na tela do segundo grau, que o botao
+# "nao existe nesta tela, e nao precisa existir: o historico veio da tabela de
+# documentos". Escrevi os dois, o comportamento e o teste, no mesmo dia.
+#
+# Os dois estavam errados. A tela TEM o comando: e um icone com o titulo
+# "Listar Todos os Movimentos", e atras dele ha 52 movimentos. O teste nao
+# protegia uma regra, protegia um defeito, e enquanto ele passasse o defeito
+# nao podia ser consertado.
+#
+# O que entra no lugar e o seu avesso, logo abaixo: sem botao E sem icone, a
+# ferramenta avisa e proibe a conclusao errada.
 
 
 def test_sem_tabela_de_documentos_o_aviso_de_incompleto_continua():
@@ -9976,3 +9959,144 @@ def test_a_fase_vem_antes_dos_documentos_na_lista():
     assert len(dados["movimentacoes"]) == 2
     assert dados["movimentacoes"][0]["data"] == "15/10/2026"
     assert dados["movimentacoes"][1]["data"] == "02/10/2026"
+
+
+# ---------------------------------------------------------------------------
+# O comando "todos os movimentos" tem DUAS caras
+#
+# Primeiro grau: botao com o TEXTO "Todos Os Movimentos".
+# Segundo grau: icone com o TITULO "Listar Todos os Movimentos", numa
+# `<img class=margin-icos>` dentro de um link SEM href, lido na barra de
+# ferramentas real em 28/10/2026.
+#
+# Ate aqui so o primeiro era procurado. No segundo grau a busca falhava, e eu
+# li a falha como "esta tela nao tem historico". Tem 52.
+# ---------------------------------------------------------------------------
+
+class _BotaoFalso:
+    def __init__(self):
+        self.cliques = 0
+
+    def click(self, **_k):
+        self.cliques += 1
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def bounding_box(self):
+        return {"x": 10, "y": 10, "width": 20, "height": 20}
+
+    def scroll_into_view_if_needed(self):
+        pass
+
+    def get_attribute(self, _n):
+        return None
+
+
+class _QuadroComIcone:
+    """A tela do segundo grau: sem botao de texto, com o icone."""
+
+    url = "https://www3.tjrj.jus.br/ejud/ConsultaProcesso.aspx"
+
+    def __init__(self, declarado="Relacao de 1 ate 50 de 52 movimentos",
+                 com_icone=True):
+        self.botao = _BotaoFalso()
+        self.declarado = declarado
+        self.com_icone = com_icone
+        self.pedidos = []
+        self.movimentos = 1
+
+    def evaluate(self, _js):
+        return {
+            "pares": [], "partes": [], "tabelas": [], "familias": {},
+            "rotulosCandidatos": [], "secoes": [], "botoes": [],
+            "diagnostico": {}, "caixasDeMovimentacao": [],
+            "movimentacoes": [[f"0{i}/10/2026", "", f"ato {i}", "teste"]
+                              for i in range(self.movimentos)],
+            "movimentosDoComponente": [],
+        }
+
+    def query_selector(self, seletor):
+        from justica_mcp.dcp import IMAGEM_DE_TODOS_OS_MOVIMENTOS
+
+        self.pedidos.append(seletor)
+        if seletor == IMAGEM_DE_TODOS_OS_MOVIMENTOS and self.com_icone:
+            return self.botao
+        return None
+
+    def query_selector_all(self, seletor):
+        um = self.query_selector(seletor)
+        return [um] if um is not None else []
+
+    def inner_text(self, _seletor):
+        return self.declarado
+
+    def wait_for_timeout(self, _ms):
+        # A cada espera a tela escreve mais um movimento, ate cinquenta.
+        self.movimentos = min(self.movimentos + 20, 50)
+
+    def get_by_text(self, *_a, **_k):
+        raise RuntimeError("sem botao de texto nesta tela")
+
+
+def test_o_icone_e_usado_quando_nao_ha_botao_de_texto(monkeypatch):
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+    quadro = _QuadroComIcone()
+    relato = dcp.mostrar_todos_os_movimentos(quadro, _Guarda(), segundos=4)
+    assert quadro.botao.cliques == 1
+    assert relato["como"] == "icone da barra de ferramentas"
+
+
+def test_o_total_declarado_pela_tela_e_lido_e_comparado(monkeypatch):
+    """Sem perguntar quantos existem, 'li 50' e 'havia 50' sao a mesma frase,
+    e truncamento nao tem como se denunciar."""
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+    relato = dcp.mostrar_todos_os_movimentos(_QuadroComIcone(), _Guarda(),
+                                             segundos=4)
+    assert relato["declarado"] == 52
+    assert "FALTAM 2" in relato["situacao"]
+
+
+def test_sem_botao_e_sem_icone_o_recado_proibe_a_conclusao_errada(monkeypatch):
+    """Era essa conclusao, em 27/10/2026, que escondeu 52 movimentos."""
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+    relato = dcp.mostrar_todos_os_movimentos(
+        _QuadroComIcone(com_icone=False), _Guarda(), segundos=2)
+    assert "pode estar incompleto" in relato["situacao"]
+    assert "nao conclua que a tela nao tem historico" in relato["situacao"]
+    assert "--gravar-telas" in relato["situacao"]
+
+
+def test_o_recado_antigo_de_historico_completo_nao_existe_mais():
+    """`nao precisa existir` dizia ao advogado que o historico estava
+    completo quando 52 movimentos estavam escondidos. Nao pode voltar."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    fonte = inspect.getsource(dcp.mostrar_todos_os_movimentos)
+    assert "nao precisa existir" not in fonte
+
+
+def test_o_total_declarado_sai_de_varias_redacoes():
+    from justica_mcp.dcp import TOTAL_DECLARADO
+
+    for texto, esperado in [
+        ("Relação de 1 até 50 de 52 movimentos", "52"),
+        ("relacao de 51 ate 52 de 52 movimentos", "52"),
+        ("de 7 movimentos", "7"),
+    ]:
+        assert TOTAL_DECLARADO.search(texto).group(1) == esperado
+    assert TOTAL_DECLARADO.search("nenhum movimento") is None

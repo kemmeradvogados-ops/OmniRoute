@@ -12,6 +12,7 @@ isso tudo aqui mira em rotulo e em texto exato, nunca em identificador.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 # Rotulo acessivel do botao da barra, lido na dica da tela em 06/10/2026.
@@ -4875,6 +4876,64 @@ def extrair(quadro: Any) -> dict:
 # Mandados. O resto do historico esta atras deste botao.
 BOTAO_TODOS_OS_MOVIMENTOS = "Todos Os Movimentos"
 
+# O MESMO COMANDO, NO SEGUNDO GRAU, E UMA IMAGEM.
+#
+# Lido na tela real em 28/10/2026, na barra de ferramentas de
+# `ejud/ConsultaProcesso.aspx`. Oito icones, de trinta em trinta pixels, cada
+# um uma `<img class=margin-icos>` dentro de um link:
+#
+#   voltar | avancar | imprimir | nova busca |
+#   LISTAR TODOS OS MOVIMENTOS | diminuir fonte | normalizar | aumentar
+#
+# O link dos movimentos e o unico dos oito SEM `href`: age por script. Os
+# outros sete trazem `history.go(-1)`, `window.print()`, `novaBusca()` e as
+# tres de tamanho de fonte.
+#
+# ISTO E O CONSERTO DO PIOR ERRO DESTE PROJETO ATE AQUI. Em 27/10/2026 o
+# programa procurou o comando por TEXTO, nao achou, e eu escrevi no codigo e
+# no commit que "essa tela nao tem historico de movimentacoes". A ferramenta
+# passou a dizer ao advogado que o botao "nao existe nesta tela, e nao precisa
+# existir". A tela tem 52 movimentos, e o advogado os viu com um clique.
+#
+# Duas licoes, as duas caras:
+#
+#   1. O mesmo comando se apresenta de formas diferentes em telas do mesmo
+#      portal. Procurar so por texto encontra so quem e texto.
+#   2. Eu procurei na tela gravada por "movimenta" e recebi zero. A palavra na
+#      tela e "Movimentos", e "movimentos" nao contem "movimenta". Li o zero
+#      como ausencia, quando era busca mal feita. Zero de uma busca so vale
+#      contra o termo que foi buscado.
+IMAGEM_DE_TODOS_OS_MOVIMENTOS = 'img[title="Listar Todos os Movimentos"]'
+
+# ONDE A LISTA APARECE. Lido na mesma tela: um `span#Movimentos` dentro de um
+# `td`, presente no documento e SEM CAIXA antes do clique, isto e, vazio. E a
+# prova de chegada da lista, pela mesma razao que a tela do processo tem a
+# sua: contagem que cresce pode crescer por outro motivo; conteudo neste
+# elemento, nao.
+MARCA_DOS_MOVIMENTOS = "#Movimentos"
+
+# Quantos a tela DIZ que existem: "Relacao de 1 ate 50 de 52 movimentos".
+# Sem perguntar isso, "li 50" e "havia 50" sao a mesma frase, e truncamento
+# nao tem como se denunciar. A mesma licao ja esta escrita neste arquivo para
+# o paginador do primeiro grau, e foi escrita porque custou caro la.
+TOTAL_DECLARADO = re.compile(
+    r"de\s+(\d+)\s+movimentos", re.IGNORECASE)
+
+
+def total_de_movimentos_declarado(quadro: Any) -> Optional[int]:
+    """Quantos movimentos a tela declara ter, ou None quando nao declara."""
+    try:
+        texto = quadro.inner_text("body")
+    except Exception:
+        return None
+    achado = TOTAL_DECLARADO.search(texto or "")
+    if not achado:
+        return None
+    try:
+        return int(achado.group(1))
+    except (TypeError, ValueError):
+        return None
+
 # Quantas leituras seguidas sem crescer bastam para dizer que a tela parou de
 # montar. Tres segundos parados, com leitura a cada segundo.
 LEITURAS_ESTAVEIS = 3
@@ -4899,26 +4958,30 @@ def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
 
     leitura = extrair(quadro)
     antes = len(leitura.get("movimentacoes") or [])
+
+    # DOIS JEITOS DE PEDIR A MESMA COISA, e o programa conhecia um so.
+    #
+    # Primeiro grau: botao com o TEXTO "Todos Os Movimentos".
+    # Segundo grau: icone com o TITULO "Listar Todos os Movimentos".
+    #
+    # Ate 28/10/2026 so o primeiro era procurado. No segundo grau a busca
+    # falhava, e eu li a falha como "esta tela nao tem historico". Tem 52.
     alvo = f"texto={BOTAO_TODOS_OS_MOVIMENTOS}"
     botao = elemento_visivel(quadro, alvo)
+    como = "botao de texto"
     if botao is None:
-        # Botao ausente nao e, por si, historico incompleto. A tela do segundo
-        # grau nao tem este botao e nunca teve: ela mostra a lista de
-        # documentos inteira de uma vez. Dizer "pode estar incompleto" ali
-        # manda o advogado procurar andamento que nao falta, que e o avesso do
-        # que este aviso existe para fazer.
-        lidas = ((leitura.get("estrutura") or {}).get("colunas_dos_documentos")
-                 or [])
-        if lidas:
-            quantas = sum(tab.get("linhas_lidas") or 0 for tab in lidas)
-            return {"situacao": (
-                        f"o botao {BOTAO_TODOS_OS_MOVIMENTOS!r} nao existe "
-                        "nesta tela, e nao precisa existir: o historico veio "
-                        f"da tabela de documentos, com {quantas} linha(s). "
-                        "Confira a contagem contra a tela."),
-                    "antes": antes, "depois": antes}
-        return {"situacao": f"o botao {BOTAO_TODOS_OS_MOVIMENTOS!r} nao esta na "
-                            "tela; o historico pode estar incompleto",
+        alvo = IMAGEM_DE_TODOS_OS_MOVIMENTOS
+        botao = elemento_visivel(quadro, alvo)
+        como = "icone da barra de ferramentas"
+    if botao is None:
+        return {"situacao": (
+                    f"nao ha, nesta tela, nem o botao "
+                    f"{BOTAO_TODOS_OS_MOVIMENTOS!r} nem o icone "
+                    f"{IMAGEM_DE_TODOS_OS_MOVIMENTOS}. O historico pode estar "
+                    "incompleto: nao conclua que a tela nao tem historico, "
+                    "porque foi essa conclusao, em 27/10/2026, que escondeu "
+                    "52 movimentos do advogado. Grave a tela com "
+                    "--gravar-telas e procure o comando nela."),
                 "antes": antes, "depois": antes}
 
     endereco = getattr(quadro, "url", "") or ""
@@ -4956,15 +5019,47 @@ def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
             if estaveis >= LEITURAS_ESTAVEIS:
                 break
 
+    # GRAVAR A TELA DEPOIS DO CLIQUE, sempre, e nao so quando da certo.
+    #
+    # O que aparece depois do clique nao existia antes dele: a lista, o texto
+    # "Relacao de 1 ate 50 de 52 movimentos" e o controle de pagina. Nenhum
+    # deles esta na tela gravada da chegada. Sem esta gravacao, descobrir como
+    # paginar custa outra autenticacao, e foi assim que o dia 27/10/2026
+    # terminou sem resposta.
+    try:
+        from .telas import gravar_a_tela
+
+        gravar_a_tela(quadro, "depois-de-listar-os-movimentos")
+    except Exception:
+        pass
+
+    # QUANTOS A TELA DIZ QUE EXISTEM. Sem perguntar, "li 50" e "havia 50" sao
+    # a mesma frase.
+    declarado = total_de_movimentos_declarado(quadro)
+    conferencia = ""
+    if declarado is not None:
+        conferencia = f"; a tela declara {declarado} movimento(s)"
+        if depois < declarado:
+            conferencia += (f", e foram lidos {depois}: FALTAM "
+                            f"{declarado - depois}, provavelmente nas paginas "
+                            "seguintes")
+        elif depois > declarado:
+            conferencia += (f", e foram lidos {depois}: a leitura trouxe mais "
+                            "do que a tela declara, entao algo que nao e "
+                            "movimento esta entrando")
+
     if depois > antes:
         parou = ("a contagem parou de crescer" if estaveis >= LEITURAS_ESTAVEIS
                  else f"o prazo de {segundos}s acabou com ela ainda crescendo")
-        return {"situacao": f"clicado, {antes} -> {depois} movimentacao(oes), "
-                            f"{parou}",
-                "antes": antes, "depois": depois}
-    return {"situacao": f"clicado, e a contagem nao mudou ({antes}). O "
-                        "historico pode estar incompleto",
-            "antes": antes, "depois": depois}
+        return {"situacao": f"clicado pelo {como}, {antes} -> {depois} "
+                            f"movimentacao(oes), {parou}{conferencia}",
+                "antes": antes, "depois": depois, "declarado": declarado,
+                "como": como}
+    return {"situacao": f"clicado pelo {como}, e a contagem nao mudou "
+                        f"({antes}). O historico pode estar incompleto"
+                        f"{conferencia}",
+            "antes": antes, "depois": depois, "declarado": declarado,
+            "como": como}
 
 
 # A paginacao dos movimentos, lida na estrutura real em 13/10/2026.

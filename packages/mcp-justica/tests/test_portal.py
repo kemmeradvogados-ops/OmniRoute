@@ -6513,7 +6513,9 @@ def test_a_consulta_do_dcp_grava_o_arquivo_e_o_snapshot(monkeypatch, tmp_path):
     assert dados["totais"] == {"principais": 1, "partes": 0, "mandados": 0,
                                "movimentacoes": 2, "documentos_listados": 0}
     # Sem o botao na tela falsa, a leitura segue e avisa.
-    assert "nao esta na tela" in dados["leitura"]["todos_os_movimentos"]
+    # A redacao mudou em 28/10/2026: a recusa passou a nomear as DUAS caras do
+    # comando, o botao de texto e o icone da barra.
+    assert "nem o icone" in dados["leitura"]["todos_os_movimentos"]
     gravado = json.loads(
         __import__("pathlib").Path(dados["arquivo"]).read_text(encoding="utf-8"))
     assert gravado["principais"]["Classe"] == "Procedimento Comum Civel"
