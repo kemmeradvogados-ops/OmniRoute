@@ -10300,14 +10300,23 @@ class _QuadroComLotes:
     def _ate(self):
         return min(self.total, self.por_lote * self.lotes_pedidos)
 
+    # O QUE NAO MUDA DE LOTE PARA LOTE. Na tela real sao a fase atual, a
+    # sessao de julgamento e os oito documentos: dez registros que a leitura
+    # devolve em TODA leitura, e que somar de novo a cada lote inflou o
+    # historico de 52 para 72 em 28/10/2026.
+    PERMANENTES = [["15/10/2026", "", "fase atual", "capa"],
+                   ["29/09/2026", "", "sessao de julgamento", "capa"],
+                   ["02/10/2026", "", "Integra do(a) Acordao", "documentos"]]
+
     def _desta_vez(self):
         # Acrescentando, a tela mostra do primeiro ao ultimo carregado.
         # Trocando, mostra so o lote da vez: o lote 2 de 52, com 50 por lote,
         # tem DOIS itens, e nao cinquenta.
         fim = self._ate()
         inicio = 0 if self.acrescenta else (self.lotes_pedidos - 1) * self.por_lote
-        return [[f"{(i % 28) + 1:02d}/10/2026", "", f"ato numero {i}", "teste"]
-                for i in range(inicio, fim)]
+        do_lote = [[f"{(i % 28) + 1:02d}/10/2026", "", f"ato numero {i}", "teste"]
+                   for i in range(inicio, fim)]
+        return [list(p) for p in self.PERMANENTES] + do_lote
 
     def evaluate(self, _js):
         return {"pares": [], "partes": [], "tabelas": [], "familias": {},
@@ -10347,14 +10356,26 @@ def _percorrer(quadro, monkeypatch):
 
 def test_a_tela_que_acrescenta_nao_duplica(monkeypatch):
     relato = _percorrer(_QuadroComLotes(acrescenta=True), monkeypatch)
-    assert len(relato["movimentacoes"]) == 52
+    # 52 do historico mais os tres permanentes, uma vez so.
+    assert len(relato["movimentacoes"]) == 55
     assert "acrescenta ao que ja estava" in relato["situacao"]
 
 
 def test_a_tela_que_troca_nao_perde(monkeypatch):
     relato = _percorrer(_QuadroComLotes(acrescenta=False), monkeypatch)
-    assert len(relato["movimentacoes"]) == 52
+    assert len(relato["movimentacoes"]) == 55
     assert "troca a lista a cada lote" in relato["situacao"]
+
+
+def test_o_que_nao_muda_de_lote_nao_entra_duas_vezes(monkeypatch):
+    """Em 28/10/2026 a leitura de cada lote trouxe, junto com os movimentos
+    daquele lote, a capa, a fase atual, a sessao e os oito documentos. Somar a
+    leitura nova inteira inflou o historico de 52 para 72."""
+    relato = _percorrer(_QuadroComLotes(acrescenta=False), monkeypatch)
+    descricoes = [m["descricao"] for m in relato["movimentacoes"]]
+    for permanente in ("fase atual", "sessao de julgamento",
+                       "Integra do(a) Acordao"):
+        assert descricoes.count(permanente) == 1, permanente
 
 
 def test_os_dois_jeitos_dao_o_mesmo_total(monkeypatch):
@@ -10362,21 +10383,23 @@ def test_os_dois_jeitos_dao_o_mesmo_total(monkeypatch):
     acrescenta = _percorrer(_QuadroComLotes(acrescenta=True), monkeypatch)
     troca = _percorrer(_QuadroComLotes(acrescenta=False), monkeypatch)
     assert (len(acrescenta["movimentacoes"])
-            == len(troca["movimentacoes"]) == 52)
+            == len(troca["movimentacoes"]) == 55)
 
 
 def test_o_total_declarado_e_conferido_no_fim(monkeypatch):
     relato = _percorrer(_QuadroComLotes(acrescenta=True), monkeypatch)
     assert relato["declarado"] == 52
-    assert "e e esse o numero juntado" in relato["situacao"]
-    assert "CONFIRA" not in relato["situacao"]
+    # 55 juntados contra 52 declarados: o aviso DEVE sair. Os tres a mais sao
+    # a capa e os documentos, que nao sao movimento do historico, e e por isso
+    # que a conferencia pede olho humano em vez de decidir sozinha.
+    assert "CONFIRA" in relato["situacao"]
 
 
 def test_sem_icone_de_proximo_lote_nao_ha_o_que_percorrer(monkeypatch):
     quadro = _QuadroComLotes(acrescenta=True, total=10, por_lote=50)
     relato = _percorrer(quadro, monkeypatch)
     assert relato["paginas"] == 1
-    assert len(relato["movimentacoes"]) == 10
+    assert len(relato["movimentacoes"]) == 13
 
 
 def test_a_entrada_escolhe_a_paginacao_pelo_que_a_tela_tem(monkeypatch):
@@ -10389,7 +10412,7 @@ def test_a_entrada_escolhe_a_paginacao_pelo_que_a_tela_tem(monkeypatch):
     relato = dcp.percorrer_as_paginas_de_movimentos(
         _QuadroComLotes(acrescenta=True), _Guarda(), segundos=10)
     assert "lote(s) de ate 50" in relato["situacao"]
-    assert len(relato["movimentacoes"]) == 52
+    assert len(relato["movimentacoes"]) == 55
 
 
 def test_o_seletor_do_lote_nao_casa_com_os_anteriores():

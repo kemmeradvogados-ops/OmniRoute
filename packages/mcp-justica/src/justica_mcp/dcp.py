@@ -5310,7 +5310,14 @@ def percorrer_os_lotes_de_50(quadro: Any, guarda: Any, segundos: int = 45,
         seletores_clicaveis=(SELETOR_DO_PROXIMO_LOTE,),
     ))
 
+    # DUAS LISTAS, e confundi-las foi o defeito da primeira versao.
+    #
+    # `acumulado` e tudo o que ja se juntou. `na_tela` e o que a tela mostrava
+    # ANTES deste clique, e e so contra ele que a leitura nova se compara:
+    # comparar contra o acumulado faria a conta errar do segundo lote em
+    # diante, quando os dois ja sao listas diferentes.
     acumulado = ler()
+    na_tela = list(acumulado)
     lotes = 1
     como = "indeterminado"
     parou_por = "nao havia mais lote"
@@ -5318,7 +5325,7 @@ def percorrer_os_lotes_de_50(quadro: Any, guarda: Any, segundos: int = 45,
         botao = elemento_do_proximo_lote(quadro)
         if botao is None:
             break
-        antes = _assinatura_da_pagina(acumulado)
+        antes = _assinatura_da_pagina(na_tela)
         guarda.pode_executar(Acao.CLICAR, SELETOR_DO_PROXIMO_LOTE,
                              url=endereco)
         try:
@@ -5362,9 +5369,30 @@ def percorrer_os_lotes_de_50(quadro: Any, guarda: Any, segundos: int = 45,
             acumulado = nova
             como = "a tela acrescenta ao que ja estava"
         else:
-            # O portal TROCOU: a anterior saiu da tela e precisa ser guardada.
-            acumulado = acumulado + nova
+            # O portal TROCOU a lista, mas NAO a tela inteira.
+            #
+            # Medido em 28/10/2026: a leitura de cada lote traz, junto com os
+            # movimentos daquele lote, o que nao muda de lote para lote, que
+            # nesta tela sao a capa, a fase atual, a sessao de julgamento e os
+            # oito documentos. Somar a leitura nova inteira entrava com esses
+            # permanentes outra vez: 60 no primeiro lote mais 12 no segundo
+            # deram 72, contra 52 declarados, e dez deles eram repeticao.
+            #
+            # Entra so o que a leitura nova tem A MAIS que a anterior, contado
+            # por multiplicidade: um andamento que aparece duas vezes na tela
+            # nova e so uma na anterior entra uma vez, e nao zero.
+            restante = list(antes)
+            novos = []
+            for movimento in nova:
+                chave = (movimento.get("data"), movimento.get("hora"),
+                         movimento.get("descricao"))
+                if chave in restante:
+                    restante.remove(chave)
+                    continue
+                novos.append(movimento)
+            acumulado = acumulado + novos
             como = "a tela troca a lista a cada lote"
+        na_tela = list(nova)
         lotes += 1
 
     if lotes >= teto:
