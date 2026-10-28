@@ -10217,3 +10217,56 @@ def test_a_descricao_do_quadro_nomeia_o_quadro_escolhido():
     pagina = _PaginaComQuadroTardio(depois_de=0)
     quadro = quadro_da_consulta(pagina, segundos=0)
     assert "consultaprocessual" in descrever_o_quadro(pagina, quadro)
+
+
+# ---------------------------------------------------------------------------
+# Tabela dentro de tabela nao conta duas vezes
+#
+# Medido em 28/10/2026, na primeira consulta que chegou a listar os
+# movimentos: a tela declarava 52 e a leitura devolveu 110, quase o dobro.
+# `tabela.querySelectorAll('tr')` numa tabela externa devolve tambem as linhas
+# das tabelas aninhadas, e esta pagina e ASP.NET antigo, onde isso e a norma.
+#
+# Quem denunciou foi a conferencia contra o total declarado, escrita horas
+# antes. Sem ela, 110 passaria por historico completo.
+# ---------------------------------------------------------------------------
+
+TELA_COM_TABELA_ANINHADA = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"></head><body>
+<table><tr><td>
+  <table>
+    <tr><td>Data do Movimento:</td><td>15/10/2026</td></tr>
+    <tr><td>Tipo:</td><td>Juntada de Peticao</td></tr>
+    <tr><td>Data do Movimento:</td><td>02/10/2026</td></tr>
+    <tr><td>Tipo:</td><td>Acordao</td></tr>
+  </table>
+</td></tr></table>
+</body></html>"""
+
+
+@semNavegador
+def test_movimento_em_tabela_aninhada_conta_uma_vez_so():
+    dados = _ler_em_navegador(TELA_COM_TABELA_ANINHADA)
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 2, [m["data"] for m in movimentos]
+    assert [m["data"] for m in movimentos] == ["15/10/2026", "02/10/2026"]
+    assert dados["estrutura"]["fases_da_capa"]["blocos"] == 2
+
+
+TELA_COM_DOCUMENTO_ANINHADO = """<!doctype html><html lang="pt-BR">
+<head><meta charset="utf-8"></head><body>
+<table><tr><td>
+  <table><tr><td>
+    <a href="/ejud/d.aspx?x=1">Integra do(a) Acordao</a> 02/10/2026
+  </td></tr></table>
+</td></tr></table>
+</body></html>"""
+
+
+@semNavegador
+def test_documento_em_tabela_aninhada_conta_uma_vez_so():
+    dados = _ler_em_navegador(TELA_COM_DOCUMENTO_ANINHADO)
+    assert len(dados["movimentacoes"]) == 1
+    assert dados["totais"]["documentos_listados"] == 1
+    lidas = dados["estrutura"]["colunas_dos_documentos"]
+    assert sum(tab["documentos"] for tab in lidas) == 1

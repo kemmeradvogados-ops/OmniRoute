@@ -4021,8 +4021,12 @@ JS_DA_TELA_DO_PROCESSO = r"""
   for (const tabela of tabelasDeDocumento) {
     const formaDaColuna = {};
     const deOndeVeioAData = {antes: 0, depois: 0, celula_irma: 0, nao_achada: 0};
+    // Mesma regra da quinta passada: so o que e DESTA tabela. A ancora ja
+    // entrou pela tabela mais interna que a contem, entao deixar a externa
+    // processa-la de novo duplicaria o documento.
     const ancoras = Array.from(tabela.querySelectorAll('a'))
-      .filter(a => ehMarcaDeDocumento(a.innerText));
+      .filter(a => ehMarcaDeDocumento(a.innerText)
+                   && a.closest('table') === tabela);
 
     for (const ancora of ancoras) {
       const rotulo = corta(ancora.innerText, 120);
@@ -4077,6 +4081,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
     // andamento sem documento anexado existe, e ele entra tambem.
     let linhasSemAncora = 0;
     for (const linha of tabela.querySelectorAll('tr')) {
+      if (linha.closest('table') !== tabela) continue;
       if (linha.querySelector('tr')) continue;
       const celulas = Array.from(linha.children);
       if (celulas.length === 0) continue;
@@ -4192,9 +4197,23 @@ JS_DA_TELA_DO_PROCESSO = r"""
     return {texto: pedacos.join(', '), peticao: peticao};
   };
 
+  // SO AS LINHAS DESTA TABELA, e nao as das tabelas de dentro dela.
+  //
+  // `tabela.querySelectorAll('tr')` numa tabela externa devolve TAMBEM as
+  // linhas das tabelas aninhadas, e esta pagina e ASP.NET antigo, onde tabela
+  // dentro de tabela e a norma. O filtro anterior descartava linha que CONTEM
+  // outra linha, que e coisa diferente de linha que PERTENCE a outra tabela.
+  //
+  // Medido em 28/10/2026, na primeira consulta que chegou a listar os
+  // movimentos: a tela declarava 52 e a leitura devolveu 110, quase o dobro.
+  // Cada movimento era lido duas vezes, uma pela tabela de dentro e outra
+  // pela de fora. Quem denunciou foi a conferencia contra o total declarado,
+  // escrita horas antes: sem ela, 110 passaria por historico completo.
+  const linhasProprias = (tabela) => Array.from(tabela.querySelectorAll('tr'))
+    .filter(l => l.closest('table') === tabela);
+
   for (const tabela of document.querySelectorAll('table')) {
-    const linhas = Array.from(tabela.querySelectorAll('tr'))
-      .filter(l => !l.querySelector('tr'));
+    const linhas = linhasProprias(tabela);
     for (let i = 0; i < linhas.length; i++) {
       if (rotuloDaLinha(linhas[i]) !== ROTULO_DA_DATA_DO_MOVIMENTO) continue;
       relatoDasFases.blocos += 1;
