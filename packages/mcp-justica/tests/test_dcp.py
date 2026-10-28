@@ -10270,3 +10270,133 @@ def test_documento_em_tabela_aninhada_conta_uma_vez_so():
     assert dados["totais"]["documentos_listados"] == 1
     lidas = dados["estrutura"]["colunas_dos_documentos"]
     assert sum(tab["documentos"] for tab in lidas) == 1
+
+
+# ---------------------------------------------------------------------------
+# A paginacao do segundo grau: "proximos 50 movimentos"
+#
+# Lida na tela real em 28/10/2026, na gravacao feita logo depois do clique que
+# lista os movimentos:
+#
+#   669  621  |  proximos 50 movimentos  |  margin-icos
+#
+# Nada a ver com os botoes numerados do primeiro grau. E NAO SE SABE se o
+# portal acrescenta ou troca a lista, entao o programa mede, a cada lote.
+# ---------------------------------------------------------------------------
+
+class _QuadroComLotes:
+    """Um quadro que entrega 50 e depois mais 2, de um jeito ou de outro."""
+
+    url = "https://www3.tjrj.jus.br/ejud/ConsultaProcesso.aspx"
+
+    def __init__(self, acrescenta: bool, total=52, por_lote=50):
+        self.acrescenta = acrescenta
+        self.total = total
+        self.por_lote = por_lote
+        self.lotes_pedidos = 1
+        self.botao = _BotaoFalso()
+        self.cliques_vistos = 0
+
+    def _ate(self):
+        return min(self.total, self.por_lote * self.lotes_pedidos)
+
+    def _desta_vez(self):
+        # Acrescentando, a tela mostra do primeiro ao ultimo carregado.
+        # Trocando, mostra so o lote da vez: o lote 2 de 52, com 50 por lote,
+        # tem DOIS itens, e nao cinquenta.
+        fim = self._ate()
+        inicio = 0 if self.acrescenta else (self.lotes_pedidos - 1) * self.por_lote
+        return [[f"{(i % 28) + 1:02d}/10/2026", "", f"ato numero {i}", "teste"]
+                for i in range(inicio, fim)]
+
+    def evaluate(self, _js):
+        return {"pares": [], "partes": [], "tabelas": [], "familias": {},
+                "rotulosCandidatos": [], "secoes": [], "botoes": [],
+                "diagnostico": {}, "caixasDeMovimentacao": [],
+                "movimentacoes": self._desta_vez(),
+                "movimentosDoComponente": []}
+
+    def query_selector(self, seletor):
+        from justica_mcp.dcp import SELETOR_DO_PROXIMO_LOTE
+
+        if seletor != SELETOR_DO_PROXIMO_LOTE:
+            return None
+        return self.botao if self._ate() < self.total else None
+
+    def query_selector_all(self, seletor):
+        um = self.query_selector(seletor)
+        return [um] if um is not None else []
+
+    def inner_text(self, _s):
+        return f"Relacao de 1 ate {self._ate()} de {self.total} movimentos"
+
+    def wait_for_timeout(self, _ms):
+        # O clique so vira lote novo na espera seguinte, como numa tela real.
+        if self.botao.cliques > self.cliques_vistos:
+            self.cliques_vistos = self.botao.cliques
+            self.lotes_pedidos += 1
+
+
+def _percorrer(quadro, monkeypatch):
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+    return dcp.percorrer_os_lotes_de_50(quadro, _Guarda(), segundos=10)
+
+
+def test_a_tela_que_acrescenta_nao_duplica(monkeypatch):
+    relato = _percorrer(_QuadroComLotes(acrescenta=True), monkeypatch)
+    assert len(relato["movimentacoes"]) == 52
+    assert "acrescenta ao que ja estava" in relato["situacao"]
+
+
+def test_a_tela_que_troca_nao_perde(monkeypatch):
+    relato = _percorrer(_QuadroComLotes(acrescenta=False), monkeypatch)
+    assert len(relato["movimentacoes"]) == 52
+    assert "troca a lista a cada lote" in relato["situacao"]
+
+
+def test_os_dois_jeitos_dao_o_mesmo_total(monkeypatch):
+    """E o ponto: nao supor qual dos dois o portal faz."""
+    acrescenta = _percorrer(_QuadroComLotes(acrescenta=True), monkeypatch)
+    troca = _percorrer(_QuadroComLotes(acrescenta=False), monkeypatch)
+    assert (len(acrescenta["movimentacoes"])
+            == len(troca["movimentacoes"]) == 52)
+
+
+def test_o_total_declarado_e_conferido_no_fim(monkeypatch):
+    relato = _percorrer(_QuadroComLotes(acrescenta=True), monkeypatch)
+    assert relato["declarado"] == 52
+    assert "e e esse o numero juntado" in relato["situacao"]
+    assert "CONFIRA" not in relato["situacao"]
+
+
+def test_sem_icone_de_proximo_lote_nao_ha_o_que_percorrer(monkeypatch):
+    quadro = _QuadroComLotes(acrescenta=True, total=10, por_lote=50)
+    relato = _percorrer(quadro, monkeypatch)
+    assert relato["paginas"] == 1
+    assert len(relato["movimentacoes"]) == 10
+
+
+def test_a_entrada_escolhe_a_paginacao_pelo_que_a_tela_tem(monkeypatch):
+    """Duas paginacoes no mesmo portal: botoes numerados no primeiro grau,
+    icone de lote no segundo. Quem escolhe e a tela, nao o grau."""
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+    relato = dcp.percorrer_as_paginas_de_movimentos(
+        _QuadroComLotes(acrescenta=True), _Guarda(), segundos=10)
+    assert "lote(s) de ate 50" in relato["situacao"]
+    assert len(relato["movimentacoes"]) == 52
+
+
+def test_o_seletor_do_lote_nao_casa_com_os_anteriores():
+    """`anteriores 50 movimentos` e justamente o botao que nao se quer."""
+    from justica_mcp.dcp import SELETOR_DO_PROXIMO_LOTE
+
+    assert "ximos 50 movimentos" in SELETOR_DO_PROXIMO_LOTE
+    assert "anteriores" not in SELETOR_DO_PROXIMO_LOTE
+    # Sem acento, para nao depender de como ele chega.
+    assert "ó" not in SELETOR_DO_PROXIMO_LOTE

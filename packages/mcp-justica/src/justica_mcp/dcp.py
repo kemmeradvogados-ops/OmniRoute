@@ -5254,6 +5254,142 @@ def relatar_o_paginador(estado: dict) -> str:
     return ", ".join(partes)
 
 
+# A PAGINACAO DO SEGUNDO GRAU, lida na tela real em 28/10/2026, na gravacao
+# feita logo depois do clique que lista os movimentos.
+#
+#   669  621  |  proximos 50 movimentos  |  margin-icos
+#
+# Um `<img class=margin-icos>` logo abaixo do bloco FASE ATUAL, ao lado do
+# texto "Relacao de 1 ate 50 de 52 movimentos". Nada a ver com os botoes
+# numerados `.p-paginator-page` do primeiro grau: sao duas paginacoes
+# diferentes no mesmo portal, como o comando de listar ja era um botao de
+# texto num grau e um icone no outro.
+#
+# O seletor NAO carrega o acento de "proximos", de proposito: casa por pedaco
+# do titulo. Assim nao depende de como o acento chega, e ainda assim nao casa
+# com um eventual "anteriores 50 movimentos", que e justamente o botao que
+# nao se quer clicar.
+SELETOR_DO_PROXIMO_LOTE = 'img[title*="ximos 50 movimentos"]'
+LOTE_DE_MOVIMENTOS = 50
+
+
+def elemento_do_proximo_lote(quadro: Any) -> Any:
+    """O icone que traz os proximos 50, ou None quando nao ha mais."""
+    from .portal import elemento_visivel
+
+    return elemento_visivel(quadro, SELETOR_DO_PROXIMO_LOTE)
+
+
+def percorrer_os_lotes_de_50(quadro: Any, guarda: Any, segundos: int = 45,
+                             teto: int = TETO_DE_PAGINAS) -> dict:
+    """Clica em "proximos 50 movimentos" ate acabar, e junta tudo.
+
+    NAO SE SUPOE AQUI SE O PORTAL ACRESCENTA OU TROCA A LISTA. Eu nao vi, e as
+    duas coisas sao possiveis: acrescentar e o comum em lista que cresce na
+    mesma pagina, trocar e o comum em paginacao. Supor errado custa metade do
+    historico num caso e o dobro dele no outro.
+
+    Entao o programa MEDE, a cada lote: se a lista nova COMECA com a lista
+    anterior inteira, o portal acrescentou, e a nova ja e o todo; se nao
+    comeca, o portal trocou, e a nova se soma a anterior. Qual dos dois
+    aconteceu fica dito no relato.
+    """
+    import time as _tempo
+
+    from .core.guarda_navegacao import Acao, Permissao
+    from .portal import permissao_efemera
+
+    def ler() -> list:
+        return list(extrair(quadro).get("movimentacoes") or [])
+
+    endereco = getattr(quadro, "url", "") or ""
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(endereco).padrao_url,
+        descricao="trazer os proximos 50 movimentos, somente leitura",
+        conferido_em="execucao atual",
+        seletores_clicaveis=(SELETOR_DO_PROXIMO_LOTE,),
+    ))
+
+    acumulado = ler()
+    lotes = 1
+    como = "indeterminado"
+    parou_por = "nao havia mais lote"
+    while lotes < teto:
+        botao = elemento_do_proximo_lote(quadro)
+        if botao is None:
+            break
+        antes = _assinatura_da_pagina(acumulado)
+        guarda.pode_executar(Acao.CLICAR, SELETOR_DO_PROXIMO_LOTE,
+                             url=endereco)
+        try:
+            clicar_com_jeito(botao)
+        except Exception:
+            parou_por = f"o lote {lotes + 1} nao aceitou o clique"
+            break
+
+        # Esperar a lista MUDAR e depois parar de mudar, como na outra
+        # paginacao: aceitar a primeira leitura diferente pega a tela no meio
+        # da montagem.
+        limite = _tempo.monotonic() + max(1, segundos)
+        ultima: Optional[list] = None
+        estaveis = 0
+        nova: Optional[list] = None
+        while _tempo.monotonic() < limite:
+            try:
+                quadro.wait_for_timeout(1000)
+            except Exception:
+                _tempo.sleep(1)
+            lida = ler()
+            marca = _assinatura_da_pagina(lida)
+            if marca == antes:
+                continue
+            if ultima is not None and marca == _assinatura_da_pagina(ultima):
+                estaveis += 1
+                if estaveis >= LEITURAS_ESTAVEIS:
+                    nova = lida
+                    break
+            else:
+                ultima = lida
+                estaveis = 0
+        if nova is None:
+            parou_por = (f"o lote {lotes + 1} nao chegou em {segundos}s; o "
+                         "historico pode estar incompleto")
+            break
+
+        marca_nova = _assinatura_da_pagina(nova)
+        if marca_nova[:len(antes)] == antes:
+            # O portal ACRESCENTOU: a lista nova ja contem a anterior.
+            acumulado = nova
+            como = "a tela acrescenta ao que ja estava"
+        else:
+            # O portal TROCOU: a anterior saiu da tela e precisa ser guardada.
+            acumulado = acumulado + nova
+            como = "a tela troca a lista a cada lote"
+        lotes += 1
+
+    if lotes >= teto:
+        parou_por = f"o teto de {teto} lotes foi atingido"
+
+    declarado = total_de_movimentos_declarado(quadro)
+    conferencia = ""
+    if declarado is not None:
+        conferencia = f"; a tela declara {declarado}"
+        if len(acumulado) != declarado:
+            conferencia += f", e foram juntados {len(acumulado)}: CONFIRA"
+        else:
+            conferencia += ", e e esse o numero juntado"
+
+    from .telas import gravar_a_tela
+
+    gravar_a_tela(quadro, "lotes-de-movimentos-percorridos")
+
+    return {"situacao": (f"{lotes} lote(s) de ate {LOTE_DE_MOVIMENTOS}, "
+                         f"{len(acumulado)} movimentacao(oes), {parou_por}; "
+                         f"{como}{conferencia}"),
+            "paginas": lotes, "movimentacoes": acumulado,
+            "declarado": declarado}
+
+
 def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
                                        segundos: int = 45,
                                        teto: int = TETO_DE_PAGINAS) -> dict:
@@ -5282,6 +5418,10 @@ def percorrer_as_paginas_de_movimentos(quadro: Any, guarda: Any,
 
     paginas = _paginas_na_tela(quadro)
     if not paginas:
+        # A outra paginacao, a do segundo grau: um icone "proximos 50
+        # movimentos" em vez dos botoes numerados do primeiro.
+        if elemento_do_proximo_lote(quadro) is not None:
+            return percorrer_os_lotes_de_50(quadro, guarda, segundos, teto)
         return {"situacao": "a tela nao tem paginacao de movimentos",
                 "paginas": 1, "movimentacoes": acumulado}
 
