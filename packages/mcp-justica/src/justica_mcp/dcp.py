@@ -2596,21 +2596,71 @@ def partes_do_numero(numero: Any) -> tuple[str, str]:
     return inicio, numero.origem
 
 
-def quadro_da_consulta(pagina: Any) -> Any:
+# Quanto esperar pelo QUADRO aparecer. Ele nasce junto com a tela, por script,
+# e nao esta la no instante em que o endereco muda.
+ESPERA_PELO_QUADRO = 15
+
+
+def quadro_da_consulta(pagina: Any, segundos: int = ESPERA_PELO_QUADRO) -> Any:
     """O quadro embutido onde o formulario vive, ou a propria pagina.
 
-    Devolver a pagina quando nao ha quadro nao e desistir: a conferencia
-    seguinte procura os campos, e e ela quem para com uma mensagem que diz o
-    que achou.
+    ESPERA o quadro aparecer, e nao olha uma vez so.
+
+    Em 28/10/2026 a consulta parou dizendo "a tela da consulta nao tem
+    input[name=numeroProcesso]", e a tela gravada mostrava o quadro
+    `/consultaprocessual/#/consultaportal` presente, com 43 botoes dentro, e
+    nenhum deles do portal: so o widget de acessibilidade, que carrega antes.
+    O quadro existia; o aplicativo dentro dele ainda nao tinha montado.
+
+    Sem espera, esta funcao devolvia a PAGINA DE FORA, e os vinte segundos de
+    espera pelo campo corriam numa pagina que nunca teria o campo. A espera
+    estava certa; o lugar onde ela esperava, nao.
+
+    E a mesma licao que `esperar_elemento` ja carrega desde 06/10/2026,
+    "olhar uma vez so, logo apos chegar, cai nela", aplicada um nivel acima:
+    nao basta esperar o elemento montar, e preciso esperar o QUADRO existir
+    antes de decidir onde esperar.
+
+    Achando o quadro, devolve na hora: no caminho que da certo isto nao custa
+    nada. Devolver a pagina quando nao ha quadro nenhum continua nao sendo
+    desistir, e agora e depois de ter esperado.
     """
+    import time as _tempo
+
+    limite = _tempo.monotonic() + max(0, segundos)
+    while True:
+        try:
+            for quadro in list(pagina.frames or [])[1:]:
+                endereco = (quadro.url or "").lower()
+                if any(marca in endereco for marca in MARCAS_DO_QUADRO):
+                    return quadro
+        except Exception:
+            pass
+        if _tempo.monotonic() >= limite:
+            return pagina
+        try:
+            pagina.wait_for_timeout(500)
+        except Exception:
+            _tempo.sleep(0.5)
+
+
+def descrever_o_quadro(pagina: Any, quadro: Any) -> str:
+    """Onde a procura do formulario vai acontecer, dito em uma linha."""
+    if quadro is pagina:
+        achados = []
+        try:
+            achados = [q.url for q in list(pagina.frames or [])[1:] if q.url]
+        except Exception:
+            pass
+        if achados:
+            return ("na PAGINA DE FORA: nenhum dos quadros embutidos tem "
+                    "endereco de consulta. Os quadros na tela eram: "
+                    + "; ".join(sorted(set(achados))[:4]))
+        return "na PAGINA DE FORA: a tela nao tinha quadro embutido nenhum"
     try:
-        for quadro in list(pagina.frames or [])[1:]:
-            endereco = (quadro.url or "").lower()
-            if any(marca in endereco for marca in MARCAS_DO_QUADRO):
-                return quadro
+        return f"no quadro embutido {quadro.url}"
     except Exception:
-        pass
-    return pagina
+        return "no quadro embutido"
 
 
 # ---------------------------------------------------------------------------
@@ -2833,12 +2883,17 @@ def onde_estao_os_botoes(quadro: Any, texto: str) -> str:
     return "".join(partes)
 
 
-def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
+def conferir_forma_do_formulario(quadro: Any, segundos: int = 20,
+                                 onde: str = "") -> tuple:
     """Acha os dois campos e o botao, e recusa a tela que nao bate.
 
     Antes de digitar, nunca depois: campo que falta devolve busca vazia, e
     busca vazia e indistinguivel de processo inexistente para quem le o
     resultado.
+
+    `onde` diz em que documento a procura aconteceu, e entra na recusa. Sem
+    isso a mensagem acusa a tela de ter mudado quando o problema foi procurar
+    no lugar errado, que foi o que aconteceu em 28/10/2026.
     """
     from .portal import achar_opcional, elemento_visivel, esperar_elemento
 
@@ -2849,10 +2904,23 @@ def conferir_forma_do_formulario(quadro: Any, segundos: int = 20) -> tuple:
     faltando = [nome for nome, alvo in
                 ((CAMPO_INICIO, inicio), (CAMPO_ORIGEM, origem)) if alvo is None]
     if faltando:
+        # TRES CAUSAS, e ate 28/10/2026 a mensagem listava duas.
+        #
+        # A que faltava e a que de fato aconteceu: a procura correu no
+        # documento errado, ou a tela ainda estava montando. Omiti-la fez a
+        # mensagem acusar o portal de ter mudado, e mandou a investigacao para
+        # o lado errado durante uma consulta ja paga.
+        lugar = onde or "em lugar nao registrado"
         raise ConsultaIndisponivel(
             "A tela da consulta nao tem " + " nem ".join(faltando)
-            + ". Nada foi digitado. Ou a autenticacao parou antes dela, ou a "
-            "tela mudou desde 06/10/2026.")
+            + ". Nada foi digitado. A procura correu " + lugar
+            + f", esperando ate {segundos}s. Tres causas possiveis, nesta "
+            "ordem de probabilidade: a tela ainda estava montando quando o "
+            "prazo acabou; a procura correu no documento errado, e nao no "
+            "quadro embutido onde o formulario vive; ou a tela mudou desde "
+            "06/10/2026. A tela gravada diz qual das tres: se o quadro "
+            "aparece nela com o formulario dentro, foi uma das duas "
+            "primeiras.")
 
     pesquisar = elemento_visivel(quadro, f"texto={BOTAO_PESQUISAR}")
     if pesquisar is None:
@@ -2897,7 +2965,7 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
 
     quadro = quadro_da_consulta(pagina)
     inicio, origem, pesquisar, unica = conferir_forma_do_formulario(
-        quadro, segundos)
+        quadro, segundos, descrever_o_quadro(pagina, quadro))
 
     # A autorizacao so e escrita DEPOIS de a forma bater, e nomeia o que a
     # propria tela mostrou. Liberar antes seria liberar o que ainda nao se sabe

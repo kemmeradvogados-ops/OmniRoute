@@ -10100,3 +10100,120 @@ def test_o_total_declarado_sai_de_varias_redacoes():
     ]:
         assert TOTAL_DECLARADO.search(texto).group(1) == esperado
     assert TOTAL_DECLARADO.search("nenhum movimento") is None
+
+
+# ---------------------------------------------------------------------------
+# O quadro da consulta precisa ser ESPERADO, nao olhado uma vez
+#
+# Em 28/10/2026 uma consulta ja paga parou dizendo "a tela da consulta nao tem
+# input[name=numeroProcesso]". A tela gravada mostrava o quadro
+# `/consultaprocessual/#/consultaportal` presente, com 43 botoes dentro, e
+# nenhum deles do portal: so o widget de acessibilidade, que carrega antes.
+#
+# O quadro existia; o aplicativo dentro dele ainda nao tinha montado. Sem
+# espera, `quadro_da_consulta` devolvia a PAGINA DE FORA, e os vinte segundos
+# de espera pelo campo corriam numa pagina que nunca teria o campo.
+# ---------------------------------------------------------------------------
+
+class _QuadroQueAparece:
+    """Um quadro cujo endereco so fica pronto depois de N olhadas."""
+
+    def __init__(self, url, depois_de):
+        self._url = url
+        self.depois_de = depois_de
+        self.olhadas = 0
+
+    @property
+    def url(self):
+        self.olhadas += 1
+        return self._url if self.olhadas > self.depois_de else "about:blank"
+
+
+class _PaginaComQuadroTardio:
+    url = "https://www3.tjrj.jus.br/portalservicos/#/consproc/consultaportal"
+
+    def __init__(self, depois_de=3, url_do_quadro=None):
+        self.principal = _QuadroQueAparece("about:blank", 0)
+        self.embutido = _QuadroQueAparece(
+            url_do_quadro or "https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal",
+            depois_de)
+        self.esperas = 0
+
+    @property
+    def frames(self):
+        return [self.principal, self.embutido]
+
+    def wait_for_timeout(self, _ms):
+        self.esperas += 1
+
+
+def test_o_quadro_que_demora_a_aparecer_e_esperado():
+    from justica_mcp.dcp import quadro_da_consulta
+
+    pagina = _PaginaComQuadroTardio(depois_de=3)
+    achado = quadro_da_consulta(pagina, segundos=10)
+    assert achado is pagina.embutido
+    assert pagina.esperas >= 1
+
+
+def test_o_quadro_que_ja_esta_la_nao_custa_espera():
+    """No caminho que da certo isto nao pode custar nada."""
+    from justica_mcp.dcp import quadro_da_consulta
+
+    pagina = _PaginaComQuadroTardio(depois_de=0)
+    assert quadro_da_consulta(pagina, segundos=10) is pagina.embutido
+    assert pagina.esperas == 0
+
+
+def test_sem_quadro_nenhum_devolve_a_pagina_depois_de_esperar():
+    from justica_mcp.dcp import quadro_da_consulta
+
+    pagina = _PaginaComQuadroTardio(
+        depois_de=0, url_do_quadro="https://outro.exemplo/nada")
+    assert quadro_da_consulta(pagina, segundos=0) is pagina
+
+
+def test_a_recusa_diz_ONDE_a_procura_correu():
+    """Sem isso a mensagem acusa o portal de ter mudado quando o problema foi
+    procurar no lugar errado, e manda a investigacao para o lado errado
+    durante uma consulta ja paga."""
+    from justica_mcp.dcp import ConsultaIndisponivel, conferir_forma_do_formulario
+
+    class _Vazio:
+        def query_selector(self, _s):
+            return None
+
+        def query_selector_all(self, _s):
+            return []
+
+        def wait_for_timeout(self, _m):
+            pass
+
+    try:
+        conferir_forma_do_formulario(_Vazio(), 1, "no quadro embutido https://x/y")
+    except ConsultaIndisponivel as erro:
+        recado = str(erro)
+    assert "no quadro embutido https://x/y" in recado
+    assert "ainda estava montando" in recado
+    assert "documento errado" in recado
+    assert "mudou desde 06/10/2026" in recado
+
+
+def test_a_descricao_do_quadro_nomeia_os_quadros_que_havia():
+    """Quando cai na pagina de fora, o recado precisa dizer QUAIS quadros
+    estavam la: e por eles que se descobre se o endereco mudou."""
+    from justica_mcp.dcp import descrever_o_quadro
+
+    pagina = _PaginaComQuadroTardio(
+        depois_de=0, url_do_quadro="https://outro.exemplo/nada")
+    texto = descrever_o_quadro(pagina, pagina)
+    assert "PAGINA DE FORA" in texto
+    assert "outro.exemplo/nada" in texto
+
+
+def test_a_descricao_do_quadro_nomeia_o_quadro_escolhido():
+    from justica_mcp.dcp import descrever_o_quadro, quadro_da_consulta
+
+    pagina = _PaginaComQuadroTardio(depois_de=0)
+    quadro = quadro_da_consulta(pagina, segundos=0)
+    assert "consultaprocessual" in descrever_o_quadro(pagina, quadro)
