@@ -10423,3 +10423,99 @@ def test_o_seletor_do_lote_nao_casa_com_os_anteriores():
     assert "anteriores" not in SELETOR_DO_PROXIMO_LOTE
     # Sem acento, para nao depender de como ele chega.
     assert "ó" not in SELETOR_DO_PROXIMO_LOTE
+
+
+# ---------------------------------------------------------------------------
+# O rotulo que nomeia o movimento e `FASE:`, e nao `Tipo:`
+#
+# Lido na tela real em 28/10/2026, depois que a lista dos 52 foi aberta. O
+# vocabulario da tela cresceu de 27 para 30 rotulos, e os tres novos sao os da
+# lista: `FASE:`, `Destino:` e `Destinatario:`.
+#
+# O bloco FASE ATUAL usa `Tipo:` e `Subtipo:`, e era o unico que o leitor
+# conhecia. Por isso dois dos quatro blocos daquela leitura sairam com
+# "movimento cujo tipo a tela nao nomeou".
+# ---------------------------------------------------------------------------
+
+LISTA_DE_FASES = [
+    ("FASE ATUAL:", "Juntada de Peticao - Embargos de declaracao"),
+    ("Data do Movimento:", "15/10/2026 16:33"),
+    ("Tipo:", "Peticao"),
+    ("Subtipo:", "Embargos de declaracao"),
+    ("Peticao:", "3204/2026"),
+    ("FASE:", "Publicacao Acordao ID DJEN"),
+    ("Data do Movimento:", "07/10/2026 00:05"),
+    ("Complemento 1:", "Acordao"),
+    ("Data da Publicacao:", "07/10/2026"),
+    ("Nro do Expediente:", "ACO/2026.000152"),
+    ("FASE:", "Acordao"),
+    ("Data do Movimento:", "02/10/2026 21:35"),
+    ("Destino:", "Secretaria da Camara"),
+    ("Data da Publicacao:", "07/10/2026"),
+]
+
+
+@semNavegador
+def test_a_fase_da_o_nome_do_movimento():
+    dados = _ler_em_navegador(_capa_com_fase(LISTA_DE_FASES))
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 3, [m["descricao"] for m in movimentos]
+    assert movimentos[1]["descricao"].startswith("Publicacao Acordao ID DJEN")
+    assert movimentos[2]["descricao"].startswith("Acordao")
+    for movimento in movimentos:
+        assert "tipo a tela nao nomeou" not in movimento["descricao"]
+
+
+@semNavegador
+def test_o_nome_de_um_movimento_nao_vaza_para_o_anterior():
+    """Na tela, `FASE:` vem ANTES da data do seu proprio movimento. Varrendo
+    para a frente a partir da data de um, o proximo `FASE:` ja e do
+    seguinte."""
+    dados = _ler_em_navegador(_capa_com_fase(LISTA_DE_FASES))
+    descricoes = [m["descricao"] for m in dados["movimentacoes"]]
+    assert "Acordao" not in descricoes[0]
+    assert descricoes[0].startswith("Juntada de Peticao - Embargos")
+
+
+@semNavegador
+def test_a_data_de_publicacao_entra_na_descricao():
+    """E a que conta para prazo, e ate aqui era descartada pela trava de
+    rotulo de campo."""
+    dados = _ler_em_navegador(_capa_com_fase(LISTA_DE_FASES))
+    com_publicacao = [m for m in dados["movimentacoes"]
+                      if "publicado em 07/10/2026" in m["descricao"]]
+    assert len(com_publicacao) == 2
+    assert dados["estrutura"]["fases_da_capa"]["com_data_de_publicacao"] == 2
+
+
+@semNavegador
+def test_a_data_de_publicacao_de_um_nao_vaza_para_o_outro():
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("FASE:", "Primeiro"),
+        ("Data do Movimento:", "01/10/2026"),
+        ("FASE:", "Segundo"),
+        ("Data do Movimento:", "02/10/2026"),
+        ("Data da Publicacao:", "09/10/2026"),
+    ]))
+    movimentos = dados["movimentacoes"]
+    assert "publicado em" not in movimentos[0]["descricao"]
+    assert "publicado em 09/10/2026" in movimentos[1]["descricao"]
+
+
+@semNavegador
+def test_o_tipo_e_o_subtipo_viram_complemento_do_nome():
+    """O nome da fase manda; Tipo e Subtipo sao as partes dele."""
+    dados = _ler_em_navegador(_capa_com_fase(LISTA_DE_FASES))
+    primeiro = dados["movimentacoes"][0]["descricao"]
+    assert primeiro.startswith("Juntada de Peticao - Embargos de declaracao")
+    assert "Peticao, Embargos de declaracao" in primeiro
+    assert "peticao 3204/2026" in primeiro
+
+
+@semNavegador
+def test_o_relato_conta_quantos_vieram_pelo_nome_da_fase():
+    dados = _ler_em_navegador(_capa_com_fase(LISTA_DE_FASES))
+    relato = dados["estrutura"]["fases_da_capa"]
+    assert relato["blocos"] == 3
+    assert relato["nome_da_fase"] == 3
+    assert relato["sem_descricao"] == 0

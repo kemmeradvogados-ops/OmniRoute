@@ -4001,6 +4001,17 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     if len(paginas["movimentacoes"]) > len(dados.get("movimentacoes") or []):
         dados["movimentacoes"] = paginas["movimentacoes"]
         dados["totais"]["movimentacoes"] = len(paginas["movimentacoes"])
+        # A CONTAGEM POR ORIGEM TEM DE ACOMPANHAR A LISTA QUE FICOU.
+        #
+        # Ela nasce em `extrair`, que le UMA tela. Quando a paginacao junta
+        # varios lotes, a lista cresce e a contagem fica descrevendo so o
+        # ultimo. Em 28/10/2026 o relatorio dizia 72 movimentacoes e, logo
+        # abaixo, uma decomposicao que somava 12: os numeros falavam de duas
+        # listas diferentes, e so dava para perceber isso somando a mao.
+        from .dcp import _por_origem
+
+        dados["estrutura"]["movimentacoes_por_origem"] = _por_origem(
+            paginas["movimentacoes"])
     dados["numero"] = numero.formatado
     dados["tribunal"] = identidade.tribunal
     dados["sistema"] = identidade.sistema

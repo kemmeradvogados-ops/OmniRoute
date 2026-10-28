@@ -4158,12 +4158,34 @@ JS_DA_TELA_DO_PROCESSO = r"""
   // suposta: a descricao e procurada numa JANELA depois do rotulo da data, e
   // se nao achar, antes dele. De onde veio fica gravado.
   const ROTULO_DA_DATA_DO_MOVIMENTO = 'data do movimento';
-  const ROTULOS_DA_DESCRICAO_DA_FASE = ['tipo', 'subtipo', 'tipo do movimento'];
+
+  // O ROTULO QUE NOMEIA O MOVIMENTO E `FASE:`, e nao `Tipo:`.
+  //
+  // Lido na tela real em 28/10/2026, depois que a lista dos 52 foi aberta. O
+  // vocabulario da tela cresceu de 27 para 30 rotulos, e os tres novos sao
+  // justamente os da lista: `FASE:`, `Destino:` e `Destinatario:`.
+  //
+  // O bloco FASE ATUAL, que era o unico que eu conhecia, usa `Tipo:` e
+  // `Subtipo:`. Os 52 do historico usam `FASE:`, com a descricao inteira no
+  // valor. Por isso dois dos quatro blocos daquela leitura sairam com
+  // "movimento cujo tipo a tela nao nomeou": o leitor procurava o rotulo do
+  // bloco errado.
+  const ROTULOS_DO_NOME_DA_FASE = ['fase', 'fase atual'];
+  const ROTULOS_DA_DESCRICAO_DA_FASE = ['tipo', 'subtipo', 'tipo do movimento',
+                                        'complemento 1', 'destino'];
   const ROTULO_DA_PETICAO = 'peticao';
+
+  // A DATA DE PUBLICACAO e a que conta para prazo, e quem disse isso foi o
+  // advogado: "o nro do expediente nao faz diferenca, mas a data da
+  // publicacao faz sim". Ate aqui ela era descartada pela trava de rotulo de
+  // campo, junto com a data da sessao, que de fato nao e andamento.
+  const ROTULO_DA_PUBLICACAO = 'data da publicacao';
+
   const JANELA_DA_FASE = 8;
   const fasesDaCapa = [];
   const relatoDasFases = {blocos: 0, descricao_depois: 0, descricao_antes: 0,
-                          sem_descricao: 0, sem_data: 0};
+                          nome_da_fase: 0, sem_descricao: 0, sem_data: 0,
+                          com_data_de_publicacao: 0};
 
   const rotuloDaLinha = (linha) => {
     const celulas = Array.from(linha.children);
@@ -4176,25 +4198,70 @@ JS_DA_TELA_DO_PROCESSO = r"""
     const celulas = Array.from(linha.children);
     return celulas.length >= 2 ? corta(celulas[1].innerText, 300) : '';
   };
-  const descricaoDaFase = (linhas, inicio, passo) => {
-    const pedacos = [];
-    let peticao = '';
+  // ONDE UM BLOCO TERMINA E O SEGUINTE COMECA.
+  //
+  // Na tela, cada movimento da lista comeca pelo rotulo `FASE:` e so DEPOIS
+  // traz `Data do Movimento:`. Entao, varrendo para FRENTE a partir da data
+  // de um movimento, o proximo `FASE:` ja pertence ao movimento seguinte, e
+  // tomar o valor dele daria a descricao do vizinho a este.
+  const COMECA_OUTRO_BLOCO = (rot) =>
+    rot === ROTULO_DA_DATA_DO_MOVIMENTO
+    || ROTULOS_DO_NOME_DA_FASE.indexOf(rot) >= 0;
+
+  const varrer = (linhas, inicio, passo, parar) => {
+    const achados = [];
     for (let n = 1; n <= JANELA_DA_FASE; n++) {
       const j = inicio + n * passo;
       if (j < 0 || j >= linhas.length) break;
       const rot = rotuloDaLinha(linhas[j]);
-      // Outro bloco de fase comecou: o que vem dali e do movimento seguinte.
-      if (rot === ROTULO_DA_DATA_DO_MOVIMENTO) break;
-      if (rot === ROTULO_DA_PETICAO) {
-        peticao = valorDaLinha(linhas[j]);
-        continue;
-      }
-      if (ROTULOS_DA_DESCRICAO_DA_FASE.indexOf(rot) < 0) continue;
-      const valor = valorDaLinha(linhas[j]);
-      if (valor) pedacos.push(valor);
+      if (parar(rot)) break;
+      achados.push([rot, valorDaLinha(linhas[j])]);
     }
-    if (passo < 0) pedacos.reverse();
-    return {texto: pedacos.join(', '), peticao: peticao};
+    if (passo < 0) achados.reverse();
+    return achados;
+  };
+
+  const descricaoDaFase = (linhas, inicio) => {
+    // PRIMEIRO o nome da fase, varrendo para TRAS: e ali que ele mora, logo
+    // acima da data. Parar no `Data do Movimento:` anterior impede pegar o
+    // nome do movimento de cima.
+    const atras = varrer(linhas, inicio, -1,
+                         (rot) => rot === ROTULO_DA_DATA_DO_MOVIMENTO);
+    let nome = '';
+    for (const par of atras) {
+      if (ROTULOS_DO_NOME_DA_FASE.indexOf(par[0]) >= 0 && par[1]) {
+        nome = par[1];
+      }
+    }
+
+    // DEPOIS o resto do bloco, varrendo para a FRENTE ate o proximo bloco.
+    const adiante = varrer(linhas, inicio, 1, COMECA_OUTRO_BLOCO);
+    const pedacos = [];
+    let peticao = '';
+    let publicacao = '';
+    for (const par of adiante) {
+      if (par[0] === ROTULO_DA_PETICAO) { peticao = par[1]; continue; }
+      if (par[0] === ROTULO_DA_PUBLICACAO) { publicacao = par[1]; continue; }
+      if (ROTULOS_DA_DESCRICAO_DA_FASE.indexOf(par[0]) < 0) continue;
+      if (par[1]) pedacos.push(par[1]);
+    }
+
+    // ULTIMO RECURSO: a descricao ANTES da data.
+    //
+    // Na tela real `Tipo:` e `Subtipo:` vem sempre depois, e o que vem antes
+    // e o nome da fase. Mas nao custa nada procurar, e a tela que ainda nao
+    // foi vista pode inverter: perder essa robustez sem motivo seria trocar
+    // uma leitura que funciona por uma suposicao sobre todas as telas.
+    let veioDeTras = false;
+    if (!nome && !pedacos.length) {
+      for (const par of atras) {
+        if (ROTULOS_DA_DESCRICAO_DA_FASE.indexOf(par[0]) < 0) continue;
+        if (par[1]) { pedacos.push(par[1]); veioDeTras = true; }
+      }
+    }
+
+    return {nome: nome, texto: pedacos.join(', '), peticao: peticao,
+            publicacao: publicacao, deTras: veioDeTras};
   };
 
   // SO AS LINHAS DESTA TABELA, e nao as das tabelas de dentro dela.
@@ -4220,18 +4287,28 @@ JS_DA_TELA_DO_PROCESSO = r"""
       const achado = valorDaLinha(linhas[i]).match(comecaPorData);
       if (!achado) { relatoDasFases.sem_data += 1; continue; }
 
-      let composta = descricaoDaFase(linhas, i, 1);
+      const composta = descricaoDaFase(linhas, i);
+      // O NOME DA FASE MANDA quando existe: e a frase que a tela usa para
+      // dizer o que aconteceu. `Tipo` e `Subtipo` sao as partes dela, e viram
+      // complemento, nao substituto.
+      let descricao = '';
       let origem = 'bloco de fase da capa, descricao depois';
-      if (composta.texto) {
-        relatoDasFases.descricao_depois += 1;
-      } else {
-        composta = descricaoDaFase(linhas, i, -1);
-        if (composta.texto) {
+      if (composta.nome) {
+        descricao = composta.nome;
+        origem = 'bloco de fase da capa, nome da fase';
+        relatoDasFases.nome_da_fase += 1;
+        if (composta.texto && composta.texto !== composta.nome) {
+          descricao += ' (' + composta.texto + ')';
+        }
+      } else if (composta.texto) {
+        descricao = composta.texto;
+        if (composta.deTras) {
           relatoDasFases.descricao_antes += 1;
           origem = 'bloco de fase da capa, descricao antes';
+        } else {
+          relatoDasFases.descricao_depois += 1;
         }
       }
-      let descricao = composta.texto;
       if (!descricao) {
         relatoDasFases.sem_descricao += 1;
         // Sem tipo, o registro SAI assim mesmo, dizendo que a tela nao o
@@ -4241,6 +4318,13 @@ JS_DA_TELA_DO_PROCESSO = r"""
         origem = 'bloco de fase da capa, sem descricao';
       }
       if (composta.peticao) descricao += ' (peticao ' + composta.peticao + ')';
+      // A DATA DE PUBLICACAO entra na propria descricao, e nao num campo
+      // separado, porque e assim que ela chega a quem le o historico sem
+      // abrir o arquivo. E a data que conta para prazo.
+      if (composta.publicacao) {
+        relatoDasFases.com_data_de_publicacao += 1;
+        descricao += ' [publicado em ' + composta.publicacao + ']';
+      }
       fasesDaCapa.push([achado[1], achado[2] || '', corta(descricao, 300),
                         origem, []]);
     }
@@ -4582,7 +4666,8 @@ def secoes_nao_lidas(secoes: Any) -> list:
 def _relato_das_fases(bruto: Any) -> dict:
     """Quantos blocos de fase a capa tinha, e o que saiu de cada um."""
     vazio = {"blocos": 0, "descricao_depois": 0, "descricao_antes": 0,
-             "sem_descricao": 0, "sem_data": 0}
+             "nome_da_fase": 0, "sem_descricao": 0, "sem_data": 0,
+             "com_data_de_publicacao": 0}
     if not isinstance(bruto, dict):
         return vazio
     return {chave: int(bruto.get(chave) or 0) for chave in vazio}
