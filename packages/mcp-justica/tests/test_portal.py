@@ -8822,3 +8822,65 @@ def test_a_estrutura_conta_as_movimentacoes_por_origem(tmp_path, capsys):
     # A descricao e dado de cliente e NAO entra neste relatorio.
     assert "Acordao" not in saida
     assert "alguma coisa" not in saida
+
+
+# ---------------------------------------------------------------------------
+# A ressalva da capa nao pode sumir quando a capa passa
+#
+# Em 28/10/2026, assim que o veredicto da capa passou a olhar para o que foi
+# lido e a capa foi reconhecida, a ressalva desapareceu do relatorio: ele
+# passou a dizer "conferido contra a tela real: ... principais" e nada mais.
+# Isso se le como "os valores foram conferidos", que e afirmacao maior do que
+# a que se pode fazer. Para quem decide prazo, "os rotulos batem" e "os
+# valores foram conferidos" nao sao a mesma frase.
+# ---------------------------------------------------------------------------
+
+def _consulta_com_capa(tmp_path, reconhecida):
+    import json
+
+    from justica_mcp.dcp import veredicto_da_capa
+
+    principais = ({"Classe": "x", "Assunto": "y", "Relator": "z"}
+                  if reconhecida else {"Destinatario": "x"})
+    arquivo = tmp_path / "consulta.json"
+    arquivo.write_text(json.dumps({
+        "totais": {"movimentacoes": 8},
+        "leitura": {
+            "conferido": {"partes": True, "mandados": True,
+                          "movimentacoes": True,
+                          "principais": veredicto_da_capa(principais)[0]},
+            "o_que_nao_foi_conferido": veredicto_da_capa(principais)[1],
+        },
+        "estrutura": {"tabelas": [], "familias": {}},
+    }), encoding="utf-8")
+    return str(arquivo)
+
+
+def test_a_ressalva_da_capa_sai_mesmo_quando_ela_e_reconhecida(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    assert mostrar_estrutura(_consulta_com_capa(tmp_path, True)) == 0
+    saida = capsys.readouterr().out
+    assert "principais" in saida
+    assert "ROTULOS foram reconhecidos" in saida
+    assert "VALORES continuam vindo da leitura" in saida
+
+
+def test_a_bandeira_diz_que_e_a_regra_e_nao_o_valor(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    assert mostrar_estrutura(_consulta_com_capa(tmp_path, True)) == 0
+    saida = capsys.readouterr().out
+    assert "regra de leitura conferida contra a tela real" in saida
+    assert "nao os valores" in saida
+    # O rotulo antigo afirmava mais do que se podia afirmar.
+    assert "  conferido contra a tela real:" not in saida
+
+
+def test_a_recusa_da_capa_continua_saindo(tmp_path, capsys):
+    from justica_mcp.portal import mostrar_estrutura
+
+    assert mostrar_estrutura(_consulta_com_capa(tmp_path, False)) == 0
+    saida = capsys.readouterr().out
+    assert "REGRA NAO CONFERIDA: principais" in saida
+    assert "Nao use `principais` como capa" in saida

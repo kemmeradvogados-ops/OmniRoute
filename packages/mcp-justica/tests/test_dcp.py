@@ -8801,7 +8801,12 @@ def test_o_resumo_de_terminal_avisa_que_a_capa_nao_vale():
     junto = " ".join(resumo_seguro(dados))
     assert "mandados: 0" in junto
     assert "NAO aproveita" in junto
-    assert "`principais` (a capa) NAO foi conferida" in junto
+    # A redacao mudou em 28/10/2026, quando o veredicto da capa passou a olhar
+    # para o que foi lido: "conferida" virou "reconhecida", porque reconhecer
+    # os rotulos nao e conferir os valores. O que este teste guarda continua
+    # sendo o mesmo: o resumo de terminal avisa quando a capa nao vale.
+    assert "`principais` (a capa) NAO foi reconhecida" in junto
+    assert "ATENCAO: " in junto
 
 
 def test_o_historico_de_mandados_casa_pela_primeira_coluna():
@@ -9797,3 +9802,30 @@ def test_as_movimentacoes_da_tela_de_exemplo_nao_mudaram():
     descricoes = [m["descricao"] for m in dados["movimentacoes"]]
     assert "Juntada de Peticao" in descricoes
     assert "Conclusao ao Juiz" in descricoes
+
+
+def test_o_resumo_da_consulta_diz_a_capa_nos_dois_casos():
+    """Reconhecida ou nao, o veredicto da capa sai no resumo da consulta. Ate
+    28/10/2026 so saia na recusa, e sumiu no dia em que passou a ser
+    necessario."""
+    from justica_mcp.dcp import resumo_seguro, veredicto_da_capa
+
+    def _com(principais):
+        reconhecida, explicacao = veredicto_da_capa(principais)
+        return "\n".join(resumo_seguro({
+            "principais": principais, "partes": [], "mandados": [],
+            "movimentacoes": [],
+            "estrutura": {"tabelas": [], "familias": {},
+                          "rotulos_candidatos": [], "secoes_nao_lidas": []},
+            "leitura": {"conferido": {"principais": reconhecida},
+                        "o_que_nao_foi_conferido": explicacao},
+            "totais": {},
+        }))
+
+    boa = _com({"Classe": "x", "Assunto": "y", "Relator": "z"})
+    assert "CAPA: " in boa
+    assert "ROTULOS foram reconhecidos" in boa
+
+    ruim = _com({"Destinatario": "x"})
+    assert "ATENCAO: " in ruim
+    assert "Nao use `principais` como capa" in ruim

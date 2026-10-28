@@ -5129,12 +5129,20 @@ def resumo_seguro(dados: dict) -> list:
             f"secoes da tela que esta leitura NAO aproveita ({len(nao_lidas)}): "
             + "; ".join(nao_lidas[:6])
             + (" e mais." if len(nao_lidas) > 6 else ""))
-    if leitura.get("conferido", {}).get("principais") is False:
-        linhas.append(
-            "ATENCAO: `principais` (a capa) NAO foi conferida contra a tela "
-            "real. Em 21/10/2026 viu-se que ela le outro bloco. As partes, os "
-            "mandados e as movimentacoes sao lidos por cabecalho e rotulo "
-            "conferidos, e esses valem.")
+    # O VEREDICTO DA CAPA SAI SEMPRE, reconhecida ou nao.
+    #
+    # Ate 28/10/2026 so saia quando ela era recusada. Assim que o veredicto
+    # passou a olhar para o que foi lido e a capa foi reconhecida, a ressalva
+    # sumiu da tela justamente quando passou a ser necessaria: o relatorio
+    # dizia "conferido: principais" e nada mais, e isso se le como "os valores
+    # foram conferidos", que e afirmacao maior do que a que se pode fazer.
+    # Para quem decide prazo, "os rotulos batem" e "os valores foram
+    # conferidos" nao sao a mesma frase.
+    recado_da_capa = leitura.get("o_que_nao_foi_conferido")
+    if recado_da_capa:
+        reconhecida = leitura.get("conferido", {}).get("principais") is True
+        linhas.append(("CAPA: " if reconhecida else "ATENCAO: ")
+                      + recado_da_capa)
     if leitura.get("tela_do_processo_confirmada") is False:
         linhas.append(
             "ATENCAO: a tela lida NAO foi confirmada como a do processo. O "

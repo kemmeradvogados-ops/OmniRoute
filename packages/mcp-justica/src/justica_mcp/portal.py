@@ -8257,13 +8257,26 @@ def mostrar_estrutura(caminho: str) -> int:
     if _conferido:
         conferidos = [k for k, v in _conferido.items() if v]
         pendentes = [k for k, v in _conferido.items() if not v]
-        linhas.append("  conferido contra a tela real: "
+        # O QUE ESTA BANDEIRA DIZ, e o que ela NAO diz. Ela diz que a REGRA de
+        # leitura daquele bloco foi conferida contra tela real. Nao diz que os
+        # valores foram conferidos um a um: isso nunca foi feito por este
+        # programa, em bloco nenhum.
+        #
+        # O rotulo anterior era "conferido contra a tela real", e em
+        # 28/10/2026, assim que a capa passou a ser reconhecida, ele virou
+        # afirmacao maior do que a que se podia fazer.
+        linhas.append("  regra de leitura conferida contra a tela real: "
                       + (", ".join(conferidos) if conferidos else "(nada)"))
+        linhas.append("    (a regra, nao os valores: estes nao sao conferidos "
+                      "um a um em bloco nenhum)")
         if pendentes:
-            linhas.append("  NAO conferido: " + ", ".join(pendentes))
-            recado = leitura.get("o_que_nao_foi_conferido")
-            if recado:
-                linhas.append(f"    {recado}")
+            linhas.append("  REGRA NAO CONFERIDA: " + ", ".join(pendentes))
+        # O recado da capa sai SEMPRE, reconhecida ou nao. Ate 28/10/2026 ele
+        # so saia quando havia pendencia, e sumiu da tela no dia em que a capa
+        # passou a ser reconhecida, que e quando ele passou a ser necessario.
+        recado = leitura.get("o_que_nao_foi_conferido")
+        if recado:
+            linhas.append(f"    {recado}")
     if _nao_lidas:
         linhas.append(f"  SECOES QUE A LEITURA NAO APROVEITA ({len(_nao_lidas)}):")
         for titulo in _nao_lidas[:20]:
