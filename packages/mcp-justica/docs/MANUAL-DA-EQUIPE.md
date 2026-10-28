@@ -55,18 +55,30 @@ ao responsável, não só a última linha.
 
 No aplicativo do Claude para computador:
 
-1. **Configurações → Extensões.**
-2. Arraste o arquivo `justica-mcp.mcpb`, que está na pasta `conector` do
-   projeto, para dentro dessa página.
-3. O Claude abre uma prévia. Clique em **Instalar** e confirme.
-4. Ele pede três coisas:
+1. **Gere o arquivo da extensão.** Ele **não vem no projeto**: é gerado, e
+   por isso não está numa cópia recém-baixada. Na pasta do projeto, rode:
+
+   ```
+   .venv\Scripts\python.exe scripts\empacotar.py
+   ```
+
+   O comando escreve `conector\justica-mcp.mcpb` e imprime a versão, quantas
+   ferramentas ela tem e o resumo criptográfico do arquivo. Não instala nada e
+   não acessa a internet.
+
+2. **Configurações → Extensões.**
+3. Arraste o `justica-mcp.mcpb` que o comando acabou de gerar para dentro
+   dessa página.
+4. O Claude abre uma prévia. Clique em **Instalar** e confirme.
+5. Ele pede três coisas:
    - **Python do ambiente virtual:** o primeiro caminho amarelo do instalador.
    - **Pasta do projeto:** o segundo caminho amarelo.
    - **Chave da base nacional:** deixe **em branco**. Campo vazio não
      sobrescreve o que já está configurado.
 
-Feche e reabra o Claude. O conector deve aparecer na lista com **14
-ferramentas**.
+Feche e reabra o Claude. O conector deve aparecer na lista com **20
+ferramentas**. Se aparecer um número menor, a extensão instalada é de uma
+versão anterior: gere o arquivo de novo e arraste outra vez.
 
 > **Se não existir "Extensões" nas Configurações**, a organização desligou
 > extensões de desktop. Quem religa é um responsável, nas configurações da
@@ -302,5 +314,22 @@ sua credencial. Essa decisão é do responsável, não sua.
 Quando houver versão nova, rode o mesmo instalador outra vez. Ele atualiza o
 código e **não toca** no seu `.env` nem nas suas credenciais.
 
-Se o `.mcpb` também mudar, arraste o novo para Configurações → Extensões. O
-Claude só aceita substituir por uma versão de número maior.
+**Na maior parte das vezes é só isso.** A extensão não carrega o código dentro
+dela: o manifesto aponta para a sua pasta do projeto e para o Python do
+ambiente virtual, então o que ela executa é o código que estiver em disco.
+Atualizar o código já atualiza o que a extensão faz.
+
+**Reinstalar a extensão só é preciso quando o manifesto ou o lançador mudam**,
+isto é, quando há ferramenta nova, campo de configuração novo ou conserto na
+partida do conector. Nesse caso:
+
+```
+.venv\Scripts\python.exe scripts\empacotar.py
+```
+
+e arraste o arquivo gerado para Configurações → Extensões. O Claude só aceita
+substituir por uma versão de número maior.
+
+Para saber se a sua está atrasada, compare o número de ferramentas que o
+Claude mostra com o que o comando acima imprime. Se forem diferentes, a
+instalada é antiga.
