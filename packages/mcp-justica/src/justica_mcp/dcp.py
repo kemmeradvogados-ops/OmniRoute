@@ -4055,6 +4055,109 @@ JS_DA_TELA_DO_PROCESSO = r"""
     });
   }
 
+  // Quinta passada: o BLOCO DE FASE da capa E uma movimentacao.
+  //
+  // Achado em 28/10/2026, e achado contra mim: a trava de rotulo de campo,
+  // escrita horas antes, tirou do historico a movimentacao MAIS RECENTE do
+  // processo. A consulta ao segundo grau mostrava "Juntada de peticao de
+  // embargos de declaracao, em 15/10/2026", e depois da trava ela sumiu.
+  //
+  // Os dois estados estavam errados, de maneiras diferentes. Antes da trava o
+  // bloco virava um registro com a data certa e a descricao inutil "Data do
+  // Movimento:". Depois dela, nao virava nada. Para prazo, saber que ha
+  // movimentacao em 15/10 com descricao ruim e melhor que nao saber que ela
+  // existe.
+  //
+  // O conserto nao e desfazer a trava: "Data da Sessao:" e "Data da
+  // Publicacao:" continuam sendo campo de julgamento, e nao andamento. O
+  // conserto e ler o bloco de fase pelo que ele e, com a descricao que a
+  // propria tela da: os rotulos "Tipo" e "Subtipo".
+  //
+  // A TELA, medida na consulta de 27/10/2026 as 21h11 (horario de Brasilia):
+  // a capa e uma tabela de 56 linhas por 2 colunas, rotulo numa celula e
+  // valor na outra, sem identificador e sem classe. Dela saem DOIS rotulos
+  // "Data do Movimento:". Nao ha, em lugar nenhum da tela, tabela de muitas
+  // linhas que pudesse ser um historico: as unicas sao a capa e as partes.
+  // Essa tela nao tem historico de movimentacoes.
+  //
+  // A ORDEM das linhas dentro do bloco nao foi observada, entao nao esta
+  // suposta: a descricao e procurada numa JANELA depois do rotulo da data, e
+  // se nao achar, antes dele. De onde veio fica gravado.
+  const ROTULO_DA_DATA_DO_MOVIMENTO = 'data do movimento';
+  const ROTULOS_DA_DESCRICAO_DA_FASE = ['tipo', 'subtipo', 'tipo do movimento'];
+  const ROTULO_DA_PETICAO = 'peticao';
+  const JANELA_DA_FASE = 8;
+  const fasesDaCapa = [];
+  const relatoDasFases = {blocos: 0, descricao_depois: 0, descricao_antes: 0,
+                          sem_descricao: 0, sem_data: 0};
+
+  const rotuloDaLinha = (linha) => {
+    const celulas = Array.from(linha.children);
+    if (celulas.length < 2) return null;
+    const bruto = corta(celulas[0].innerText, 60);
+    if (!/:\s*$/.test(bruto)) return null;
+    return semAcento(bruto.replace(/:\s*$/, ''));
+  };
+  const valorDaLinha = (linha) => {
+    const celulas = Array.from(linha.children);
+    return celulas.length >= 2 ? corta(celulas[1].innerText, 300) : '';
+  };
+  const descricaoDaFase = (linhas, inicio, passo) => {
+    const pedacos = [];
+    let peticao = '';
+    for (let n = 1; n <= JANELA_DA_FASE; n++) {
+      const j = inicio + n * passo;
+      if (j < 0 || j >= linhas.length) break;
+      const rot = rotuloDaLinha(linhas[j]);
+      // Outro bloco de fase comecou: o que vem dali e do movimento seguinte.
+      if (rot === ROTULO_DA_DATA_DO_MOVIMENTO) break;
+      if (rot === ROTULO_DA_PETICAO) {
+        peticao = valorDaLinha(linhas[j]);
+        continue;
+      }
+      if (ROTULOS_DA_DESCRICAO_DA_FASE.indexOf(rot) < 0) continue;
+      const valor = valorDaLinha(linhas[j]);
+      if (valor) pedacos.push(valor);
+    }
+    if (passo < 0) pedacos.reverse();
+    return {texto: pedacos.join(', '), peticao: peticao};
+  };
+
+  for (const tabela of document.querySelectorAll('table')) {
+    const linhas = Array.from(tabela.querySelectorAll('tr'))
+      .filter(l => !l.querySelector('tr'));
+    for (let i = 0; i < linhas.length; i++) {
+      if (rotuloDaLinha(linhas[i]) !== ROTULO_DA_DATA_DO_MOVIMENTO) continue;
+      relatoDasFases.blocos += 1;
+      const achado = valorDaLinha(linhas[i]).match(comecaPorData);
+      if (!achado) { relatoDasFases.sem_data += 1; continue; }
+
+      let composta = descricaoDaFase(linhas, i, 1);
+      let origem = 'bloco de fase da capa, descricao depois';
+      if (composta.texto) {
+        relatoDasFases.descricao_depois += 1;
+      } else {
+        composta = descricaoDaFase(linhas, i, -1);
+        if (composta.texto) {
+          relatoDasFases.descricao_antes += 1;
+          origem = 'bloco de fase da capa, descricao antes';
+        }
+      }
+      let descricao = composta.texto;
+      if (!descricao) {
+        relatoDasFases.sem_descricao += 1;
+        // Sem tipo, o registro SAI assim mesmo, dizendo que a tela nao o
+        // nomeou. Descartar por falta de descricao foi o que apagou este
+        // movimento em primeiro lugar.
+        descricao = 'movimento cujo tipo a tela nao nomeou';
+        origem = 'bloco de fase da capa, sem descricao';
+      }
+      if (composta.peticao) descricao += ' (peticao ' + composta.peticao + ')';
+      fasesDaCapa.push([achado[1], achado[2] || '', corta(descricao, 300),
+                        origem, []]);
+    }
+  }
+
   // O DIAGNOSTICO da leitura dos blocos. Em 13/10/2026 a leitura devolveu uma
   // movimentacao so e o terminal nao sabia dizer onde ela tinha parado: se nao
   // achou rotulo, se nao formou bloco, ou se formou bloco com valor vazio. Sao
@@ -4258,6 +4361,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
           movimentacoes: movimentacoes,
           documentosDoSegundoGrau: documentosDoSegundoGrau,
           colunasDosDocumentos: colunasDosDocumentos,
+          fasesDaCapa: fasesDaCapa, relatoDasFases: relatoDasFases,
           tabelas: tabelas, familias: familias,
           rotulosCandidatos: rotulosCandidatos,
           secoes: secoes, botoes: botoes, diagnostico: diagnostico,
@@ -4385,6 +4489,15 @@ def secoes_nao_lidas(secoes: Any) -> list:
         if titulo not in vistos:
             vistos.append(titulo)
     return vistos
+
+
+def _relato_das_fases(bruto: Any) -> dict:
+    """Quantos blocos de fase a capa tinha, e o que saiu de cada um."""
+    vazio = {"blocos": 0, "descricao_depois": 0, "descricao_antes": 0,
+             "sem_descricao": 0, "sem_data": 0}
+    if not isinstance(bruto, dict):
+        return vazio
+    return {chave: int(bruto.get(chave) or 0) for chave in vazio}
 
 
 def _por_origem(movimentacoes: list) -> dict:
@@ -4522,7 +4635,8 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
                       "componentes_de_movimento": 0,
                       "colunas_dos_documentos": [],
                       "fora_da_tabela_de_documentos": 0,
-                      "movimentacoes_por_origem": {}},
+                      "movimentacoes_por_origem": {},
+                      "fases_da_capa": _relato_das_fases(None)},
         "leitura": {
             "metodo": "generica",
             "confirmada_em_tela_real": False,
@@ -4596,6 +4710,9 @@ def extrair(quadro: Any) -> dict:
     # voltou com quatro registros com data, das passadas genericas, contra oito
     # ancoras de documento visiveis na mesma tela.
     do_segundo_grau = bruto.get("documentosDoSegundoGrau") or []
+    # Os blocos de FASE vem primeiro: e la que mora a movimentacao mais
+    # recente, e foi ela que a trava de rotulo de campo apagou em 28/10/2026.
+    fases = bruto.get("fasesDaCapa") or []
     genericas = bruto.get("movimentacoes") or []
     sobraram_das_genericas = 0
     if do_componente:
@@ -4615,10 +4732,10 @@ def extrair(quadro: Any) -> dict:
         # pulam as linhas das tabelas de documento (ver `ehLinhaDeDocumento`).
         # Deduplicar por data+descricao apagaria andamento repetido de
         # verdade, que existe.
-        fonte = list(do_segundo_grau) + list(genericas)
+        fonte = list(fases) + list(do_segundo_grau) + list(genericas)
         sobraram_das_genericas = len(genericas)
     else:
-        fonte = genericas
+        fonte = list(fases) + list(genericas)
 
     movimentacoes = []
     for item in fonte:
@@ -4732,6 +4849,10 @@ def extrair(quadro: Any) -> dict:
         # `movimentacoes`: la mora valor de campo. A contagem por origem e
         # forma, entao o lugar dela e o bloco de forma.
         "movimentacoes_por_origem": _por_origem(movimentacoes),
+        # OS BLOCOS DE FASE da capa: quantos, e se a tela nomeou o tipo de
+        # cada um. Numero em `sem_descricao` quer dizer movimento lido com
+        # data certa e sem saber do que se trata, que e util mas pouco.
+        "fases_da_capa": _relato_das_fases(bruto.get("relatoDasFases")),
         # As secoes que esta leitura NAO aproveita. Sem isto, quem abre o
         # arquivo supoe que a tela foi lida por inteiro.
         "secoes_nao_lidas": secoes_nao_lidas(

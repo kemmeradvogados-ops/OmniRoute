@@ -9774,7 +9774,28 @@ def test_a_movimentacao_de_verdade_continua_entrando():
     dados = _ler_em_navegador(TELA_COM_CAPA_DE_DATAS)
     descricoes = [m["descricao"] for m in dados["movimentacoes"]]
     assert "Conclusos ao relator" in descricoes
-    assert len(dados["movimentacoes"]) == 1
+
+
+@semNavegador
+def test_a_linha_data_do_movimento_volta_como_bloco_de_fase():
+    """Esta assercao mudou em 28/10/2026, e a mudanca e o conserto.
+
+    Ate aqui o molde tinha 'Data do Movimento:' entre os campos de capa e o
+    teste exigia UMA movimentacao: a trava descartava as tres linhas de
+    rotulo. Depois se viu que uma delas era a movimentacao MAIS RECENTE do
+    processo, e que descarta-la a apagava do historico.
+
+    Agora 'Data do Movimento:' volta pela quinta passada, com a descricao que
+    a tela der. 'Data da Sessao:' e 'Data da Publicacao:' continuam fora:
+    sao campos de julgamento."""
+    dados = _ler_em_navegador(TELA_COM_CAPA_DE_DATAS)
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 2
+    datas = [m["data"] for m in movimentos]
+    assert "05/09/2026" in datas
+    assert "01/10/2026" in datas
+    assert "12/09/2026" not in datas
+    assert "19/09/2026" not in datas
 
 
 @semNavegador
@@ -9829,3 +9850,129 @@ def test_o_resumo_da_consulta_diz_a_capa_nos_dois_casos():
     ruim = _com({"Destinatario": "x"})
     assert "ATENCAO: " in ruim
     assert "Nao use `principais` como capa" in ruim
+
+
+# ---------------------------------------------------------------------------
+# O bloco de fase da capa E uma movimentacao
+#
+# Achado em 28/10/2026, e achado contra mim. A trava de rotulo de campo,
+# escrita horas antes, tirou do historico a movimentacao MAIS RECENTE do
+# processo: "Juntada de peticao de embargos de declaracao, em 15/10/2026".
+#
+# Os dois estados estavam errados. Antes da trava o bloco virava um registro
+# com a data certa e a descricao inutil "Data do Movimento:". Depois dela, nao
+# virava nada.
+# ---------------------------------------------------------------------------
+
+def _capa_com_fase(linhas):
+    corpo = "".join(f"<tr><td>{r}</td><td>{v}</td></tr>" for r, v in linhas)
+    return ("<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\">"
+            f"</head><body><table>{corpo}</table></body></html>")
+
+
+FASE_COMPLETA = [
+    ("Classe:", "Apelacao"),
+    ("FASE ATUAL:", ""),
+    ("Data do Movimento:", "15/10/2026 16:33"),
+    ("Tipo:", "Juntada de Peticao"),
+    ("Subtipo:", "Embargos de Declaracao"),
+    ("Peticao:", "3204/2026"),
+    ("Data da Sessao:", "29/09/2026"),
+    ("Data da Publicacao:", "07/10/2026"),
+]
+
+
+@semNavegador
+def test_o_bloco_de_fase_volta_a_ser_movimentacao():
+    dados = _ler_em_navegador(_capa_com_fase(FASE_COMPLETA))
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 1, movimentos
+    assert movimentos[0]["data"] == "15/10/2026"
+    assert movimentos[0]["hora"] == "16:33"
+
+
+@semNavegador
+def test_a_descricao_vem_do_tipo_e_do_subtipo():
+    """A descricao e a que a propria tela da, e nao o rotulo do campo."""
+    dados = _ler_em_navegador(_capa_com_fase(FASE_COMPLETA))
+    descricao = dados["movimentacoes"][0]["descricao"]
+    assert "Juntada de Peticao" in descricao
+    assert "Embargos de Declaracao" in descricao
+    assert "Data do Movimento" not in descricao
+    assert "3204/2026" in descricao
+
+
+@semNavegador
+def test_sessao_e_publicacao_continuam_fora_do_historico():
+    """A trava nao foi desfeita: campo de julgamento nao e andamento."""
+    dados = _ler_em_navegador(_capa_com_fase(FASE_COMPLETA))
+    datas = [m["data"] for m in dados["movimentacoes"]]
+    assert "29/09/2026" not in datas
+    assert "07/10/2026" not in datas
+
+
+@semNavegador
+def test_dois_blocos_de_fase_viram_dois_movimentos():
+    """A tela do segundo grau tem DOIS rotulos 'Data do Movimento:'. O segundo
+    bloco nao pode herdar a descricao do primeiro."""
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("Data do Movimento:", "15/10/2026"),
+        ("Tipo:", "Juntada de Peticao"),
+        ("Data do Movimento:", "02/10/2026"),
+        ("Tipo:", "Acordao"),
+    ]))
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 2
+    assert movimentos[0]["descricao"].startswith("Juntada de Peticao")
+    assert movimentos[1]["descricao"].startswith("Acordao")
+
+
+@semNavegador
+def test_fase_sem_tipo_entra_dizendo_que_a_tela_nao_nomeou():
+    """Descartar por falta de descricao foi o que apagou este movimento em
+    primeiro lugar."""
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("Classe:", "Apelacao"),
+        ("Data do Movimento:", "15/10/2026"),
+    ]))
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 1
+    assert movimentos[0]["data"] == "15/10/2026"
+    assert "tipo a tela nao nomeou" in movimentos[0]["descricao"]
+
+
+@semNavegador
+def test_a_descricao_pode_vir_antes_do_rotulo_da_data():
+    """A ordem das linhas dentro do bloco nao foi observada, entao nao esta
+    suposta: procura depois, e se nao achar, antes."""
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("Tipo:", "Juntada de Peticao"),
+        ("Data do Movimento:", "15/10/2026"),
+        ("Classe:", "Apelacao"),
+    ]))
+    movimento = dados["movimentacoes"][0]
+    assert "Juntada de Peticao" in movimento["descricao"]
+    assert movimento["origem"].endswith("descricao antes")
+
+
+@semNavegador
+def test_o_relato_das_fases_conta_o_que_aconteceu():
+    dados = _ler_em_navegador(_capa_com_fase(FASE_COMPLETA))
+    relato = dados["estrutura"]["fases_da_capa"]
+    assert relato["blocos"] == 1
+    assert relato["descricao_depois"] == 1
+    assert relato["sem_descricao"] == 0
+
+
+@semNavegador
+def test_a_fase_vem_antes_dos_documentos_na_lista():
+    """E la que mora a movimentacao mais recente."""
+    html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+            "<table><tr><td>Data do Movimento:</td><td>15/10/2026</td></tr>"
+            "<tr><td>Tipo:</td><td>Juntada de Peticao</td></tr></table>"
+            "<table><tr><td><a href=\"/ejud/d.aspx?x=1\">Integra do(a) Acordao"
+            "</a> 02/10/2026</td></tr></table></body></html>")
+    dados = _ler_em_navegador(html)
+    assert len(dados["movimentacoes"]) == 2
+    assert dados["movimentacoes"][0]["data"] == "15/10/2026"
+    assert dados["movimentacoes"][1]["data"] == "02/10/2026"
