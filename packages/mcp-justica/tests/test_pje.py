@@ -2027,3 +2027,53 @@ def test_a_espera_nao_desiste_por_causa_de_um_candidato_ruim():
     fonte = inspect.getsource(portal._esperar_o_arquivo_do_pje)
     assert "atual = farejador.marco()" in fonte
     assert "if trazido:" in fonte
+
+
+# ==========================================================================
+# "nenhum" quer dizer nenhum, tambem no PJe
+#
+# Encontrado por leitura em 29/10/2026, conferindo a matriz de capacidades
+# contra o que o codigo faz. Tres dos quatro caminhos de consulta tratavam
+# `--documentos nenhum`:
+#
+#   _consultar_esaj   `if documentos and documentos != "nenhum":`
+#   _consultar_dcp    `if documentos == "nenhum": return 0`
+#   _consultar_eproc  `if documentos and documentos != "nenhum":`
+#   _consultar_pje    `if not documentos:`   <- so o vazio
+#
+# No PJe, "nenhum" e texto nao vazio, portanto verdadeiro, e a consulta
+# seguia para `_baixar_autos_do_pje`. Quem pedisse explicitamente para NAO
+# baixar os autos baixava os autos: o pior sentido possivel para um erro
+# desses, porque e o operador cauteloso que paga.
+#
+# O teste velho desta decisao (`test_o_download_do_pje_e_opcional`) procurava
+# a frase "--documentos integra" no texto da funcao. A frase estava la o
+# tempo todo, inclusive enquanto o download acontecia contra o pedido: um
+# teste de texto nao ve comportamento.
+# ==========================================================================
+
+def test_nenhum_significa_nenhum_em_todos_os_portais():
+    """A decisao agora mora numa funcao so, e esta funcao responde igual
+    para os quatro portais."""
+    from justica_mcp.portal import pediu_documentos
+
+    assert pediu_documentos("nenhum") is False
+    assert pediu_documentos("NENHUM") is False, "maiuscula e a mesma palavra"
+    assert pediu_documentos("  nenhum  ") is False, "espaco nao muda o pedido"
+    assert pediu_documentos("") is False
+    assert pediu_documentos(None) is False
+    assert pediu_documentos("auto") is True
+    assert pediu_documentos("integra") is True
+    assert pediu_documentos("um-a-um") is True
+
+
+def test_o_pje_decide_pela_funcao_e_nao_pela_verdade_do_texto():
+    """Guarda de fonte: `if not documentos` aceitava 'nenhum' como pedido."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._consultar_pje)
+    assert "pediu_documentos(documentos)" in fonte
+    assert "if not documentos:" not in fonte, (
+        "esta era exatamente a linha que deixava 'nenhum' passar")

@@ -6703,6 +6703,20 @@ def _baixar_autos_do_pje(aba, guarda, numero, de: int, ate: int,
 # --------------------------------------------------------------------------
 
 
+def pediu_documentos(documentos) -> bool:
+    """O operador pediu copia dos autos?
+
+    Escrita em 29/10/2026 porque a resposta estava dada em quatro lugares e
+    um deles respondia diferente. O e-SAJ, o DCP e o eproc comparavam com
+    'nenhum'; o PJe perguntava `if not documentos`, e 'nenhum' e texto nao
+    vazio, portanto verdadeiro. Quem pedia explicitamente para NAO baixar
+    baixava.
+
+    A pergunta e uma so, entao passa a ter uma resposta so.
+    """
+    return (documentos or "").strip().lower() not in ("", "nenhum")
+
+
 def _consultar_esaj(pagina, guarda, estado_local, identidade, *, numero,
                     documentos, segundos) -> int:
     """O caminho do e-SAJ, do Tribunal de Justica de Sao Paulo.
@@ -6777,7 +6791,7 @@ def _consultar_esaj(pagina, guarda, estado_local, identidade, *, numero,
     for m in dados["movimentacoes"][:5]:
         print(f"      {m['data']}  {m['descricao'][:70]}")
 
-    if documentos and documentos != "nenhum":
+    if pediu_documentos(documentos):
         from .core.acervo import (
             AcervoIndisponivel, carregar_indice, garantir_pasta,
         )
@@ -7038,7 +7052,7 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
     # operador pede documentos. Consultar e ler a capa; abrir o
     # visualizador e entrar nos autos, e as duas coisas nao se
     # confundem so porque ficam na mesma tela.
-    if documentos == "nenhum":
+    if not pediu_documentos(documentos):
         print("  Documentos nao pedidos: o visualizador NAO foi aberto.")
         return 0
 
@@ -7399,7 +7413,7 @@ def _consultar_pje(pagina, guarda, estado_local, identidade, *, numero,
             sistema=identidade.sistema, numero=numero.formatado,
             resultado=f"{len(eventos)} evento(s)",
         )
-    if not documentos:
+    if not pediu_documentos(documentos):
         print("\n  O download dos autos NAO foi pedido. Para pedi-lo, "
               "repita com --documentos integra.")
     elif not percurso["completa"]:
@@ -7565,7 +7579,7 @@ def _consultar_eproc(pagina, guarda, estado_local, identidade, *, numero,
         print("\n    Sem mudanca desde a consulta anterior.")
 
     # ---------- copias dos documentos ----------
-    if documentos and documentos != "nenhum":
+    if pediu_documentos(documentos):
         from .core.acervo import (
             AcervoIndisponivel, carregar_indice, decidir_estrategia,
             garantir_pasta, pdfs_fora_do_indice,

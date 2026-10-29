@@ -538,15 +538,23 @@ def test_o_dcp_entrou_na_lista_de_sistemas_com_consulta():
 
 def test_consultar_sem_documentos_nao_abre_o_visualizador():
     """Consultar e ler a capa; abrir o visualizador e entrar nos autos, e as
-    duas coisas nao se confundem so porque ficam na mesma tela."""
-    import inspect
+    duas coisas nao se confundem so porque ficam na mesma tela.
 
+    A REGRA e a ordem: a decisao sobre documentos vem ANTES de abrir o
+    Visualizador. Ate 29/10/2026 este teste procurava a grafia literal
+    `documentos == "nenhum"`, e por isso quebrou quando a comparacao, repetida
+    em quatro caminhos, virou a funcao `pediu_documentos`. Guardar a grafia e
+    guardar menos do que a regra: a mesma comparacao escrita no PJe como `if
+    not documentos` deixava 'nenhum' passar, e nenhum teste de texto viu.
+    """
     from justica_mcp import portal
 
-    fonte = fonte_da_consulta()
     trecho = fonte_do_portal("dcp")
-    assert 'documentos == "nenhum"' in trecho
-    assert trecho.index('documentos == "nenhum"') < trecho.index("abrir_visualizador(")
+    assert "pediu_documentos(documentos)" in trecho
+    assert (trecho.index("pediu_documentos(documentos)")
+            < trecho.index("abrir_visualizador("))
+    # E a funcao responde o que esta regra precisa que ela responda.
+    assert portal.pediu_documentos("nenhum") is False
 
 
 def test_o_tamanho_do_arquivo_e_sempre_dito():
