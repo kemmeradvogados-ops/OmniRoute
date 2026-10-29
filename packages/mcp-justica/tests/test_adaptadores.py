@@ -323,3 +323,47 @@ def test_quem_a_ferramenta_aceita_nao_leva_a_ressalva():
             motivo = consultar(sistema, capacidade).motivo
             assert "SO PELA LINHA DE COMANDO" not in motivo, (
                 f"{sistema!r}/{capacidade.value} e alcancado pela ferramenta")
+
+
+# ==========================================================================
+# NAO_SUPORTADO nao pode significar "nao quero"
+#
+# O preambulo da matriz diz, com todas as letras, que NAO_SUPORTADO e
+# afirmacao sobre A FONTE: aquele portal nao oferece aquilo, e nenhum trabalho
+# deste lado muda isso. Usa-lo para dizer "e ato de outra natureza e exige
+# decisao do operador" poe na boca do servidor uma afirmacao falsa sobre o
+# tribunal, e o advogado deixa de procurar no portal uma coisa que esta la.
+#
+# Era o que o eproc fazia, e o proprio motivo se denunciava: dizia "o portal
+# OFERECE 'Download Completo', MAS ...". Quando o motivo precisa de um "mas"
+# para sustentar a situacao, a situacao esta errada.
+# ==========================================================================
+
+def test_nenhum_motivo_de_nao_suportado_admite_que_a_fonte_oferece():
+    """Guarda de coerencia interna, e nao de conteudo: uma declaracao que diz
+    'a fonte nao expoe' nao pode, na mesma frase, dizer que ela expoe."""
+    from justica_mcp.core.capabilities import MATRIZ, Situacao
+
+    for sistema, capacidades in MATRIZ.items():
+        for capacidade, decl in capacidades.items():
+            if decl.situacao is not Situacao.NAO_SUPORTADO:
+                continue
+            baixo = decl.motivo.lower()
+            for contradicao in ("o portal oferece", "o portal baixa",
+                                "a fonte oferece"):
+                assert contradicao not in baixo, (
+                    f"{sistema}/{capacidade.value}: declarado NAO_SUPORTADO "
+                    f"e o motivo diz {contradicao!r}. NAO_SUPORTADO fala da "
+                    "fonte; se a fonte oferece, a recusa e deste lado")
+
+
+def test_o_eproc_nao_nega_um_download_que_ele_faz():
+    """Corrida registrada em 23/10/2026: copia integral do eproc, 2237 folhas.
+    `_baixar_integra` existe em `portal.py` e o complemento baixa documento a
+    documento. Declarar NAO_SUPORTADO para os dois era negar o que o programa
+    faz todo dia."""
+    from justica_mcp.core.capabilities import Situacao, consultar
+
+    for capacidade in (Capacidade.BAIXAR_INTEGRA, Capacidade.BAIXAR_DOCUMENTO):
+        assert consultar("eproc", capacidade).situacao is not (
+            Situacao.NAO_SUPORTADO), capacidade

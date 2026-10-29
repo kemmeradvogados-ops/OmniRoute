@@ -53,7 +53,17 @@ def _nao_suportado(motivo: str) -> Declaracao:
     return Declaracao(Situacao.NAO_SUPORTADO, motivo)
 
 
-def _fase2(motivo: str = "Previsto para a Fase 2, que introduz acesso autenticado.") -> Declaracao:
+# O motivo padrao dizia "Previsto para a Fase 2, que introduz acesso
+# autenticado" em 18 declaracoes dos quatro portais. A Fase 2 chegou: o acesso
+# autenticado existe e roda. A frase passou a informar ao assistente que ele
+# ainda viria, o que e falso, e a sugerir que a capacidade depende de uma
+# entrega que ja aconteceu, quando o que falta e escrever aquele caminho.
+#
+# O nome da funcao fica, porque esta em dezenas de linhas e troca-lo so
+# mudaria o rotulo. O que precisava mudar era o que ela AFIRMA.
+def _fase2(motivo: str = ("Este caminho nao foi escrito neste adaptador. O "
+                          "acesso autenticado em si ja existe: o que falta e "
+                          "esta capacidade, e nao a fase.")) -> Declaracao:
     return Declaracao(Situacao.NAO_IMPLEMENTADO, motivo)
 
 
@@ -112,15 +122,38 @@ MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
         ),
         Capacidade.LISTAR_DOCUMENTOS: Declaracao(
             Situacao.EXIGE_CREDENCIAL,
-            "Os documentos de cada evento sao LISTADOS, com rotulo e endereco. "
-            "Abrir e baixar continuam fora do escopo.",
+            "Os documentos de cada evento sao LISTADOS, com rotulo e "
+            "endereco. Listar nao abre nem baixa nada: para a copia, ver "
+            "`baixar_documento` e `baixar_integra`.",
         ),
-        Capacidade.BAIXAR_DOCUMENTO: _nao_suportado(
-            "Download permanece proibido na versao somente leitura, em qualquer modo."
+        # AS DUAS LINHAS ABAIXO DIZIAM NAO_SUPORTADO ATE 29/10/2026, e o
+        # motivo da integra se denunciava sozinho: "O portal OFERECE 'Download
+        # Completo', MAS baixar autos e ato de outra natureza e exige decisao
+        # expressa do operador". Quando um motivo precisa de um "mas" para
+        # sustentar a situacao, a situacao esta errada: NAO_SUPORTADO e
+        # afirmacao sobre A FONTE, e ali a propria frase admitia que a fonte
+        # oferece. O que havia era uma decisao nossa vestida de limite do
+        # tribunal, que e exatamente o que o preambulo deste arquivo proibe.
+        #
+        # E a decisao nossa tambem deixou de existir. `_baixar_integra` esta
+        # escrito em `portal.py`, o complemento baixa documento a documento, e
+        # ha corrida registrada em 23/10/2026 com a copia integral do eproc,
+        # 2237 folhas. A matriz negava o que o programa faz.
+        Capacidade.BAIXAR_DOCUMENTO: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Documento a documento, pelo complemento: so o que a copia que ja "
+            "esta na pasta nao cobre. ATENCAO: a copia e o PADRAO do comando "
+            "(`--documentos` vale 'auto'); quem nao a quer precisa dizer "
+            "`--documentos nenhum`.",
         ),
-        Capacidade.BAIXAR_INTEGRA: _nao_suportado(
-            "O portal oferece 'Download Completo', mas baixar autos e ato de outra "
-            "natureza e exige decisao expressa do operador."
+        Capacidade.BAIXAR_INTEGRA: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Pelo botao 'Download Completo' do proprio portal, que monta o "
+            "arquivo sob demanda: e o unico download deste projeto que exige "
+            "clique. Em campo a copia veio PARTIDA, em mais de um arquivo "
+            "(conferido em 05/10/2026). O eproc tambem levanta o desafio "
+            "'Confirme que e humano', que exige uma pessoa diante da tela da "
+            "maquina onde o programa roda.",
         ),
         Capacidade.DAR_CIENCIA_INTIMACAO: _nao_suportado(
             "Abrir expediente dispara a ciencia e inicia o prazo."
