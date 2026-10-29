@@ -258,6 +258,48 @@ class BaixarAutosInput(NumeroInput):
 SISTEMAS_AUTENTICADOS = ("dcp", "eproc")
 
 
+# A ressalva de leitura nomeia OS BLOCOS, e nao a tela inteira.
+#
+# Ate 29/10/2026 esta frase dizia "a capa E AS MOVIMENTACOES foram lidas pela
+# estrutura da pagina", enquanto o proprio dado que ela acompanha registra
+# `leitura.conferido.movimentacoes: True`: as movimentacoes do Portal de
+# Servicos sao lidas por cabecalho e rotulo conferidos na tela real desde
+# 13/10/2026, e `tools.py` nunca lia esse detalhamento. O texto contradizia o
+# dado ao lado e lancava duvida sobre o bloco mais usado da resposta.
+#
+# Duvida a mais nao e cautela a mais. O advogado que desconfia de tudo confere
+# tudo de novo na mao, e o conector deixa de servir para o que foi feito. A
+# ressalva precisa valer exatamente onde ha ressalva, e nem um bloco alem.
+RESSALVA_POR_BLOCO = {
+    "principais": "capa",
+    "partes": "partes",
+    "mandados": "mandados",
+    "movimentacoes": "movimentacoes",
+}
+
+
+def ressalva_da_leitura(leitura: dict) -> str:
+    """O que acrescentar a observacao quando a leitura nao foi conferida.
+
+    Le `leitura.conferido`, que diz bloco a bloco o que foi conferido contra a
+    tela real. Sem esse detalhamento nao da para nomear nada, e a leitura
+    honesta de "nao sei quais blocos" e avisar da tela inteira.
+    """
+    conferido = (leitura or {}).get("conferido") or {}
+    pendentes = [rotulo for chave, rotulo in RESSALVA_POR_BLOCO.items()
+                 if conferido.get(chave) is False]
+    if not pendentes:
+        return (" Esta leitura veio da estrutura da pagina, e nao de seletor "
+                "conferido na tela real. Trate como leitura nao conferida e "
+                "diga isso ao advogado.")
+    lista = (pendentes[0] if len(pendentes) == 1 else
+             ", ".join(pendentes[:-1]) + " e " + pendentes[-1])
+    return (f" O que NAO foi conferido contra a tela real: {lista}. Esse "
+            "trecho vem da estrutura da pagina, e nao de seletor conferido. "
+            "Diga isso ao advogado ao apresenta-lo. O restante da resposta "
+            "foi conferido.")
+
+
 def registrar(mcp: Any) -> None:
     def somente_leitura(titulo: str) -> ToolAnnotations:
         """Anotacoes da versao 1: nenhuma ferramenta altera estado no tribunal."""
@@ -604,10 +646,7 @@ def registrar(mcp: Any) -> None:
             observacao = ("Leitura autenticada do portal, ao vivo. Nenhum documento "
                           "foi aberto e nenhum expediente foi tocado.")
             if not conferida:
-                observacao += (
-                    " A capa e as movimentacoes foram lidas pela estrutura da "
-                    "pagina, e nao por seletor conferido na tela real. Trate "
-                    "como leitura nao conferida e diga isso ao advogado.")
+                observacao += ressalva_da_leitura(leitura)
             dados["proveniencia"] = {
                 "fonte": f"{tribunal.codigo}/{sistema}",
                 "metodo": "navegador",

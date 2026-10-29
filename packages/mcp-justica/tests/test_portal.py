@@ -9025,3 +9025,73 @@ def test_o_relato_diz_de_que_lista_os_numeros_falam(tmp_path, capsys):
     saida = capsys.readouterr().out
     assert "contados na lista inteira" in saida
     assert "com_data_de_publicacao: 8" in saida
+
+
+# ==========================================================================
+# A ressalva de leitura nomeia os blocos, e nao a tela inteira
+#
+# Ate 29/10/2026 a observacao da consulta autenticada dizia "a capa E AS
+# MOVIMENTACOES foram lidas pela estrutura da pagina", enquanto o dado que ela
+# acompanha registra `leitura.conferido.movimentacoes: True`. As movimentacoes
+# do Portal de Servicos sao lidas por cabecalho e rotulo conferidos na tela
+# real desde 13/10/2026, e `tools.py` nunca lia esse detalhamento: o texto
+# contradizia o dado ao lado.
+#
+# Duvida a mais nao e cautela a mais. O advogado que desconfia de tudo confere
+# tudo de novo na mao, e o conector deixa de servir para o que foi feito.
+# ==========================================================================
+
+def test_a_ressalva_nomeia_so_o_bloco_nao_conferido():
+    from justica_mcp.tools import ressalva_da_leitura
+
+    texto = ressalva_da_leitura({"conferido": {
+        "principais": False, "partes": True,
+        "mandados": True, "movimentacoes": True,
+    }})
+    assert "capa" in texto
+    assert "movimentacoes" not in texto, (
+        "as movimentacoes SAO conferidas; dize-las nao conferidas lanca "
+        "duvida sobre o bloco mais usado da resposta")
+    assert "O restante da resposta foi conferido" in texto
+
+
+def test_a_ressalva_junta_varios_blocos_sem_quebrar_a_frase():
+    from justica_mcp.tools import ressalva_da_leitura
+
+    texto = ressalva_da_leitura({"conferido": {
+        "principais": False, "partes": False,
+        "mandados": True, "movimentacoes": True,
+    }})
+    assert "capa e partes" in texto
+
+
+def test_sem_detalhamento_a_ressalva_volta_a_ser_da_tela_inteira():
+    """Nomear exige saber. Sem `conferido`, a leitura honesta de 'nao sei
+    quais blocos' e avisar de tudo, e nao escolher um bloco ao acaso."""
+    from justica_mcp.tools import ressalva_da_leitura
+
+    for vazio in ({}, {"conferido": {}}, {"conferido": None}):
+        texto = ressalva_da_leitura(vazio)
+        assert "Trate como leitura nao conferida" in texto
+        assert "O que NAO foi conferido" not in texto
+
+
+def test_a_ressalva_sai_do_dado_que_o_dcp_realmente_monta():
+    """O teste acima usa um `conferido` escrito a mao. Este amarra a regra ao
+    dado de verdade: o molde do DCP marca partes, mandados e movimentacoes
+    como conferidos, e so a capa como nao conferida.
+
+    Se um dia isso mudar, a ressalva muda junto e este teste mostra onde."""
+    from justica_mcp.dcp import _leitura_vazia
+    from justica_mcp.tools import ressalva_da_leitura
+
+    leitura = _leitura_vazia()["leitura"]
+    assert leitura["conferido"] == {
+        "partes": True, "mandados": True,
+        "movimentacoes": True, "principais": False,
+    }
+    texto = ressalva_da_leitura(leitura)
+    assert "capa" in texto
+    assert "partes" not in texto
+    assert "mandados" not in texto
+    assert "movimentacoes" not in texto
