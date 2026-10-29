@@ -4934,8 +4934,27 @@ def _colunas_dos_documentos(bruto: Any) -> list:
 # Nao e lista de desejo: sao os rotulos que a tela do Portal de Servicos
 # ofereceu naquela consulta, na secao da capa. Servem para uma pergunta so,
 # que e se a leitura generica pegou a capa ou pegou outro bloco.
-ROTULOS_DA_CAPA = ("classe", "assunto", "orgao julgador", "relator",
-                   "localizacao", "fase atual")
+# OS DOIS GRAUS TEM CAPAS COM ROTULOS DIFERENTES, e julgar um com a lista do
+# outro faz o programa recusar capa que esta lá.
+#
+# Segundo grau, lido na tela real em 27/10/2026:
+#   Classe, Assunto, Localizacao, Orgao Julgador, Relator, Fase Atual
+#
+# Primeiro grau, lido na tela real em 29/10/2026, no processo
+# `/consultaprocessual/#/consultar/detalhes-processo`, que oferece onze
+# rotulos ao todo: Juiz, Serventia e Data da Distribuicao sao os da capa; os
+# outros oito sao de movimento ou de mandado.
+#
+# A nota de 21/10/2026 mandava procurar a capa do primeiro grau na secao
+# "Descricao Detalhada". Estava mirando errado: esse titulo aparece DEZ vezes
+# nessa tela, como `h4` dentro de `div#modal-geral`, e e o cabecalho de uma
+# janela por movimento, nao a capa do processo.
+ROTULOS_DA_CAPA_DO_SEGUNDO_GRAU = ("classe", "assunto", "orgao julgador",
+                                   "relator", "localizacao", "fase atual")
+ROTULOS_DA_CAPA_DO_PRIMEIRO_GRAU = ("juiz", "serventia",
+                                    "data da distribuicao")
+ROTULOS_DA_CAPA = (ROTULOS_DA_CAPA_DO_SEGUNDO_GRAU
+                   + ROTULOS_DA_CAPA_DO_PRIMEIRO_GRAU)
 
 # Quantos deles bastam para a capa parecer capa. Tres, porque com dois ainda
 # cabe coincidencia e com quatro a tela de primeiro grau, que tem rotulos
@@ -4974,7 +4993,13 @@ def veredicto_da_capa(principais: dict) -> tuple[bool, str]:
     """
     achados = {_sem_acento(r) for r in (principais or {})}
     presentes = [r for r in ROTULOS_DA_CAPA if r in achados]
-    if len(presentes) >= CAPA_RECONHECIDA_COM:
+    # Tres DE UM MESMO GRAU, e nao tres quaisquer: misturar os dois conjuntos
+    # deixaria passar uma tela com um rotulo de cada lado, que nao e capa de
+    # nenhum dos dois.
+    do_segundo = [r for r in ROTULOS_DA_CAPA_DO_SEGUNDO_GRAU if r in achados]
+    do_primeiro = [r for r in ROTULOS_DA_CAPA_DO_PRIMEIRO_GRAU if r in achados]
+    if (len(do_segundo) >= CAPA_RECONHECIDA_COM
+            or len(do_primeiro) >= CAPA_RECONHECIDA_COM):
         return True, (
             "`principais` traz os rotulos da capa ("
             + ", ".join(presentes) + "), que e o que se esperava achar. Os "
@@ -4982,14 +5007,12 @@ def veredicto_da_capa(principais: dict) -> tuple[bool, str]:
             "generica e nao foram conferidos um a um contra a tela. Use como "
             "capa, conferindo o que for decidir prazo.")
     return False, (
-        "`principais` (a capa) NAO foi reconhecida: dos rotulos que a capa "
-        "costuma ter (" + ", ".join(ROTULOS_DA_CAPA) + ") esta leitura achou "
-        + (", ".join(presentes) if presentes else "nenhum") + ". Em 21/10/2026 "
-        "o mesmo aconteceu e os tres rotulos achados eram 'Destinatario:', "
-        "'Data da remessa:' e 'Prazo:', que sao de outro bloco. Naquela tela a "
-        "capa morava na secao 'Descricao Detalhada', onde esta leitura nao "
-        "acha nada. Nao use `principais` como capa sem conferir contra a "
-        "tela.")
+        "`principais` (a capa) NAO foi reconhecida. A capa do segundo grau tem "
+        + ", ".join(ROTULOS_DA_CAPA_DO_SEGUNDO_GRAU) + "; a do primeiro tem "
+        + ", ".join(ROTULOS_DA_CAPA_DO_PRIMEIRO_GRAU) + ". Sao precisos tres "
+        "de um mesmo grau, e esta leitura achou "
+        + (", ".join(presentes) if presentes else "nenhum")
+        + ". Nao use `principais` como capa sem conferir contra a tela.")
 
 
 def _leitura_vazia(falha: Optional[str] = None) -> dict:

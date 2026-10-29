@@ -4027,7 +4027,17 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
         fases["com_data_de_publicacao"] = sum(
             1 for m in paginas["movimentacoes"]
             if "publicado em" in str((m or {}).get("descricao") or ""))
-        fases["blocos"] = len(paginas["movimentacoes"])
+        # `blocos` conta BLOCO DE FASE, e so ele. Em 29/10/2026 o relatorio
+        # de um processo de primeiro grau mostrou "BLOCOS DE FASE: blocos:
+        # 99" num caso em que as 99 movimentacoes vieram de `app-movimento`:
+        # o numero estava certo e o nome dele, errado. Numero com nome que
+        # nao descreve o que foi contado e a mesma familia de defeito do
+        # numero sem escopo.
+        de_bloco_de_fase = sum(
+            1 for m in paginas["movimentacoes"]
+            if "bloco de fase" in str((m or {}).get("origem") or "").lower()
+            or "bloco de FASE ATUAL" in str((m or {}).get("origem") or ""))
+        fases["blocos"] = de_bloco_de_fase
         fases["contado_na_lista_inteira"] = True
         dados["estrutura"]["fases_da_capa"] = fases
     dados["numero"] = numero.formatado

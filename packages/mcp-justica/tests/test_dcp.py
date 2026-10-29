@@ -8793,7 +8793,18 @@ def test_o_recado_diz_por_que_a_capa_nao_vale():
     from justica_mcp.dcp import _leitura_vazia
 
     recado = _leitura_vazia()["leitura"]["o_que_nao_foi_conferido"]
-    assert "Descricao Detalhada" in recado
+    # A ORIENTACAO MUDOU EM 29/10/2026, e a mudanca e o conserto.
+    #
+    # Ate aqui o recado mandava procurar a capa do primeiro grau na secao
+    # "Descricao Detalhada", e este teste guardava essa frase. A tela real
+    # mostrou que o titulo aparece DEZ vezes, dentro de `div#modal-geral`, e e
+    # o cabecalho de uma janela por movimento: a orientacao mirava errado.
+    #
+    # O que o recado diz agora e util de verdade: quais sao os rotulos da capa
+    # de cada grau, para quem conferir saber o que procurar.
+    assert "Descricao Detalhada" not in recado
+    assert "capa do segundo grau tem" in recado
+    assert "a do primeiro tem" in recado
     assert "Nao use `principais` como capa" in recado
 
 
@@ -9647,7 +9658,11 @@ def test_a_capa_que_nao_e_capa_continua_recusada():
     reconhecida, explicacao = veredicto_da_capa(CAPA_QUE_NAO_E_CAPA)
     assert reconhecida is False
     assert "Nao use `principais` como capa" in explicacao
-    assert "21/10/2026" in explicacao
+    # A recusa nomeia os rotulos dos DOIS graus, em vez de citar o episodio de
+    # 21/10/2026, cuja licao ("a capa mora na Descricao Detalhada") se provou
+    # errada na tela real de 29/10.
+    assert "juiz" in explicacao
+    assert "classe" in explicacao
 
 
 def test_reconhecer_rotulo_nao_e_conferir_valor():
@@ -10878,3 +10893,50 @@ def test_sem_proximo_lote_a_falta_continua_sendo_dita(monkeypatch):
                                              segundos=4)
     assert "FALTAM 2" in relato["situacao"]
     assert "NAO ha botao de proximo lote" in relato["situacao"]
+
+
+# ---------------------------------------------------------------------------
+# Os dois graus tem capas com rotulos diferentes
+#
+# Lido na tela real do primeiro grau em 29/10/2026: dos onze rotulos que a
+# tela oferece, os da capa sao `Juiz:`, `Serventia:` e `Data da Distribuicao:`.
+# Os do segundo grau sao outros. Julgar um com a lista do outro fazia o
+# programa recusar capa que estava la.
+# ---------------------------------------------------------------------------
+
+def test_a_capa_do_primeiro_grau_e_reconhecida():
+    from justica_mcp.dcp import veredicto_da_capa
+
+    reconhecida, explicacao = veredicto_da_capa(
+        {"Juiz": "Fulano", "Serventia": "1a Vara", "Data da Distribuição": "x"})
+    assert reconhecida is True
+    assert "juiz" in explicacao
+
+
+def test_a_capa_do_segundo_grau_continua_reconhecida():
+    from justica_mcp.dcp import veredicto_da_capa
+
+    assert veredicto_da_capa(
+        {"Classe": "x", "Assunto": "y", "Relator": "z"})[0] is True
+
+
+def test_tres_rotulos_de_graus_misturados_nao_bastam():
+    """Misturar os dois conjuntos deixaria passar uma tela com um rotulo de
+    cada lado, que nao e capa de nenhum dos dois."""
+    from justica_mcp.dcp import veredicto_da_capa
+
+    assert veredicto_da_capa(
+        {"Juiz": "x", "Classe": "y", "Relator": "z"})[0] is False
+
+
+def test_a_recusa_nomeia_os_rotulos_dos_dois_graus():
+    from justica_mcp.dcp import veredicto_da_capa
+
+    _, explicacao = veredicto_da_capa({"Destinatario": "x"})
+    assert "capa do segundo grau tem" in explicacao
+    assert "a do primeiro tem" in explicacao
+    assert "juiz" in explicacao
+    assert "classe" in explicacao
+    # A nota antiga mandava procurar na secao errada: aquele titulo aparece
+    # dez vezes na tela, como cabecalho de uma janela por movimento.
+    assert "Descricao Detalhada" not in explicacao
