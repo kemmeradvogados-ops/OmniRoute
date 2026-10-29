@@ -128,14 +128,41 @@ def test_o_resumo_nao_traz_o_relato_inteiro():
     assert resumo["estado"] == CONCLUIDO
 
 
-def test_o_comando_corre_com_o_python_do_proprio_servidor():
-    """Guarda de fonte: `python` solto pegaria o do sistema, sem dependencias."""
+def test_o_comando_corre_com_o_python_do_proprio_servidor(tmp_path, monkeypatch):
+    """`python` solto pegaria o do sistema, sem as dependencias.
+
+    Conferido pela CHAMADA, e nao pelo texto: ate 29/10/2026 este teste
+    procurava a frase "justica_mcp.portal" na fonte, e quebrou quando o
+    comando passou a correr pelo corredor, que chama o portal em seguida. A
+    regra, que e usar o Python deste ambiente, nunca mudou.
+    """
+    visto = {}
+
+    class _Fingido:
+        pid = 1
+
+    monkeypatch.setattr(trabalhos.subprocess, "Popen",
+                        lambda *a, **kw: (visto.update(linha=a[0], **kw)
+                                          or _Fingido()))
+    trabalhos._abrir_processo(
+        ["consultar"], arquivo_de_relato=str(tmp_path / "r.log"))
+
+    import sys
+
+    assert visto["linha"][0] == sys.executable
+    assert visto["stderr"] is trabalhos.subprocess.STDOUT
+
+
+def test_o_comando_chega_ao_portal_pelo_corredor():
+    """O corredor nao substitui o portal: ele o chama, e e por isso que o
+    codigo de saida passa a ser conhecido."""
     import inspect
 
-    fonte = inspect.getsource(trabalhos._abrir_processo)
-    assert "sys.executable" in fonte
-    assert "justica_mcp.portal" in fonte
-    assert "stderr=subprocess.STDOUT" in fonte
+    from justica_mcp import corredor
+
+    assert "justica_mcp.portal" in inspect.getsource(trabalhos._abrir_processo) \
+        or "justica_mcp.corredor" in inspect.getsource(trabalhos._abrir_processo)
+    assert "from .portal import main" in inspect.getsource(corredor._do_portal)
 
 
 def test_o_servidor_nao_compartilha_a_saida_padrao_com_o_download():
@@ -396,3 +423,205 @@ def test_a_pasta_de_relatos_nao_cresce_para_sempre(tmp_path, monkeypatch):
 
     gravados = trabalhos.trabalhos_gravados(tmp_path)
     assert len(gravados) <= trabalhos.TETO_DE_TRABALHOS, len(gravados)
+
+
+# ==========================================================================
+# O filho sobrevive DE VERDADE, com processo de verdade
+#
+# Ate aqui tudo nesta area foi conferido com duble: `subprocess.Popen` virava
+# um espiao e a anotacao do servidor morto era escrita a mao. Isso prova que a
+# logica esta certa, e nao prova que o filho sobrevive.
+#
+# O teste abaixo abre processo de verdade, solta a ponta de leitura do lado de
+# ca e confere que o arquivo continua crescendo. E a unica prova que vale para
+# a afirmacao "o download nao morre com o servidor".
+# ==========================================================================
+
+def test_o_filho_continua_escrevendo_depois_que_ninguem_le(tmp_path):
+    """Processo DE VERDADE, e nao duble.
+
+    Escreve uma linha por vez num arquivo. Do lado de ca, nada o le. Se o
+    relato fosse por cano, ele morreria de cano quebrado assim que o buffer
+    enchesse ou a ponta fechasse; em arquivo, segue.
+    """
+    import subprocess
+    import sys
+    import time
+
+    relato = tmp_path / "relato.log"
+    programa = (
+        "import sys, time\n"
+        "for i in range(40):\n"
+        "    print('linha', i, flush=True)\n"
+        "    time.sleep(0.05)\n"
+    )
+    with open(relato, "w", encoding="utf-8") as destino:
+        filho = subprocess.Popen([sys.executable, "-c", programa],
+                                 stdout=destino, stderr=subprocess.STDOUT,
+                                 text=True)
+    # A ponta de escrita deste lado ja fechou; so o filho segue com a dele.
+    try:
+        time.sleep(0.4)
+        parcial = relato.read_text(encoding="utf-8").count("\n")
+        assert parcial > 0, "o filho nao escreveu nada"
+        filho.wait(timeout=20)
+        total = relato.read_text(encoding="utf-8").count("\n")
+        assert total == 40, f"o filho parou em {total} de 40 linhas"
+        assert total > parcial, "o arquivo precisava ter crescido no meio"
+    finally:
+        if filho.poll() is None:
+            filho.kill()
+
+
+def test_o_corredor_grava_o_codigo_de_saida(tmp_path):
+    """Processo alheio nao tem codigo de saida legivel.
+
+    Um servidor que reinicia e encontra um download em curso NAO e pai dele, e
+    `wait()` so funciona para filho proprio. Sem a marca em disco, ao ver o
+    processo sumir so daria para dizer "terminou", sem saber se deu certo, ou
+    pior, chutar "concluido". Por isso quem corre grava o proprio desfecho.
+    """
+    from justica_mcp import corredor
+
+    marca = tmp_path / "codigo"
+    saida = corredor.correr([str(marca)], _comando=lambda argv: 0)
+    assert saida == 0
+    assert marca.read_text(encoding="utf-8").strip() == "0"
+
+
+def test_o_corredor_grava_o_codigo_tambem_quando_o_comando_falha(tmp_path):
+    from justica_mcp import corredor
+
+    marca = tmp_path / "codigo"
+    saida = corredor.correr([str(marca)], _comando=lambda argv: 3)
+    assert saida == 3
+    assert marca.read_text(encoding="utf-8").strip() == "3"
+
+
+def test_o_corredor_grava_o_codigo_tambem_quando_o_comando_explode(tmp_path):
+    """Explosao nao pode deixar a marca em branco: quem le depois concluiria
+    que o trabalho ainda corre."""
+    from justica_mcp import corredor
+
+    def _explodir(argv):
+        raise RuntimeError("navegador morreu")
+
+    marca = tmp_path / "codigo"
+    saida = corredor.correr([str(marca)], _comando=_explodir)
+    assert saida != 0
+    assert marca.read_text(encoding="utf-8").strip() not in ("", "0")
+
+
+# ==========================================================================
+# Item 4: o servidor novo acompanha o que ficou vivo
+# ==========================================================================
+
+def test_trabalho_vivo_herdado_e_acompanhado_ate_terminar(tmp_path, monkeypatch):
+    """Sem isto, um download que continua rodando fica EM_CURSO para sempre,
+    porque ninguem mais olha para ele."""
+    import json
+    import time
+
+    from justica_mcp import trabalhos
+
+    monkeypatch.setattr(trabalhos, "diretorio_dos_trabalhos", lambda: tmp_path)
+    monkeypatch.setattr(trabalhos, "ESPERA_ENTRE_CONFERENCIAS", 0.02)
+
+    respostas = iter([True, True, False, False, False])
+    monkeypatch.setattr(trabalhos, "processo_vivo",
+                        lambda pid, desde: next(respostas, False))
+
+    (tmp_path / "viv001.codigo").write_text("0", encoding="utf-8")
+    (tmp_path / "viv001.json").write_text(json.dumps({
+        "trabalho": "viv001", "acao": "baixar", "processo": "123",
+        "estado": trabalhos.EM_CURSO, "comecou_em": "2026-10-29T16:24:00+00:00",
+        "terminou_em": None, "codigo_de_saida": None,
+        "arquivo_de_relato": str(tmp_path / "viv001.log"), "pid": 4242,
+        "observacao": None,
+    }), encoding="utf-8")
+
+    mural = trabalhos.Mural()
+    assert mural.listar()[0]["estado"] == trabalhos.EM_CURSO, (
+        "processo vivo nao pode nascer como interrompido")
+
+    limite = time.time() + 5
+    while time.time() < limite:
+        if mural.listar()[0]["estado"] != trabalhos.EM_CURSO:
+            break
+        time.sleep(0.02)
+
+    achado = mural.listar()[0]
+    assert achado["estado"] == trabalhos.CONCLUIDO, achado
+    assert achado["codigo_de_saida"] == 0
+
+
+def test_sem_a_marca_o_desfecho_nao_e_inventado(tmp_path, monkeypatch):
+    """O trabalho terminou e nao ha como saber como. Dizer 'concluido' seria
+    afirmar sucesso sem prova, e e o tipo de afirmacao que vira resposta
+    errada ao advogado."""
+    import json
+    import time
+
+    from justica_mcp import trabalhos
+
+    monkeypatch.setattr(trabalhos, "diretorio_dos_trabalhos", lambda: tmp_path)
+    monkeypatch.setattr(trabalhos, "ESPERA_ENTRE_CONFERENCIAS", 0.02)
+    monkeypatch.setattr(trabalhos, "processo_vivo", lambda pid, desde: False)
+
+    (tmp_path / "sem001.json").write_text(json.dumps({
+        "trabalho": "sem001", "acao": "baixar", "processo": "123",
+        "estado": trabalhos.EM_CURSO, "comecou_em": "2026-10-29T16:24:00+00:00",
+        "terminou_em": None, "codigo_de_saida": None,
+        "arquivo_de_relato": str(tmp_path / "sem001.log"), "pid": 4242,
+        "observacao": None,
+    }), encoding="utf-8")
+
+    achado = trabalhos.Mural().listar()[0]
+    assert achado["estado"] == trabalhos.INTERROMPIDO
+    assert achado["codigo_de_saida"] is None
+
+
+def test_o_corredor_grava_a_marca_rodando_como_processo_de_verdade(tmp_path):
+    """A prova final do item 4, com processo de verdade e nao duble.
+
+    O corredor roda num processo proprio, o comando devolve um codigo, e a
+    marca aparece em disco. E essa marca que permite a um servidor FUTURO,
+    que nao e pai deste processo, saber como ele terminou.
+    """
+    import subprocess
+    import sys
+
+    marca = tmp_path / "trabalho.codigo"
+    programa = (
+        "import sys\n"
+        "from justica_mcp.corredor import correr\n"
+        "raise SystemExit(correr([sys.argv[1]], _comando=lambda a: 7))\n"
+    )
+    fim = subprocess.run([sys.executable, "-c", programa, str(marca)],
+                         capture_output=True, text=True, timeout=60)
+    assert fim.returncode == 7, fim.stderr
+    assert marca.read_text(encoding="utf-8").strip() == "7"
+
+
+def test_a_marca_fica_ao_lado_do_relato(tmp_path, monkeypatch):
+    """O mural acha a marca pelo nome do arquivo de relato. Se os dois
+    deixarem de ficar lado a lado, o desfecho vira desconhecido em silencio,
+    e ninguem repara ate um download terminar sem resposta."""
+    visto = {}
+
+    class _Fingido:
+        pid = 1
+
+    monkeypatch.setattr(trabalhos.subprocess, "Popen",
+                        lambda *a, **kw: (visto.update(linha=a[0]) or _Fingido()))
+    relato = tmp_path / "abc.log"
+    trabalhos._abrir_processo(["consultar"], arquivo_de_relato=str(relato))
+
+    passada = visto["linha"][3]   # python -m justica_mcp.corredor <marca> ...
+    esperada = str(relato.with_suffix(".codigo"))
+    assert passada == esperada, f"{passada!r} != {esperada!r}"
+
+    t = trabalhos.Trabalho(identificador="abc", acao="baixar", numero="1")
+    t.arquivo_de_relato = str(relato)
+    relato.with_suffix(".codigo").write_text("0", encoding="utf-8")
+    assert trabalhos.Mural._codigo_marcado(t) == 0

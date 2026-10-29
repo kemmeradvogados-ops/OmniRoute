@@ -1272,10 +1272,19 @@ def registrar(mcp: Any) -> None:
         Sem o identificador, lista os ultimos trabalhos desta execucao. O
         relato vem do proprio comando, linha a linha, e nada nele e inferido.
 
-        `estado` vale "em curso", "concluido" ou "falhou". Concluido NAO quer
-        dizer que veio arquivo: pode ter vindo a resposta de que o portal
-        aceitou o pedido e esta montando, que e o caso normal do eproc. As
-        ultimas linhas do relato dizem qual dos dois.
+        `estado` vale "em curso", "concluido", "falhou" ou "interrompido".
+
+        Concluido NAO quer dizer que veio arquivo: pode ter vindo a resposta
+        de que o portal aceitou o pedido e esta montando, que e o caso normal
+        do eproc. As ultimas linhas do relato dizem qual dos dois.
+
+        INTERROMPIDO e diferente de falhou, e a providencia e outra. Falhou e
+        o comando ter terminado mal; interrompido e ele nem ter chegado ao
+        fim, porque o servidor da extensao reiniciou ou o processo parou sem
+        deixar desfecho. Nesse caso NADA do que ja foi gravado se perdeu: o
+        download documento a documento pula o que ja esta em disco, entao
+        retomar custa uma autenticacao e nao a corrida inteira. Diga isso ao
+        advogado em vez de apresentar o trabalho como perdido.
         """
         from .trabalhos import MURAL
 
@@ -1284,10 +1293,18 @@ def registrar(mcp: Any) -> None:
         achado = MURAL.ver(trabalho)
         if achado is None:
             return _erro(
-                f"Nao ha trabalho {trabalho!r} nesta execucao.", "trabalho_desconhecido",
-                "O mural vive enquanto o servidor vive: reiniciar o Claude "
-                "apaga a lista, mas nao desfaz o que ja foi gravado em disco. "
-                "Use justica_pecas_do_processo para ver o que ha na pasta.",
+                f"Nao ha trabalho {trabalho!r} anotado.", "trabalho_desconhecido",
+                # ATE 29/10/2026 esta mensagem dizia "o mural vive enquanto o "
+                # servidor vive: reiniciar o Claude apaga a lista". Deixou de
+                # ser verdade no mesmo dia, quando os trabalhos passaram a ser
+                # anotados em disco. Mensagem que explica o programa precisa
+                # envelhecer junto com ele.
+                "Os trabalhos ficam anotados em disco e sobrevivem ao "
+                "reinicio, entao este identificador nao e de um trabalho "
+                "recente: ou esta errado, ou e antigo demais e saiu pela "
+                "limpeza. Chame esta mesma ferramenta sem identificador para "
+                "ver os que existem, ou justica_pecas_do_processo para ver o "
+                "que ha na pasta do processo.",
             )
         return _json(achado.resumo(ultimas=max(1, min(ultimas_linhas, 60))))
 

@@ -30,6 +30,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -55,6 +56,15 @@ TETO_DE_LINHAS = 400
 
 # Quantos trabalhos ficam na memoria. Os mais antigos ja terminados saem.
 TETO_DE_TRABALHOS = 20
+
+# De quanto em quanto tempo um trabalho ADOTADO e conferido. Adotado e o que
+# ficou rodando de um servidor anterior: este nao e pai dele, entao nao ha
+# `wait()` para esperar, so perguntar de tempos em tempos se ainda responde.
+#
+# Cinco segundos e folgado de proposito. A pergunta e barata, mas um download
+# dura de minutos a horas, e conferir a cada instante so gastaria energia para
+# descobrir a mesma coisa.
+ESPERA_ENTRE_CONFERENCIAS = 5.0
 
 
 def _agora() -> str:
@@ -247,6 +257,54 @@ class Mural:
                     "inteira.")
             self._trabalhos[trabalho.identificador] = trabalho
             self._ordem.append(trabalho.identificador)
+            if trabalho.estado == EM_CURSO:
+                # ADOTADO: continua rodando, e este servidor passa a segui-lo.
+                # Sem isto ele ficaria EM_CURSO para sempre, porque ninguem
+                # mais olharia para ele: o unico que o esperava morreu junto
+                # com o servidor anterior.
+                threading.Thread(
+                    target=self._seguir_o_adotado, args=(trabalho,),
+                    name=f"adotado-{trabalho.identificador}",
+                    daemon=True).start()
+
+    def _seguir_o_adotado(self, trabalho: Trabalho) -> None:
+        """Pergunta de tempos em tempos se o processo alheio ainda responde.
+
+        Nao da para esperar por ele: `wait()` so vale para filho proprio. Ao
+        ver que parou, o desfecho sai da marca que o corredor gravou. Sem a
+        marca, o estado diz que terminou e manda ler o relato, em vez de
+        afirmar um sucesso que ninguem verificou.
+        """
+        while processo_vivo(trabalho.pid, trabalho.comecou_em):
+            time.sleep(ESPERA_ENTRE_CONFERENCIAS)
+
+        codigo = self._codigo_marcado(trabalho)
+        trabalho.terminou_em = _agora()
+        if codigo is None:
+            trabalho.estado = INTERROMPIDO
+            trabalho.observacao = (
+                "O processo deste trabalho parou sem deixar o codigo de "
+                "saida, entao nao da para afirmar se ele concluiu. As ultimas "
+                "linhas do relato dizem ate onde ele chegou. O que ja foi "
+                "gravado em disco vale, e retomar pula o que ja esta la.")
+        else:
+            trabalho.codigo = codigo
+            trabalho.estado = CONCLUIDO if codigo == 0 else FALHOU
+            trabalho.observacao = (
+                "Trabalho herdado de um servidor anterior. O desfecho veio da "
+                "marca que o proprio comando gravou ao terminar.")
+        self._gravar(trabalho)
+
+    @staticmethod
+    def _codigo_marcado(trabalho: Trabalho) -> Optional[int]:
+        """O codigo de saida que o corredor gravou, se gravou."""
+        if not trabalho.arquivo_de_relato:
+            return None
+        marca = Path(trabalho.arquivo_de_relato).with_suffix(".codigo")
+        try:
+            return int(marca.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
 
     # ---- consulta ----------------------------------------------------
 
@@ -425,8 +483,14 @@ def _abrir_processo(argumentos: list, arquivo_de_relato=None):
 
     destino = (open(arquivo_de_relato, "w", encoding="utf-8", errors="replace")
                if arquivo_de_relato is not None else subprocess.DEVNULL)
+    # PELO CORREDOR, e nao direto pelo portal. O corredor grava o codigo de
+    # saida numa marca ao terminar, e e so por ela que um servidor FUTURO,
+    # que nao e pai deste processo, consegue saber como ele acabou. Ver
+    # `corredor.py`.
+    marca = (str(Path(arquivo_de_relato).with_suffix(".codigo"))
+             if arquivo_de_relato is not None else os.devnull)
     return subprocess.Popen(
-        [sys.executable, "-m", "justica_mcp.portal"] + list(argumentos),
+        [sys.executable, "-m", "justica_mcp.corredor", marca] + list(argumentos),
         stdout=destino, stderr=subprocess.STDOUT,
         text=True, bufsize=1, encoding="utf-8", errors="replace",
         **solta,
