@@ -3629,6 +3629,26 @@ AVISO_DA_LEITURA = (
 JS_DA_TELA_DO_PROCESSO = r"""
 () => {
   const corta = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+  // O TETO DA DESCRICAO DE UM MOVIMENTO, e o aviso de que ela foi cortada.
+  //
+  // Em 29/10/2026 a conferencia do advogado contra a tela achou um registro
+  // que parava em "conforme procu": a certidao continuava na tela por mais
+  // uma linha e meia, com o numero das folhas da procuracao. O corte era meu,
+  // em 300 caracteres, e NAO SE ANUNCIAVA. Quem lesse o arquivo nao tinha
+  // como saber que havia mais texto. E o defeito desta semana na forma mais
+  // direta: entregar o pedaco como se fosse o todo.
+  //
+  // Teto maior, porque certidao de inclusao de advogado passa de 300 com
+  // folga; e marca no fim, porque um teto qualquer um dia e atingido de novo,
+  // e ai quem le precisa saber.
+  const TETO_DA_DESCRICAO = 1200;
+  const MARCA_DE_CORTE = ' [...texto cortado pela leitura]';
+  const cortaDescricao = (s) => {
+    const inteiro = (s || '').replace(/\s+/g, ' ').trim();
+    if (inteiro.length <= TETO_DA_DESCRICAO) return inteiro;
+    return inteiro.slice(0, TETO_DA_DESCRICAO) + MARCA_DE_CORTE;
+  };
   const visivel = (e) => {
     const r = e.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
@@ -3643,8 +3663,26 @@ JS_DA_TELA_DO_PROCESSO = r"""
   const ROTULOS_DE_DATA = ['data', 'data da juntada', 'data do expediente',
                            'data da digitacao'];
   const ROTULOS_DE_DESCRICAO = ['descricao', 'descricao da juntada'];
+  // OS ROTULOS DA LISTA DE MOVIMENTOS DO SEGUNDO GRAU, que nao sao capa.
+  //
+  // Medido em 29/10/2026, na conferencia do advogado contra a tela: os campos
+  // `FASE` e `Destino` da capa apareciam com os valores do ULTIMO movimento,
+  // a remessa a Divisao de Distribuicao, e nao com a fase atual do processo.
+  //
+  // E o mesmo defeito que `ROTULOS_DE_MOVIMENTO` conserta desde 13/10/2026,
+  // com o vocabulario que a tela do segundo grau trouxe quando a lista foi
+  // aberta: `FASE:`, `Destino:`, `Destinatario:`, `Complemento 1:`, `Data de
+  // Publicacao:` e `Nro do Expediente:` aparecem uma vez por movimento.
+  //
+  // `FASE ATUAL:` NAO entra nesta lista: esse e campo de capa de verdade, e e
+  // um dos seis que o veredicto da capa procura.
+  const ROTULOS_DA_LISTA = ['fase', 'destino', 'destinatario',
+                            'complemento 1', 'data de publicacao',
+                            'data da publicacao', 'nro do expediente',
+                            'numero do expediente'];
   const ROTULOS_DE_MOVIMENTO = ROTULOS_DE_DATA
-    .concat(ROTULOS_DE_DESCRICAO).concat(['tipo do movimento']);
+    .concat(ROTULOS_DE_DESCRICAO).concat(['tipo do movimento'])
+    .concat(ROTULOS_DA_LISTA);
 
   const pares = [];
   const vistos = new Set();
@@ -3786,7 +3824,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
   const descartes = {sem_data: 0, sem_descricao: 0, repetidas: 0,
                      rotulo_de_campo: 0};
   const guardarMovimento = (data, hora, descricao, origem) => {
-    descricao = corta(descricao, 300);
+    descricao = cortaDescricao(descricao);
     if (!data) { descartes.sem_data += 1; return; }
     if (!descricao) { descartes.sem_descricao += 1; return; }
     const chave = data + '\u0000' + descricao;
@@ -4162,7 +4200,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
       if (!descricao) descricao = rotulo;
 
       documentosDoSegundoGrau.push([
-        data, hora, corta(descricao, 300),
+        data, hora, cortaDescricao(descricao),
         'tabela de documentos do segundo grau, data ' + origemDaData,
         [[rotulo, ancora.getAttribute('href') || '']]]);
     }
@@ -4289,8 +4327,12 @@ JS_DA_TELA_DO_PROCESSO = r"""
     return semAcento(bruto.replace(/:\s*$/, ''));
   };
   const valorDaLinha = (linha) => {
+    // O CORTE ACONTECE AQUI, e nao so na saida: cortar em 300 ao LER a celula
+    // fazia a descricao chegar truncada ao resto da leitura, e nenhum conserto
+    // depois disso tinha o texto para recuperar. Foi o que deixou um registro
+    // parando em "conforme procu" em 29/10/2026.
     const celulas = Array.from(linha.children);
-    return celulas.length >= 2 ? corta(celulas[1].innerText, 300) : '';
+    return celulas.length >= 2 ? cortaDescricao(celulas[1].innerText) : '';
   };
   // ONDE UM BLOCO TERMINA E O SEGUINTE COMECA.
   //
@@ -4443,7 +4485,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
         relatoDasFases.com_data_de_publicacao += 1;
         descricao += ' [publicado em ' + composta.publicacao + ']';
       }
-      fasesDaCapa.push([achado[1], achado[2] || '', corta(descricao, 300),
+      fasesDaCapa.push([achado[1], achado[2] || '', cortaDescricao(descricao),
                         origem, []]);
     }
   }
@@ -4779,6 +4821,48 @@ def secoes_nao_lidas(secoes: Any) -> list:
         if titulo not in vistos:
             vistos.append(titulo)
     return vistos
+
+
+# COMO A TELA DIZ QUAL INSTANCIA ELA MOSTRA.
+#
+# Lido na tela real: o titulo da secao e "Consulta Processual por Numero -
+# Segunda Instancia". O primeiro grau tem o seu equivalente.
+#
+# Isto existe porque o grau gravado no arquivo vinha deduzido do NUMERO, e no
+# Portal de Servicos o numero unico e o mesmo em todas as instancias: a
+# instancia se escolhe pela linha do resultado. Em 29/10/2026 o advogado
+# notou que o arquivo marcava `grau: 1` numa tela de segunda instancia.
+#
+# A tela sabe, e diz. Deduzir quando ha quem declare e supor sem precisar.
+MARCAS_DO_GRAU = (
+    ("segunda instancia", 2),
+    ("2a instancia", 2),
+    ("primeira instancia", 1),
+    ("1a instancia", 1),
+)
+
+
+def grau_declarado_pela_tela(dados: dict) -> Optional[int]:
+    """O grau que a TELA declara nos titulos de secao, ou None.
+
+    Devolve None quando nenhuma secao declara, e ai quem decide continua
+    sendo a deducao pelo numero: nao inventar e melhor que escolher.
+    """
+    secoes = ((dados.get("estrutura") or {}).get("secoes") or [])
+    for secao in secoes:
+        titulo = _sem_acento_simples(str((secao or {}).get("titulo") or ""))
+        for marca, grau in MARCAS_DO_GRAU:
+            if marca in titulo:
+                return grau
+    return None
+
+
+def _sem_acento_simples(texto: str) -> str:
+    import unicodedata
+
+    return "".join(
+        c for c in unicodedata.normalize("NFD", (texto or "").lower())
+        if unicodedata.category(c) != "Mn")
 
 
 def _relato_das_fases(bruto: Any) -> dict:
@@ -5366,9 +5450,25 @@ def mostrar_todos_os_movimentos(quadro: Any, guarda: Any,
     if declarado is not None:
         conferencia = f"; a tela declara {declarado} movimento(s)"
         if depois < declarado:
-            conferencia += (f", e foram lidos {depois}: FALTAM "
-                            f"{declarado - depois}, provavelmente nas paginas "
-                            "seguintes")
+            # ISTO NAO E FALTA, E PAGINACAO, e o programa sabe disso: o
+            # proprio icone de "proximos 50 movimentos" esta na tela, e a
+            # etapa seguinte vai clicar nele.
+            #
+            # Em 29/10/2026 a conferencia do advogado leu "FALTAM 1" num
+            # arquivo que estava completo. O aviso e emitido ANTES de a
+            # paginacao rodar, comparando a primeira pagina com o total.
+            # Claro que falta: avisar ali e alarmar sobre coisa que o proprio
+            # programa resolve na linha seguinte, e alarme falso repetido se
+            # aprende a ignorar.
+            if elemento_do_proximo_lote(quadro) is not None:
+                conferencia += (
+                    f", e esta pagina trouxe {depois}. Os outros "
+                    f"{declarado - depois} estao nos lotes seguintes, e a "
+                    "paginacao vai busca-los: isto nao e falta")
+            else:
+                conferencia += (f", e foram lidos {depois}: FALTAM "
+                                f"{declarado - depois}, e NAO ha botao de "
+                                "proximo lote na tela para busca-los")
         elif depois > declarado:
             conferencia += (f", e foram lidos {depois}: a leitura trouxe mais "
                             "do que a tela declara, entao algo que nao e "

@@ -10047,10 +10047,15 @@ class _QuadroComIcone:
         }
 
     def query_selector(self, seletor):
-        from justica_mcp.dcp import IMAGEM_DE_TODOS_OS_MOVIMENTOS
+        from justica_mcp.dcp import (IMAGEM_DE_TODOS_OS_MOVIMENTOS,
+                                     SELETOR_DO_PROXIMO_LOTE)
 
         self.pedidos.append(seletor)
         if seletor == IMAGEM_DE_TODOS_OS_MOVIMENTOS and self.com_icone:
+            return self.botao
+        # A tela real tem o icone do proximo lote junto com a lista: e por ele
+        # que o programa sabe que o que falta esta nos lotes seguintes.
+        if seletor == SELETOR_DO_PROXIMO_LOTE and self.com_icone:
             return self.botao
         return None
 
@@ -10090,7 +10095,12 @@ def test_o_total_declarado_pela_tela_e_lido_e_comparado(monkeypatch):
     relato = dcp.mostrar_todos_os_movimentos(_QuadroComIcone(), _Guarda(),
                                              segundos=4)
     assert relato["declarado"] == 52
-    assert "FALTAM 2" in relato["situacao"]
+    # A redacao mudou em 29/10/2026: com o icone do proximo lote na tela, o
+    # que falta nesta pagina NAO e falta, e o programa sabe disso. O que este
+    # teste guarda continua sendo o mesmo: o total declarado e lido e
+    # comparado com o que foi lido.
+    assert "a tela declara 52" in relato["situacao"]
+    assert "Os outros 2 estao nos lotes seguintes" in relato["situacao"]
 
 
 def test_sem_botao_e_sem_icone_o_recado_proibe_a_conclusao_errada(monkeypatch):
@@ -10720,3 +10730,151 @@ def test_sem_fase_atual_a_diferenca_continua_sendo_acusada(monkeypatch):
 
     relato = _percorrer(_ComSobra(acrescenta=False), monkeypatch)
     assert "CONFIRA" in relato["situacao"]
+
+
+# ---------------------------------------------------------------------------
+# Dois defeitos da capa, achados na conferencia contra a tela
+#
+# 1. O arquivo marcava `grau: 1` numa tela cujo titulo e "Consulta Processual
+#    por Numero - Segunda Instancia". O grau vinha deduzido do NUMERO, e no
+#    Portal de Servicos o numero unico e o mesmo em todas as instancias.
+#
+# 2. Os campos `FASE` e `Destino` da capa traziam os valores do ULTIMO
+#    movimento, a remessa a Divisao de Distribuicao, e nao a fase atual.
+# ---------------------------------------------------------------------------
+
+def test_o_grau_vem_do_titulo_que_a_tela_declara():
+    from justica_mcp.dcp import grau_declarado_pela_tela
+
+    dados = {"estrutura": {"secoes": [
+        {"nivel": "h3",
+         "titulo": "Consulta Processual por Número - Segunda Instância"}]}}
+    assert grau_declarado_pela_tela(dados) == 2
+
+
+def test_o_primeiro_grau_tambem_e_reconhecido():
+    from justica_mcp.dcp import grau_declarado_pela_tela
+
+    dados = {"estrutura": {"secoes": [
+        {"titulo": "Consulta Processual por Número - Primeira Instância"}]}}
+    assert grau_declarado_pela_tela(dados) == 1
+
+
+def test_tela_que_nao_declara_o_grau_devolve_nada():
+    """Nao inventar e melhor que escolher: sem declaracao, quem decide
+    continua sendo a deducao pelo numero."""
+    from justica_mcp.dcp import grau_declarado_pela_tela
+
+    assert grau_declarado_pela_tela({"estrutura": {"secoes": []}}) is None
+    assert grau_declarado_pela_tela({}) is None
+
+
+@semNavegador
+def test_os_rotulos_da_lista_nao_entram_na_capa():
+    """`FASE` e `Destino` aparecem uma vez por movimento. Deixa-los entrar na
+    capa fazia o ultimo movimento ocupar o lugar do processo."""
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("Classe:", "Apelacao"),
+        ("FASE ATUAL:", "Juntada de Peticao - Embargos"),
+        ("Data do Movimento:", "15/10/2026"),
+        ("FASE:", "Remessa a Divisao de Distribuicao"),
+        ("Data do Movimento:", "02/10/2026"),
+        ("Destino:", "Divisao de Distribuicao"),
+        ("Data de Publicacao:", "07/10/2026"),
+        ("Nro do Expediente:", "ACO/2026.000152"),
+    ]))
+    principais = dados["principais"]
+    assert principais.get("Classe") == "Apelacao"
+    for proibido in ("FASE", "Destino", "Data de Publicacao",
+                     "Nro do Expediente"):
+        assert proibido not in principais, (proibido, principais.get(proibido))
+
+
+@semNavegador
+def test_fase_atual_continua_sendo_campo_da_capa():
+    """`FASE ATUAL:` e capa de verdade, e um dos seis que o veredicto
+    procura. So `FASE:` e rotulo de lista."""
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("Classe:", "Apelacao"),
+        ("Assunto:", "Rescisao"),
+        ("Relator:", "Fulano"),
+        ("FASE ATUAL:", "Juntada de Peticao - Embargos"),
+        ("Data do Movimento:", "15/10/2026"),
+    ]))
+    assert "FASE ATUAL" in dados["principais"]
+    assert dados["leitura"]["conferido"]["principais"] is True
+
+
+# ---------------------------------------------------------------------------
+# Dois achados da segunda conferencia contra a tela, em 29/10/2026
+#
+# Os 53 registros bateram, a ordem ficou integra e as 13 datas de publicacao
+# cairam nos movimentos certos. Sobraram uma perda de texto e um alarme falso.
+# ---------------------------------------------------------------------------
+
+TEXTO_LONGO = ("Certidao de Inclusao de Advogados. Certifico que procedi a "
+               "inclusao do advogado conforme procuracao de folhas, e que a "
+               "parte restante deste texto existe apenas para passar do teto "
+               "de trezentos caracteres que cortava a descricao em silencio, "
+               "o que foi achado na conferencia contra a tela em 29/10/2026, "
+               "num registro que parava em 'conforme procu'.")
+
+
+@semNavegador
+def test_a_descricao_longa_nao_e_mais_cortada_em_300():
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("FASE:", TEXTO_LONGO),
+        ("Data do Movimento:", "19/06/2026 13:04"),
+    ]))
+    descricao = dados["movimentacoes"][0]["descricao"]
+    assert len(descricao) > 300
+    assert "conforme procuracao de folhas" in descricao
+    assert "texto cortado" not in descricao
+
+
+@semNavegador
+def test_o_corte_que_acontece_se_anuncia():
+    """Um teto qualquer um dia e atingido de novo, e ai quem le precisa
+    saber. Corte em silencio e entregar o pedaco como se fosse o todo."""
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("FASE:", "a" * 2000),
+        ("Data do Movimento:", "19/06/2026"),
+    ]))
+    descricao = dados["movimentacoes"][0]["descricao"]
+    assert descricao.endswith("[...texto cortado pela leitura]")
+
+
+def test_pagina_incompleta_com_proximo_lote_nao_e_falta(monkeypatch):
+    """"FALTAM 1" num arquivo completo: o aviso era emitido ANTES de a
+    paginacao rodar, comparando a primeira pagina com o total."""
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+    relato = dcp.mostrar_todos_os_movimentos(_QuadroComIcone(), _Guarda(),
+                                             segundos=4)
+    assert "isto nao e falta" in relato["situacao"]
+    assert "FALTAM" not in relato["situacao"]
+
+
+def test_sem_proximo_lote_a_falta_continua_sendo_dita(monkeypatch):
+    """Sem botao para buscar o resto, falta e falta."""
+    from justica_mcp import dcp
+
+    class _SemProximoLote(_QuadroComIcone):
+        def query_selector(self, seletor):
+            from justica_mcp.dcp import (IMAGEM_DE_TODOS_OS_MOVIMENTOS,
+                                         SELETOR_DO_PROXIMO_LOTE)
+
+            if seletor == SELETOR_DO_PROXIMO_LOTE:
+                return None
+            if seletor == IMAGEM_DE_TODOS_OS_MOVIMENTOS:
+                return self.botao
+            return None
+
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+    relato = dcp.mostrar_todos_os_movimentos(_SemProximoLote(), _Guarda(),
+                                             segundos=4)
+    assert "FALTAM 2" in relato["situacao"]
+    assert "NAO ha botao de proximo lote" in relato["situacao"]

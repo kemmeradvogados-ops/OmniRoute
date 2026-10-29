@@ -4033,7 +4033,17 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     dados["numero"] = numero.formatado
     dados["tribunal"] = identidade.tribunal
     dados["sistema"] = identidade.sistema
-    dados["grau"] = numero.grau
+    # O GRAU VEM DA TELA QUANDO A TELA DIZ, e da deducao quando ela se cala.
+    #
+    # Deduzir pelo numero nao serve aqui: no Portal de Servicos o numero unico
+    # e o mesmo em todas as instancias, e quem escolhe a instancia e a linha
+    # do resultado. Em 29/10/2026 o arquivo marcava `grau: 1` numa tela cujo
+    # titulo era "Consulta Processual por Numero - Segunda Instancia".
+    from .dcp import grau_declarado_pela_tela
+
+    da_tela = grau_declarado_pela_tela(dados)
+    dados["grau"] = da_tela if da_tela is not None else numero.grau
+    dados["grau_declarado_pela_tela"] = da_tela is not None
     dados["endereco"] = endereco_sem_dado(
         endereco_do_quadro or getattr(pagina, "url", "") or "")
 
