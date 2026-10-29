@@ -10546,3 +10546,127 @@ def test_o_relato_conta_quantos_vieram_pelo_nome_da_fase():
     assert relato["blocos"] == 3
     assert relato["nome_da_fase"] == 3
     assert relato["sem_nome_descartados"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Segunda chance: a autenticacao ja foi paga
+#
+# Em 28 e 29/10/2026 duas consultas pararam no mesmo ponto: o quadro embutido
+# da consulta estava na tela, com o endereco certo, e o aplicativo dentro dele
+# nao montou em 45 segundos. Dentro havia 43 botoes, todos do widget de
+# acessibilidade `ryb-`, que carrega antes, e nenhum do portal.
+#
+# Desistir ali joga fora o recurso caro do programa.
+# ---------------------------------------------------------------------------
+
+class _Controle:
+    def __init__(self, identificador):
+        self.identificador = identificador
+
+    def get_attribute(self, _nome):
+        return self.identificador
+
+
+def test_o_quadro_so_com_acessibilidade_e_diagnosticado():
+    """Portal que nao montou e tela que mudou sao conclusoes opostas, e a
+    tela sabia a resposta."""
+    from justica_mcp.dcp import diagnostico_do_quadro
+
+    class _Quadro:
+        def query_selector_all(self, _s):
+            return [_Controle(f"ryb-item-{n}") for n in range(43)]
+
+    recado = diagnostico_do_quadro(_Quadro())
+    assert "widget de acessibilidade" in recado
+    assert "43" in recado
+    assert "NAO montou" in recado
+    assert "nao e tela mudada" in recado
+
+
+def test_o_quadro_com_controle_do_portal_nao_e_diagnosticado_assim():
+    from justica_mcp.dcp import diagnostico_do_quadro
+
+    class _Quadro:
+        def query_selector_all(self, _s):
+            return [_Controle("ryb-item-1"), _Controle("numeroProcesso")]
+
+    assert diagnostico_do_quadro(_Quadro()) == ""
+
+
+def test_o_quadro_vazio_e_dito_como_vazio():
+    from justica_mcp.dcp import diagnostico_do_quadro
+
+    class _Quadro:
+        def query_selector_all(self, _s):
+            return []
+
+    assert "VAZIO" in diagnostico_do_quadro(_Quadro())
+
+
+def test_a_consulta_reabre_uma_vez_antes_de_desistir(monkeypatch, capsys):
+    """A segunda chance nao gasta tentativa de login: so reabre a consulta
+    pelo menu, que e o que uma pessoa faria."""
+    from justica_mcp import dcp
+
+    aberturas = []
+    tentativas = []
+
+    def _conferir(quadro, segundos, onde=""):
+        tentativas.append(onde)
+        if len(tentativas) == 1:
+            raise dcp.ConsultaIndisponivel("nao montou")
+        return ("inicio", "origem", "pesquisar", "unica")
+
+    monkeypatch.setattr(dcp, "abrir_consulta_pelo_menu",
+                        lambda *_a, **_k: aberturas.append(1))
+    monkeypatch.setattr(dcp, "conferir_forma_do_formulario", _conferir)
+    monkeypatch.setattr(dcp, "quadro_da_consulta", lambda p, **_k: p)
+    monkeypatch.setattr(dcp, "descrever_o_quadro", lambda *_a: "no quadro")
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+
+    achado = dcp.achar_o_formulario(object(), object(), 1,
+                                    lambda *_a, **_k: None)
+    assert achado[0] == "inicio"
+    assert len(tentativas) == 2, tentativas
+    assert aberturas == [1]
+    assert "SEGUNDA tentativa" in tentativas[1]
+    saida = capsys.readouterr().out
+    assert "[NAO MONTOU]" in saida
+    assert "nao gasta tentativa de login" in saida
+    assert "[MONTOU]" in saida
+
+
+def test_a_primeira_tentativa_que_da_certo_nao_reabre_nada(monkeypatch):
+    """No caminho normal a segunda chance nao pode custar nada."""
+    from justica_mcp import dcp
+
+    aberturas = []
+    monkeypatch.setattr(dcp, "abrir_consulta_pelo_menu",
+                        lambda *_a, **_k: aberturas.append(1))
+    monkeypatch.setattr(dcp, "conferir_forma_do_formulario",
+                        lambda *_a, **_k: ("i", "o", "p", "u"))
+    monkeypatch.setattr(dcp, "quadro_da_consulta", lambda p, **_k: p)
+    monkeypatch.setattr(dcp, "descrever_o_quadro", lambda *_a: "no quadro")
+
+    assert dcp.achar_o_formulario(object(), object(), 1,
+                                  lambda *_a, **_k: None)[0] == "i"
+    assert aberturas == []
+
+
+def test_a_segunda_falha_sobe_o_erro(monkeypatch, capsys):
+    """Repetir sem limite esconderia portal fora do ar atras de uma espera."""
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "abrir_consulta_pelo_menu", lambda *_a, **_k: None)
+    monkeypatch.setattr(dcp, "quadro_da_consulta", lambda p, **_k: p)
+    monkeypatch.setattr(dcp, "descrever_o_quadro", lambda *_a: "no quadro")
+    monkeypatch.setattr(dcp, "gravar_a_tela", lambda *_a, **_k: None,
+                        raising=False)
+
+    def _sempre_falha(*_a, **_k):
+        raise dcp.ConsultaIndisponivel("nao montou")
+
+    monkeypatch.setattr(dcp, "conferir_forma_do_formulario", _sempre_falha)
+    with pytest.raises(dcp.ConsultaIndisponivel):
+        dcp.achar_o_formulario(object(), object(), 1, lambda *_a, **_k: None)

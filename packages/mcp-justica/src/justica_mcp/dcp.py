@@ -2883,6 +2883,48 @@ def onde_estao_os_botoes(quadro: Any, texto: str) -> str:
     return "".join(partes)
 
 
+# O WIDGET DE ACESSIBILIDADE que o portal carrega dentro do quadro. Ele vem
+# ANTES do aplicativo, e por isso a presenca dele sozinho e um diagnostico: o
+# quadro existe, o portal comecou a carregar, e a aplicacao nao montou.
+#
+# Lido na tela gravada de 29/10/2026: 43 botoes dentro do quadro, todos com
+# identificador comecando em `ryb-`, todos ocultos, e nenhum do portal.
+MARCA_DA_ACESSIBILIDADE = "ryb-"
+
+
+def diagnostico_do_quadro(quadro: Any) -> str:
+    """Uma frase sobre o que ha no quadro, para abrir a recusa.
+
+    Duas consultas pagas pararam sem que o programa soubesse dizer se o
+    portal tinha mudado ou se so nao tinha carregado. Sao conclusoes opostas,
+    e a tela sabia a resposta.
+    """
+    try:
+        controles = quadro.query_selector_all("input, button, select, a") or []
+    except Exception:
+        return ""
+    if not controles:
+        return ("O quadro estava VAZIO: nenhum controle, nem do portal nem de "
+                "outra coisa. ")
+    proprios = 0
+    da_acessibilidade = 0
+    for controle in controles:
+        try:
+            identificador = controle.get_attribute("id") or ""
+        except Exception:
+            identificador = ""
+        if identificador.startswith(MARCA_DA_ACESSIBILIDADE):
+            da_acessibilidade += 1
+        else:
+            proprios += 1
+    if da_acessibilidade and not proprios:
+        return (f"O quadro so tinha o widget de acessibilidade "
+                f"({da_acessibilidade} controle(s) `ryb-`), que carrega ANTES "
+                "do aplicativo: o portal comecou a carregar e a aplicacao NAO "
+                "montou. Isso nao e tela mudada. ")
+    return ""
+
+
 def conferir_forma_do_formulario(quadro: Any, segundos: int = 20,
                                  onde: str = "") -> tuple:
     """Acha os dois campos e o botao, e recusa a tela que nao bate.
@@ -2912,6 +2954,7 @@ def conferir_forma_do_formulario(quadro: Any, segundos: int = 20,
         # o lado errado durante uma consulta ja paga.
         lugar = onde or "em lugar nao registrado"
         raise ConsultaIndisponivel(
+            diagnostico_do_quadro(quadro) +
             "A tela da consulta nao tem " + " nem ".join(faltando)
             + ". Nada foi digitado. A procura correu " + lugar
             + f", esperando ate {segundos}s. Tres causas possiveis, nesta "
@@ -2933,6 +2976,53 @@ def conferir_forma_do_formulario(quadro: Any, segundos: int = 20,
 
     unica = achar_opcional(quadro, OPCAO_NUMERACAO_UNICA)
     return inicio, origem, pesquisar, unica
+
+
+def achar_o_formulario(pagina: Any, guarda: Any, segundos: int,
+                       assentar: Any) -> tuple:
+    """Acha o formulario da consulta, reabrindo a tela UMA vez se preciso.
+
+    SEGUNDA CHANCE, PORQUE A AUTENTICACAO JA FOI PAGA.
+
+    Em 28 e 29/10/2026 duas consultas pararam no mesmo ponto: o quadro
+    embutido da consulta estava na tela, com o endereco certo, e o aplicativo
+    dentro dele nao montou em 45 segundos. O que havia la dentro eram 43
+    botoes, todos do widget de acessibilidade `ryb-`, que carrega antes, e
+    nenhum do portal. Numa delas o login ainda desembocou na pagina publica do
+    tribunal antes de se recuperar.
+
+    Desistir ali joga fora o recurso caro deste programa. Reabrir a consulta
+    pelo menu custa segundos, NAO gasta tentativa de login, e e exatamente o
+    que uma pessoa faria diante de uma tela que nao montou.
+
+    UMA vez so, e dizendo que tentou: repetir sem limite esconderia portal
+    fora do ar atras de uma espera longa.
+    """
+    quadro = quadro_da_consulta(pagina)
+    try:
+        return conferir_forma_do_formulario(
+            quadro, segundos, descrever_o_quadro(pagina, quadro))
+    except ConsultaIndisponivel as primeira_falha:
+        print(f"    [NAO MONTOU] {primeira_falha}")
+        print("    A autenticacao ja foi paga, entao vale reabrir a consulta "
+              "pelo menu e esperar de novo.")
+        print("    Isso nao gasta tentativa de login. Uma vez so.")
+        try:
+            from .telas import gravar_a_tela
+
+            gravar_a_tela(pagina, "antes-de-reabrir-a-consulta")
+        except Exception:
+            pass
+        abrir_consulta_pelo_menu(pagina, guarda, segundos)
+        assentar(pagina, segundos)
+        quadro = quadro_da_consulta(pagina)
+        achado = conferir_forma_do_formulario(
+            quadro, segundos,
+            descrever_o_quadro(pagina, quadro) + ", na SEGUNDA tentativa "
+            "(a primeira tambem nao achou o formulario)")
+        print("    [MONTOU] A segunda tentativa achou o formulario. A "
+              "autenticacao nao foi desperdicada.")
+        return achado
 
 
 def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
@@ -2963,9 +3053,9 @@ def buscar(pagina: Any, guarda: Any, numero: Any, url_de_login: str,
     abrir_consulta_pelo_menu(pagina, guarda, segundos)
     _assentar(pagina, segundos)
 
+    inicio, origem, pesquisar, unica = achar_o_formulario(
+        pagina, guarda, segundos, _assentar)
     quadro = quadro_da_consulta(pagina)
-    inicio, origem, pesquisar, unica = conferir_forma_do_formulario(
-        quadro, segundos, descrever_o_quadro(pagina, quadro))
 
     # A autorizacao so e escrita DEPOIS de a forma bater, e nomeia o que a
     # propria tela mostrou. Liberar antes seria liberar o que ainda nao se sabe
