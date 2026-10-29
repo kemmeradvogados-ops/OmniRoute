@@ -4316,6 +4316,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
   };
 
   const descricaoDaFase = (linhas, inicio) => {
+    let eAtual = false;
     // PRIMEIRO o nome da fase, varrendo para TRAS: e ali que ele mora, logo
     // acima da data. Parar no `Data do Movimento:` anterior impede pegar o
     // nome do movimento de cima.
@@ -4325,6 +4326,10 @@ JS_DA_TELA_DO_PROCESSO = r"""
     for (const par of atras) {
       if (ROTULOS_DO_NOME_DA_FASE.indexOf(par[0]) >= 0 && par[1]) {
         nome = par[1];
+        // QUAL dos dois rotulos deu o nome. `FASE ATUAL:` e o bloco que a
+        // tela mostra no alto, FORA da lista; `FASE:` e cada item da lista.
+        // A diferenca decide se o total lido deveria bater com o declarado.
+        eAtual = par[0] === 'fase atual';
       }
     }
 
@@ -4369,7 +4374,7 @@ JS_DA_TELA_DO_PROCESSO = r"""
     // data valida, descricao valida e origem registrada.
 
     return {nome: nome, texto: pedacos.join(', '), peticao: peticao,
-            publicacao: publicacao};
+            publicacao: publicacao, eAtual: eAtual};
   };
 
   // SO AS LINHAS DESTA TABELA, e nao as das tabelas de dentro dela.
@@ -4403,7 +4408,9 @@ JS_DA_TELA_DO_PROCESSO = r"""
       let origem = 'bloco de fase da capa, descricao depois';
       if (composta.nome) {
         descricao = composta.nome;
-        origem = 'bloco de fase da capa, nome da fase';
+        origem = (composta.eAtual
+                  ? 'bloco de FASE ATUAL da capa, fora da lista'
+                  : 'bloco de fase da capa, nome da fase');
         relatoDasFases.nome_da_fase += 1;
         if (composta.texto && composta.texto !== composta.nome) {
           descricao += ' (' + composta.texto + ')';
@@ -5634,7 +5641,22 @@ def percorrer_os_lotes_de_50(quadro: Any, guarda: Any, segundos: int = 45,
     conferencia = ""
     if declarado is not None:
         conferencia = f"; a tela declara {declarado}"
-        if len(acumulado) != declarado:
+        # O BLOCO `FASE ATUAL` FICA FORA DA LISTA, e por isso entra na conta.
+        #
+        # Medido em 29/10/2026: a tela declarou 52, a leitura juntou 53, e a
+        # diferenca era exatamente o bloco `FASE ATUAL:`, que o portal mostra
+        # no alto, separado. Na conferencia do advogado contra a tela, a lista
+        # comecava em 07/10 e a fase atual era de 15/10: ela NAO esta entre os
+        # 52. Acusar diferenca ali e alarme falso, e alarme falso repetido se
+        # aprende a ignorar.
+        fora_da_lista = sum(
+            1 for m in acumulado
+            if "FASE ATUAL" in (m.get("origem") or ""))
+        if len(acumulado) == declarado + fora_da_lista and fora_da_lista:
+            conferencia += (f", mais {fora_da_lista} bloco(s) de FASE ATUAL "
+                            f"que a tela mostra fora da lista: "
+                            f"{len(acumulado)} no total, e a conta fecha")
+        elif len(acumulado) != declarado:
             # DIZER DE ONDE VIERAM, e nao so que os numeros diferem.
             #
             # "CONFIRA" sozinho manda procurar sem dizer onde. Em 28/10/2026

@@ -8953,3 +8953,44 @@ def test_sem_consulta_nenhuma_ultima_nao_estoura(tmp_path, monkeypatch):
 
     _consultas_em(tmp_path, monkeypatch, [])
     assert resolver_a_consulta("ultima").name == "nenhuma-consulta-gravada.json"
+
+
+def test_a_estrutura_mostra_os_blocos_de_fase(tmp_path, capsys):
+    """Terceira vez nesta semana que um dado e gravado e nao chega a quem
+    precisa dele. Sem esta linha nao da para saber quantos movimentos
+    trouxeram data de publicacao, que e a data que conta para prazo."""
+    import json
+
+    from justica_mcp.portal import mostrar_estrutura
+
+    arquivo = tmp_path / "consulta.json"
+    arquivo.write_text(json.dumps({
+        "totais": {"movimentacoes": 53},
+        "leitura": {"conferido": {}},
+        "estrutura": {
+            "tabelas": [], "familias": {},
+            "fases_da_capa": {"blocos": 54, "nome_da_fase": 53,
+                              "descricao_depois": 0,
+                              "com_data_de_publicacao": 8,
+                              "sem_nome_descartados": 1, "sem_data": 0},
+        },
+    }), encoding="utf-8")
+    assert mostrar_estrutura(str(arquivo)) == 0
+    saida = capsys.readouterr().out
+    assert "BLOCOS DE FASE:" in saida
+    assert "com_data_de_publicacao: 8" in saida
+    assert "sem_nome_descartados: 1" in saida
+
+
+def test_sem_blocos_de_fase_a_secao_nao_aparece(tmp_path, capsys):
+    import json
+
+    from justica_mcp.portal import mostrar_estrutura
+
+    arquivo = tmp_path / "consulta.json"
+    arquivo.write_text(json.dumps({
+        "totais": {}, "leitura": {"conferido": {}},
+        "estrutura": {"tabelas": [], "familias": {}},
+    }), encoding="utf-8")
+    assert mostrar_estrutura(str(arquivo)) == 0
+    assert "BLOCOS DE FASE:" not in capsys.readouterr().out

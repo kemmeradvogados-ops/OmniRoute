@@ -10670,3 +10670,53 @@ def test_a_segunda_falha_sobe_o_erro(monkeypatch, capsys):
     monkeypatch.setattr(dcp, "conferir_forma_do_formulario", _sempre_falha)
     with pytest.raises(dcp.ConsultaIndisponivel):
         dcp.achar_o_formulario(object(), object(), 1, lambda *_a, **_k: None)
+
+
+# ---------------------------------------------------------------------------
+# O bloco FASE ATUAL fica FORA da lista, e por isso entra na conta
+#
+# Medido em 29/10/2026: a tela declarou 52, a leitura juntou 53, e a diferenca
+# era exatamente o bloco `FASE ATUAL:`, que o portal mostra no alto,
+# separado. Na conferencia do advogado contra a tela, a lista comecava em
+# 07/10 e a fase atual era de 15/10: ela NAO esta entre os 52.
+# ---------------------------------------------------------------------------
+
+@semNavegador
+def test_a_fase_atual_se_declara_como_fora_da_lista():
+    dados = _ler_em_navegador(_capa_com_fase([
+        ("FASE ATUAL:", "Juntada de Peticao - Embargos"),
+        ("Data do Movimento:", "15/10/2026 16:33"),
+        ("FASE:", "Publicacao Acordao"),
+        ("Data do Movimento:", "07/10/2026 00:05"),
+    ]))
+    origens = [m["origem"] for m in dados["movimentacoes"]]
+    assert "FASE ATUAL" in origens[0]
+    assert "fora da lista" in origens[0]
+    assert "FASE ATUAL" not in origens[1]
+
+
+class _QuadroComFaseAtual(_QuadroComLotes):
+    """A tela real: 52 na lista, mais o bloco FASE ATUAL fora dela."""
+
+    PERMANENTES = [["15/10/2026", "", "Juntada de Peticao - Embargos",
+                    "bloco de FASE ATUAL da capa, fora da lista"]]
+
+
+def test_a_conta_fecha_com_a_fase_atual_somada(monkeypatch):
+    """Alarme falso repetido se aprende a ignorar, inclusive quando estiver
+    certo."""
+    relato = _percorrer(_QuadroComFaseAtual(acrescenta=False), monkeypatch)
+    assert len(relato["movimentacoes"]) == 53
+    assert "a conta fecha" in relato["situacao"]
+    assert "CONFIRA" not in relato["situacao"]
+
+
+def test_sem_fase_atual_a_diferenca_continua_sendo_acusada(monkeypatch):
+    """A conta so fecha quando a diferenca E a fase atual. Qualquer outra
+    diferenca continua pedindo olho."""
+    class _ComSobra(_QuadroComLotes):
+        PERMANENTES = [["02/10/2026", "", "Integra do(a) Acordao",
+                        "tabela de documentos do segundo grau"]]
+
+    relato = _percorrer(_ComSobra(acrescenta=False), monkeypatch)
+    assert "CONFIRA" in relato["situacao"]

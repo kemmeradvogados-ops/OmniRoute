@@ -8414,6 +8414,19 @@ def mostrar_estrutura(caminho: str) -> int:
     linhas.append(f"  ANDAMENTOS FORA DA TABELA DE DOCUMENTOS: "
                   f"{estrutura.get('fora_da_tabela_de_documentos', 0)}")
 
+    # OS BLOCOS DE FASE. Terceira vez nesta semana que um dado e gravado e nao
+    # chega a quem precisa dele, e desta vez em cima do conserto que eu tinha
+    # feito justamente para isso. Sem esta linha nao da para saber quantos
+    # movimentos trouxeram data de publicacao, que e a data que conta para
+    # prazo, nem quantos blocos foram descartados por nao ter nome.
+    fases = estrutura.get("fases_da_capa") or {}
+    if fases:
+        linhas.append("  BLOCOS DE FASE:")
+        for chave in ("blocos", "nome_da_fase", "descricao_depois",
+                      "com_data_de_publicacao", "sem_nome_descartados",
+                      "sem_data"):
+            linhas.append(f"    {chave}: {fases.get(chave, 0)}")
+
     # DE ONDE VEIO CADA MOVIMENTACAO, so a contagem por origem.
     #
     # A origem diz qual regra achou o andamento e, na segunda passada, em que
