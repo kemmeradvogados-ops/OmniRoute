@@ -9760,7 +9760,7 @@ def test_a_movimentacao_de_verdade_continua_entrando():
 
 
 @semNavegador
-def test_a_linha_data_do_movimento_volta_como_bloco_de_fase():
+def test_a_linha_data_do_movimento_sem_nome_nao_volta():
     """Esta assercao mudou em 28/10/2026, e a mudanca e o conserto.
 
     Ate aqui o molde tinha 'Data do Movimento:' entre os campos de capa e o
@@ -9773,10 +9773,12 @@ def test_a_linha_data_do_movimento_volta_como_bloco_de_fase():
     sao campos de julgamento."""
     dados = _ler_em_navegador(TELA_COM_CAPA_DE_DATAS)
     movimentos = dados["movimentacoes"]
-    assert len(movimentos) == 2
     datas = [m["data"] for m in movimentos]
-    assert "05/09/2026" in datas
+    # O bloco de 05/09 tem data e nenhum nome: nao e movimento desta lista.
+    assert "05/09/2026" not in datas
+    # O ato processual de verdade continua entrando.
     assert "01/10/2026" in datas
+    # Campo de julgamento continua fora.
     assert "12/09/2026" not in datas
     assert "19/09/2026" not in datas
 
@@ -9911,31 +9913,52 @@ def test_dois_blocos_de_fase_viram_dois_movimentos():
 
 
 @semNavegador
-def test_fase_sem_tipo_entra_dizendo_que_a_tela_nao_nomeou():
-    """Descartar por falta de descricao foi o que apagou este movimento em
-    primeiro lugar."""
+def test_bloco_com_data_e_sem_nome_nao_vira_movimentacao():
+    """ESTA ASSERCAO ERA O CONTRARIO ate 29/10/2026, e a mudanca veio da
+    conferencia do advogado contra a tela.
+
+    O bloco sem nome, na tela do segundo grau, e o SESSAO DE JULGAMENTO: tem
+    `Data do Movimento: 29/09/2026 13:00` e nenhum nome, porque os rotulos
+    dele sao Resultado, Motivo, COMPL.3 e Votacao. O julgamento em si JA ESTA
+    na lista, com a mesma data e hora.
+
+    Emiti-lo criava um registro a mais, sem dizer o que e, e ainda fora de
+    ordem. Agora e descartado, mas NAO em silencio: a contagem sai no relato,
+    porque descartar calado foi o que apagou a juntada dos embargos."""
     dados = _ler_em_navegador(_capa_com_fase([
         ("Classe:", "Apelacao"),
         ("Data do Movimento:", "15/10/2026"),
     ]))
-    movimentos = dados["movimentacoes"]
-    assert len(movimentos) == 1
-    assert movimentos[0]["data"] == "15/10/2026"
-    assert "tipo a tela nao nomeou" in movimentos[0]["descricao"]
+    assert dados["movimentacoes"] == []
+    assert dados["estrutura"]["fases_da_capa"]["sem_nome_descartados"] == 1
 
 
 @semNavegador
-def test_a_descricao_pode_vir_antes_do_rotulo_da_data():
-    """A ordem das linhas dentro do bloco nao foi observada, entao nao esta
-    suposta: procura depois, e se nao achar, antes."""
+def test_o_tipo_do_bloco_anterior_nao_vira_descricao_deste():
+    """ESTE TESTE SUBSTITUI O CONTRARIO DELE, e a troca custou um movimento
+    inventado no arquivo de um cliente.
+
+    Ate 28/10/2026 havia aqui um teste exigindo que `Tipo:` fosse procurado
+    tambem ANTES da data, "porque a ordem nao foi observada". Era hipotese, e
+    eu a preservei sabendo que era hipotese.
+
+    Na tela real, o que vem antes da data de um bloco sao os campos do bloco
+    ANTERIOR. O SESSAO DE JULGAMENTO, que nao tem nome proprio, pegava o
+    `Tipo:` e o `Subtipo:` do FASE ATUAL de cima e saia como um movimento que
+    nao existe, com a data de um e a descricao de outro."""
     dados = _ler_em_navegador(_capa_com_fase([
-        ("Tipo:", "Juntada de Peticao"),
-        ("Data do Movimento:", "15/10/2026"),
-        ("Classe:", "Apelacao"),
+        ("FASE ATUAL:", "Juntada de Peticao - Embargos"),
+        ("Data do Movimento:", "15/10/2026 16:33"),
+        ("Tipo:", "Peticao"),
+        ("Subtipo:", "Embargos de declaracao"),
+        ("Data do Movimento:", "29/09/2026 13:00"),
+        ("Resultado:", "Nao Provimento"),
     ]))
-    movimento = dados["movimentacoes"][0]
-    assert "Juntada de Peticao" in movimento["descricao"]
-    assert movimento["origem"].endswith("descricao antes")
+    movimentos = dados["movimentacoes"]
+    assert len(movimentos) == 1, [m["descricao"] for m in movimentos]
+    assert movimentos[0]["data"] == "15/10/2026"
+    assert all(m["data"] != "29/09/2026" for m in movimentos)
+    assert dados["estrutura"]["fases_da_capa"]["sem_nome_descartados"] == 1
 
 
 @semNavegador
@@ -9944,21 +9967,25 @@ def test_o_relato_das_fases_conta_o_que_aconteceu():
     relato = dados["estrutura"]["fases_da_capa"]
     assert relato["blocos"] == 1
     assert relato["descricao_depois"] == 1
-    assert relato["sem_descricao"] == 0
+    assert relato["sem_nome_descartados"] == 0
 
 
 @semNavegador
-def test_a_fase_vem_antes_dos_documentos_na_lista():
-    """E la que mora a movimentacao mais recente."""
+def test_o_documento_sai_das_movimentacoes_quando_ha_historico():
+    """Documento nao e movimentacao. Eles entraram na lista em 27/10/2026,
+    quando eu acreditava que a tela do segundo grau nao tinha historico
+    nenhum. Tinha 52, atras de um icone."""
     html = ("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
             "<table><tr><td>Data do Movimento:</td><td>15/10/2026</td></tr>"
             "<tr><td>Tipo:</td><td>Juntada de Peticao</td></tr></table>"
             "<table><tr><td><a href=\"/ejud/d.aspx?x=1\">Integra do(a) Acordao"
             "</a> 02/10/2026</td></tr></table></body></html>")
     dados = _ler_em_navegador(html)
-    assert len(dados["movimentacoes"]) == 2
+    assert len(dados["movimentacoes"]) == 1
     assert dados["movimentacoes"][0]["data"] == "15/10/2026"
-    assert dados["movimentacoes"][1]["data"] == "02/10/2026"
+    assert len(dados["documentos"]) == 1
+    assert dados["documentos"][0]["rotulo"].startswith("Integra do(a)")
+    assert dados["totais"]["documentos_listados"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -10518,4 +10545,4 @@ def test_o_relato_conta_quantos_vieram_pelo_nome_da_fase():
     relato = dados["estrutura"]["fases_da_capa"]
     assert relato["blocos"] == 3
     assert relato["nome_da_fase"] == 3
-    assert relato["sem_descricao"] == 0
+    assert relato["sem_nome_descartados"] == 0

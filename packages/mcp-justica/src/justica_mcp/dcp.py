@@ -4179,13 +4179,17 @@ JS_DA_TELA_DO_PROCESSO = r"""
   // advogado: "o nro do expediente nao faz diferenca, mas a data da
   // publicacao faz sim". Ate aqui ela era descartada pela trava de rotulo de
   // campo, junto com a data da sessao, que de fato nao e andamento.
-  const ROTULO_DA_PUBLICACAO = 'data da publicacao';
+  // A TELA ESCREVE AS DUAS: `Data da Publicacao` na capa e `Data de
+  // Publicacao` na lista de movimentos. Uma letra, e por causa dela as oito
+  // datas de publicacao do historico sairam vazias em 28/10/2026, com o
+  // relato dizendo `com_data_de_publicacao: 0`.
+  const ROTULOS_DA_PUBLICACAO = ['data da publicacao', 'data de publicacao'];
 
   const JANELA_DA_FASE = 8;
   const fasesDaCapa = [];
-  const relatoDasFases = {blocos: 0, descricao_depois: 0, descricao_antes: 0,
-                          nome_da_fase: 0, sem_descricao: 0, sem_data: 0,
-                          com_data_de_publicacao: 0};
+  const relatoDasFases = {blocos: 0, descricao_depois: 0,
+                          nome_da_fase: 0, sem_nome_descartados: 0,
+                          sem_data: 0, com_data_de_publicacao: 0};
 
   const rotuloDaLinha = (linha) => {
     const celulas = Array.from(linha.children);
@@ -4241,7 +4245,10 @@ JS_DA_TELA_DO_PROCESSO = r"""
     let publicacao = '';
     for (const par of adiante) {
       if (par[0] === ROTULO_DA_PETICAO) { peticao = par[1]; continue; }
-      if (par[0] === ROTULO_DA_PUBLICACAO) { publicacao = par[1]; continue; }
+      if (ROTULOS_DA_PUBLICACAO.indexOf(par[0]) >= 0) {
+        publicacao = par[1];
+        continue;
+      }
       if (ROTULOS_DA_DESCRICAO_DA_FASE.indexOf(par[0]) < 0) continue;
       if (par[1]) pedacos.push(par[1]);
     }
@@ -4252,16 +4259,27 @@ JS_DA_TELA_DO_PROCESSO = r"""
     // e o nome da fase. Mas nao custa nada procurar, e a tela que ainda nao
     // foi vista pode inverter: perder essa robustez sem motivo seria trocar
     // uma leitura que funciona por uma suposicao sobre todas as telas.
-    let veioDeTras = false;
-    if (!nome && !pedacos.length) {
-      for (const par of atras) {
-        if (ROTULOS_DA_DESCRICAO_DA_FASE.indexOf(par[0]) < 0) continue;
-        if (par[1]) { pedacos.push(par[1]); veioDeTras = true; }
-      }
-    }
+    // NAO SE PROCURA `Tipo:` PARA TRAS, e isto foi aprendido do jeito caro.
+    //
+    // Em 28/10/2026 eu pus essa busca como ultimo recurso, para nao quebrar
+    // um teste de vespera, escrevendo no commit que "perder a robustez sem
+    // motivo seria trocar uma leitura que funciona por uma suposicao sobre
+    // todas as telas". Estava errado nos dois pontos: a robustez era
+    // imaginaria e o dano foi real.
+    //
+    // Na tela do segundo grau o bloco SESSAO DE JULGAMENTO tem data propria,
+    // 29/09 13:00, e nao tem nome de fase nem tipo: os rotulos dele sao
+    // Resultado, Motivo, COMPL.3, Votacao. Sem achar nada para a frente, a
+    // busca ia para tras e pegava o `Tipo:` e o `Subtipo:` do bloco ANTERIOR,
+    // o FASE ATUAL, que ficam entre as duas datas. Saiu um movimento que nao
+    // existe, com a data de um e a descricao de outro, e ainda fora de ordem.
+    //
+    // Quem achou foi a conferencia do advogado contra a tela, linha a linha.
+    // Nenhuma das minhas verificacoes de estrutura pegaria: o registro tinha
+    // data valida, descricao valida e origem registrada.
 
     return {nome: nome, texto: pedacos.join(', '), peticao: peticao,
-            publicacao: publicacao, deTras: veioDeTras};
+            publicacao: publicacao};
   };
 
   // SO AS LINHAS DESTA TABELA, e nao as das tabelas de dentro dela.
@@ -4302,20 +4320,23 @@ JS_DA_TELA_DO_PROCESSO = r"""
         }
       } else if (composta.texto) {
         descricao = composta.texto;
-        if (composta.deTras) {
-          relatoDasFases.descricao_antes += 1;
-          origem = 'bloco de fase da capa, descricao antes';
-        } else {
-          relatoDasFases.descricao_depois += 1;
-        }
+        relatoDasFases.descricao_depois += 1;
       }
       if (!descricao) {
-        relatoDasFases.sem_descricao += 1;
-        // Sem tipo, o registro SAI assim mesmo, dizendo que a tela nao o
-        // nomeou. Descartar por falta de descricao foi o que apagou este
-        // movimento em primeiro lugar.
-        descricao = 'movimento cujo tipo a tela nao nomeou';
-        origem = 'bloco de fase da capa, sem descricao';
+        // BLOCO COM DATA E SEM NOME NAO E MOVIMENTO DESTA LISTA.
+        //
+        // Na tela do segundo grau esse e o bloco SESSAO DE JULGAMENTO: tem
+        // `Data do Movimento: 29/09/2026 13:00` e nenhum nome, porque os
+        // rotulos dele sao Resultado, Motivo, COMPL.3 e Votacao. O julgamento
+        // em si JA ESTA na lista, como "Julgamento, Nao Provimento,
+        // Unanimidade", com a mesma data e hora. Emiti-lo de novo cria um
+        // registro a mais sem dizer o que e.
+        //
+        // Descartar em silencio foi o que apagou a juntada dos embargos em
+        // 27/10/2026, entao aqui nao e em silencio: a contagem sai no relato,
+        // e uma lista menor que o total declarado se denuncia na conferencia.
+        relatoDasFases.sem_nome_descartados += 1;
+        continue;
       }
       if (composta.peticao) descricao += ' (peticao ' + composta.peticao + ')';
       // A DATA DE PUBLICACAO entra na propria descricao, e nao num campo
@@ -4665,8 +4686,8 @@ def secoes_nao_lidas(secoes: Any) -> list:
 
 def _relato_das_fases(bruto: Any) -> dict:
     """Quantos blocos de fase a capa tinha, e o que saiu de cada um."""
-    vazio = {"blocos": 0, "descricao_depois": 0, "descricao_antes": 0,
-             "nome_da_fase": 0, "sem_descricao": 0, "sem_data": 0,
+    vazio = {"blocos": 0, "descricao_depois": 0,
+             "nome_da_fase": 0, "sem_nome_descartados": 0, "sem_data": 0,
              "com_data_de_publicacao": 0}
     if not isinstance(bruto, dict):
         return vazio
@@ -4799,6 +4820,7 @@ def _leitura_vazia(falha: Optional[str] = None) -> dict:
     return {
         "principais": {},
         "partes": [],
+        "documentos": [],
         "mandados": [],
         "movimentacoes": [],
         "estrutura": {"tabelas": [], "familias": {}, "rotulos_candidatos": [],
@@ -4888,6 +4910,35 @@ def extrair(quadro: Any) -> dict:
     fases = bruto.get("fasesDaCapa") or []
     genericas = bruto.get("movimentacoes") or []
     sobraram_das_genericas = 0
+    # DOCUMENTO NAO E MOVIMENTACAO, e junta-los quebrou as duas coisas.
+    #
+    # A conferencia do advogado contra a tela, em 29/10/2026, mostrou os oito
+    # "Integra do(a)..." misturados no fim da lista de movimentos, fora de
+    # ordem, e inflando a conta de 52 para 62. Eles entraram ali em
+    # 27/10/2026 porque, naquele dia, eu acreditava que a tela do segundo
+    # grau nao tinha historico nenhum e que a tabela de documentos era tudo o
+    # que havia. Tinha 52, atras de um icone.
+    #
+    # Agora que o historico de verdade e lido, os documentos voltam a ser o
+    # que sao: uma lista propria, com rotulo e endereco, que continua saindo
+    # no arquivo e nos totais, so que fora das movimentacoes.
+    # O nome e longo de proposito: ha um `documentos` local dentro do laco que
+    # anexa os documentos de cada movimentacao, e a primeira versao disto usou
+    # o mesmo nome. A de dentro sobrescrevia a de fora, e o total de
+    # documentos saia contado duas vezes.
+    documentos_do_processo: list = []
+    if do_segundo_grau and (fases or do_componente):
+        for item in do_segundo_grau:
+            for par in (item[4] if len(item) > 4 else []) or []:
+                try:
+                    documentos_do_processo.append({"data": str(item[0]),
+                                                   "hora": str(item[1]),
+                                                   "rotulo": str(par[0]),
+                                                   "endereco": str(par[1])})
+                except Exception:
+                    continue
+        do_segundo_grau = []
+
     if do_componente:
         fonte = do_componente
     elif do_segundo_grau:
@@ -4908,6 +4959,11 @@ def extrair(quadro: Any) -> dict:
         fonte = list(fases) + list(do_segundo_grau) + list(genericas)
         sobraram_das_genericas = len(genericas)
     else:
+        fonte = list(fases) + list(genericas)
+    if documentos_do_processo and not fonte:
+        # Sem historico nenhum, os documentos continuam sendo o que ha: nao
+        # entregar nada seria pior, e foi assim que a leitura do segundo grau
+        # comecou a servir para alguma coisa.
         fonte = list(fases) + list(genericas)
 
     movimentacoes = []
@@ -4979,6 +5035,7 @@ def extrair(quadro: Any) -> dict:
     saida["partes"] = partes
     saida["mandados"] = mandados
     saida["movimentacoes"] = movimentacoes
+    saida["documentos"] = documentos_do_processo
     saida["estrutura"] = {
         "tabelas": tabelas,
         "familias": dict(bruto.get("familias") or {}),
@@ -5035,7 +5092,7 @@ def extrair(quadro: Any) -> dict:
                        "partes": len(partes),
                        "mandados": len(mandados),
                        "movimentacoes": len(movimentacoes),
-                       "documentos_listados": sum(
+                       "documentos_listados": len(documentos_do_processo) + sum(
                            len(m.get("documentos") or []) for m in movimentacoes)}
     return saida
 
