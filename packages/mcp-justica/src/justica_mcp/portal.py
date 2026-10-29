@@ -4012,6 +4012,24 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
 
         dados["estrutura"]["movimentacoes_por_origem"] = _por_origem(
             paginas["movimentacoes"])
+        # A CONTAGEM DE DATAS DE PUBLICACAO TAMBEM TEM DE SEGUIR A LISTA.
+        #
+        # Ela nasce no leitor, que ve UMA tela. Em 29/10/2026 o relatorio
+        # mostrou `com_data_de_publicacao: 0` com `blocos: 4`: eram os quatro
+        # da ULTIMA pagina, os movimentos mais antigos, que nao tem data de
+        # publicacao. Os que tem estao na primeira. O zero nao falava da lista
+        # de 53, e dava a entender que o conserto do rotulo nao tinha
+        # funcionado.
+        #
+        # Contar na lista acumulada custa uma linha e nao depende de qual tela
+        # ficou por ultimo.
+        fases = dict(dados["estrutura"].get("fases_da_capa") or {})
+        fases["com_data_de_publicacao"] = sum(
+            1 for m in paginas["movimentacoes"]
+            if "publicado em" in str((m or {}).get("descricao") or ""))
+        fases["blocos"] = len(paginas["movimentacoes"])
+        fases["contado_na_lista_inteira"] = True
+        dados["estrutura"]["fases_da_capa"] = fases
     dados["numero"] = numero.formatado
     dados["tribunal"] = identidade.tribunal
     dados["sistema"] = identidade.sistema
@@ -8426,6 +8444,12 @@ def mostrar_estrutura(caminho: str) -> int:
                       "com_data_de_publicacao", "sem_nome_descartados",
                       "sem_data"):
             linhas.append(f"    {chave}: {fases.get(chave, 0)}")
+        # DE QUE LISTA ESTES NUMEROS FALAM. Sem isto, `com_data_de_publicacao:
+        # 0` lido numa consulta paginada parece dizer que nenhum movimento tem
+        # data de publicacao, quando fala so da ultima pagina.
+        linhas.append(
+            "    (contados na lista inteira)" if fases.get("contado_na_lista_inteira")
+            else "    (contados na ULTIMA tela lida, nao na lista acumulada)")
 
     # DE ONDE VEIO CADA MOVIMENTACAO, so a contagem por origem.
     #

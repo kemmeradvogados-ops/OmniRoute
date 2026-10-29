@@ -8994,3 +8994,34 @@ def test_sem_blocos_de_fase_a_secao_nao_aparece(tmp_path, capsys):
     }), encoding="utf-8")
     assert mostrar_estrutura(str(arquivo)) == 0
     assert "BLOCOS DE FASE:" not in capsys.readouterr().out
+
+
+def test_o_relato_diz_de_que_lista_os_numeros_falam(tmp_path, capsys):
+    """`com_data_de_publicacao: 0` com `blocos: 4` numa consulta de 53 falava
+    so da ultima pagina, e dava a entender que o conserto do rotulo nao tinha
+    funcionado."""
+    import json
+
+    from justica_mcp.portal import mostrar_estrutura
+
+    arquivo = tmp_path / "consulta.json"
+    arquivo.write_text(json.dumps({
+        "totais": {}, "leitura": {"conferido": {}},
+        "estrutura": {"tabelas": [], "familias": {},
+                      "fases_da_capa": {"blocos": 4,
+                                        "com_data_de_publicacao": 0}},
+    }), encoding="utf-8")
+    assert mostrar_estrutura(str(arquivo)) == 0
+    assert "ULTIMA tela lida" in capsys.readouterr().out
+
+    arquivo.write_text(json.dumps({
+        "totais": {}, "leitura": {"conferido": {}},
+        "estrutura": {"tabelas": [], "familias": {},
+                      "fases_da_capa": {"blocos": 53,
+                                        "com_data_de_publicacao": 8,
+                                        "contado_na_lista_inteira": True}},
+    }), encoding="utf-8")
+    assert mostrar_estrutura(str(arquivo)) == 0
+    saida = capsys.readouterr().out
+    assert "contados na lista inteira" in saida
+    assert "com_data_de_publicacao: 8" in saida
