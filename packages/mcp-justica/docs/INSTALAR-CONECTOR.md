@@ -66,7 +66,7 @@ mesmo jeito. Repeti-la na configuração do Claude criaria uma segunda cópia qu
 envelhece sozinha, e o `.env` tem precedência menor que o ambiente, então a
 cópia velha é que venceria.
 
-Feche e reabra o Claude. O servidor deve aparecer com **16 ferramentas**.
+Feche e reabra o Claude. O servidor deve aparecer com **20 ferramentas** (contadas em 29/10/2026; o número certo é sempre o que `scripts/empacotar.py` imprime).
 
 ### Conferir antes de confiar
 

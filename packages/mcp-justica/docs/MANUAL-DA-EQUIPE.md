@@ -138,6 +138,38 @@ limite do tribunal. Duas pessoas consultando o mesmo portal ao mesmo tempo
 gastam o dobro, e tentativas seguidas bloqueiam o acesso de **todo o
 escritório**, não só de quem tentou.
 
+**E a trava do conector não cobre esse risco.** Ela existe, e é útil, mas
+protege contra outra coisa. Conferido no código em 29/10/2026:
+
+| | A trava do conector | O limite do tribunal |
+| --- | --- | --- |
+| O que conta | Falhas **seguidas** de autenticação. Um acerto zera a contagem. | A política do portal, que a banca não controla. |
+| Quanto | 6 em 60 minutos (ajustável em `JUSTICA_TETO_TENTATIVAS`). | Não divulgado. |
+| Onde é contado | No arquivo `.justica-mcp` **da sua máquina e do seu usuário do Windows**. | Na conta do escritório, que é uma só. |
+
+A consequência é direta: **seis pessoas têm seis contagens separadas, e o
+tribunal vê a soma.** Cada máquina pode estar dentro do seu limite enquanto a
+conta compartilhada leva o total de todas. A trava evita que **um** programa
+em laço queime a conta sozinho; ela não evita que o escritório inteiro faça
+isso junto.
+
+Por isso duas regras práticas:
+
+1. **Diante de erro de autenticação, pare e avise o responsável.** Não repita.
+   Repetir é o que bloqueia, e o seu contador local não saberá das tentativas
+   de mais ninguém.
+2. **Combine antes, quando a equipe for consultar o mesmo portal no mesmo
+   dia.** O conector não tem como coordenar isso entre as máquinas.
+
+Para ver quanto resta no **seu** contador, a qualquer hora e sem custo
+nenhum, pergunte ao Claude:
+
+- "Como está o acesso autenticado."
+
+Ele responde pela ferramenta `justica_acesso_autenticado_situacao`, que
+informa quantas tentativas foram usadas na janela, qual é o teto e quantas
+restam. Essa resposta vale só para a sua máquina, pela razão explicada acima.
+
 **O registro de quem fez o quê é local.** Cada máquina guarda a própria
 auditoria. Com credencial compartilhada, o portal do tribunal não distingue
 quem consultou. Se for preciso saber quem fez determinado acesso, a resposta
@@ -197,11 +229,45 @@ seu acesso. Há um teto por hora e o conector recusa quando ele é atingido.
 **Diante de erro, não repita o pedido.** Diga ao responsável o que aconteceu.
 Repetir é o que bloqueia a conta.
 
-Funciona hoje para o **Portal de Serviços do Rio de Janeiro** e para o
-**eproc**. Para o **e-SAJ** e o **PJe**, essa consulta recusa, de propósito: os
-caminhos dessas telas ainda não foram escritos dentro da ferramenta, e aceitar
-faria a chamada gastar uma autenticação para falhar na tela errada. O
-**download**, esse sim, funciona nos quatro portais.
+Pelo Claude, funciona hoje para o **Portal de Serviços do Rio de Janeiro** e
+para o **eproc**. Para o **e-SAJ** e o **PJe**, a ferramenta recusa, e a
+recusa é de propósito: ela sabe chegar à tela do Portal de Serviços e à busca
+rápida do eproc, e nenhum desses dois caminhos serve àquelas telas. Aceitar
+gastaria uma autenticação para falhar na tela errada, que é o pior desfecho
+possível.
+
+Isso **não** quer dizer que o e-SAJ e o PJe estejam de fora do projeto: os
+dois funcionam pela linha de comando, com autenticação e download, e quem
+precisar deles pede ao responsável. O que falta é ligar esses caminhos à
+ferramenta, não escrevê-los.
+
+O **download**, esse sim, funciona nos quatro portais pelo próprio Claude.
+
+### Processo que subiu: primeiro e segundo grau
+
+Vale para o Portal de Serviços do Rio de Janeiro, e é a causa mais comum de
+confusão na leitura.
+
+O número único **não muda** quando o processo sobe. O mesmo número serve à
+primeira instância e ao recurso, e o portal mostra **uma linha para cada
+registro**: cada grau, e às vezes cada serventia, tem a sua linha, com
+movimentações próprias. Nenhuma delas é "a certa": são partes diferentes da
+mesma história.
+
+Por isso a primeira consulta traz a relação de todas as linhas, com a
+instância de cada uma. Leia e diga qual você quer:
+
+- "Consulte esse processo no portal."
+- "Agora consulte a linha do segundo grau desse mesmo processo."
+
+Duas consequências práticas:
+
+**Cada linha custa uma autenticação.** Ver o primeiro e o segundo grau do
+mesmo processo são dois acessos, não um.
+
+**Não conclua que falta movimentação sem conferir a linha.** Um processo que
+parece parado na primeira instância pode estar andando no recurso, em outra
+linha. A ausência que você vê é da linha que você abriu, não do processo.
 
 ### Baixar os autos
 
@@ -275,7 +341,7 @@ aceite é ato do advogado, nunca do programa.
 | Não faz | Por quê |
 | --- | --- |
 | Dar ciência de intimação | Ciência inicia prazo. É ato do advogado, nunca de um programa. |
-| Escrever em sistema de tribunal | Nenhuma das 16 ferramentas altera nada no tribunal. O download grava arquivos na sua pasta de cópias, e só. |
+| Escrever em sistema de tribunal | Nenhuma das 20 ferramentas altera nada no tribunal. O download grava arquivos na sua pasta de cópias, e só. |
 | Mandar dado para fora | Tudo roda na sua máquina. O que sai são as consultas aos portais, com a sua credencial. |
 | Usar a credencial de outra pessoa | O cofre é da sua máquina e da sua conta do Windows. |
 
