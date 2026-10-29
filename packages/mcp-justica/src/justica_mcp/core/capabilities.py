@@ -126,18 +126,155 @@ MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
             "Abrir expediente dispara a ciencia e inicia o prazo."
         ),
     },
-    "pje": {c: _fase2() for c in Capacidade},
+    # e-SAJ: conferido em campo em 22/09/2026, ponta a ponta, ate a integra.
+    #
+    # ESTE ADAPTADOR NAO ESTAVA NA MATRIZ. Ausente, `consultar()` devolvia
+    # NAO_IMPLEMENTADO por omissao, e o e-SAJ e o adaptador mais verificado do
+    # projeto. Omissao numa matriz de declaracao nao e silencio: e negativa.
+    #
+    # DOIS PORTOES, E ELES NAO SAO O MESMO. `SISTEMAS_COM_CONSULTA`, em
+    # `portal.py`, diz o que a LINHA DE COMANDO aceita: os quatro.
+    # `SISTEMAS_AUTENTICADOS`, em `tools.py`, diz o que a FERRAMENTA do
+    # conector aceita: so `dcp` e `eproc`. O e-SAJ e o PJe sao recusados pela
+    # ferramenta ANTES de autenticar, de proposito, porque o caminho dela tem
+    # um ramo para o Portal de Servicos e outro para a busca rapida do eproc,
+    # e nenhum dos dois serve a essas telas: aceitar gastaria uma autenticacao
+    # para falhar na tela errada.
+    #
+    # Por isso o motivo precisa dizer POR ONDE. Declarar so EXIGE_CREDENCIAL
+    # faria o assistente prometer ao advogado uma consulta que a ferramenta
+    # recusa em seguida, que e o mesmo erro de antes virado do avesso.
+    "esaj": {
+        **{c: _fase2() for c in Capacidade},
+        Capacidade.CONSULTAR_PROCESSO: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO: a ferramenta "
+            "`justica_consultar_processo_autenticado` recusa 'esaj' antes de "
+            "autenticar. Pela linha de comando a consulta foi conferida em "
+            "campo em 22/09/2026; exige credencial no cofre e "
+            "`JUSTICA_ACESSO_AUTENTICADO=1`, e gasta uma tentativa.",
+        ),
+        Capacidade.LISTAR_ANDAMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO. Movimentacoes da tela do processo, com "
+            "a expansao de 'exibir mais movimentacoes' ja percorrida.",
+        ),
+        Capacidade.LISTAR_DOCUMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO. Pelas pecas da Pasta Digital, "
+            "listadas com rotulo e endereco.",
+        ),
+        Capacidade.BAIXAR_INTEGRA: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO. A copia da Pasta Digital foi "
+            "percorrida ponta a ponta em campo em 22/09/2026. ATENCAO: a "
+            "copia e o PADRAO do comando, nao um extra. Sem `--documentos`, "
+            "vale 'auto', que escolhe a integra quando a pasta do processo "
+            "ainda esta vazia. Quem nao quer copia precisa dizer "
+            "`--documentos nenhum`.",
+        ),
+        Capacidade.DAR_CIENCIA_INTIMACAO: _nao_suportado(
+            "Abrir o expediente dispara a ciencia e inicia o prazo. O botao de "
+            "ciencia fica na pagina de intimacoes, e o adaptador nao encosta "
+            "nele."
+        ),
+    },
+    # PJe: caminho fotografado pelo operador em 30/09/2026, do menu ate os
+    # autos em aba nova, e conferido em campo na mesma data.
+    "pje": {
+        **{c: _fase2() for c in Capacidade},
+        Capacidade.CONSULTAR_PROCESSO: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO: a ferramenta "
+            "`justica_consultar_processo_autenticado` recusa 'pje' antes de "
+            "autenticar. Os identificadores dos campos nao apareceram nas "
+            "fotos, entao o adaptador procura os campos pela forma e confere "
+            "o que digitou antes de pesquisar; se a forma nao bater, ele "
+            "para.",
+        ),
+        Capacidade.LISTAR_ANDAMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO. Pela linha do tempo dos autos, "
+            "percorrida ate o fim.",
+        ),
+        Capacidade.LISTAR_DOCUMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO. As pecas da linha do tempo, com "
+            "rotulo e endereco.",
+        ),
+        Capacidade.BAIXAR_INTEGRA: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "SO PELA LINHA DE COMANDO, e dependente do aceite do termo de "
+            "responsabilidade da resolucao nº. 121 do Conselho Nacional de "
+            "Justica. O aceite e ato do advogado: sem `--aceito-o-termo` o "
+            "comando mostra o texto e para, e NADA e lido, nem a linha do "
+            "tempo. A copia em si e o PADRAO (`--documentos` vale 'auto'); "
+            "quem nao a quer precisa dizer `--documentos nenhum`.",
+        ),
+        Capacidade.DAR_CIENCIA_INTIMACAO: _nao_suportado(
+            "Abrir expediente dispara a ciencia e inicia o prazo."
+        ),
+    },
+    # CPE do Superior Tribunal de Justica: sem adaptador escrito. Esta e a
+    # unica entrada desta matriz que continua inteira em NAO_IMPLEMENTADO, e
+    # continua com razao: `SISTEMAS_COM_CONSULTA` tambem nao o inclui.
     "cpe": {c: _fase2() for c in Capacidade},
-    # Corrigido em 06/10/2026. A declaracao anterior dizia NAO_SUPORTADO para a
-    # integra, com a justificativa de ser portal legado em extincao. Isso era
-    # decisao de planejamento escrita como fato sobre o tribunal, e o fato e o
-    # contrario: o operador da banca, que usa o portal, confirmou que o DCP
-    # baixa a integra do processo. Nenhuma tela dele foi lida ainda, entao o
-    # que falta e o adaptador, deste lado, e e isso que a matriz passa a dizer.
-    "dcp": {c: _fase2(
-        "O portal baixa a integra, conforme uso do operador em 06/10/2026, e o "
-        "adaptador ainda nao foi escrito: nenhuma tela do DCP foi lida ate aqui."
-    ) if c is Capacidade.BAIXAR_INTEGRA else _fase2() for c in Capacidade},
+    # DCP, o Portal de Servicos do Tribunal de Justica do Rio de Janeiro.
+    #
+    # ATE 29/10/2026 ESTA ENTRADA DIZIA QUE NADA ESTAVA IMPLEMENTADO, com a
+    # justificativa de que "nenhuma tela do DCP foi lida ate aqui". Isso era
+    # verdade em 06/10. Deixou de ser no dia seguinte, e a declaracao ficou
+    # congelada no passado enquanto o adaptador crescia.
+    #
+    # O preco de uma matriz desatualizada e o inverso do que ela existe para
+    # evitar: o assistente le "nao implementado" e DIZ AO ADVOGADO QUE NAO DA,
+    # em vez de tentar. Aconteceu em 28/10/2026, com o proprio operador.
+    #
+    # Telas lidas em campo: 05, 06, 08, 13, 21, 27, 28 e 29/10/2026, nos dois
+    # graus. As movimentacoes do segundo grau foram conferidas pelo advogado
+    # contra a tela, linha a linha, em 29/10/2026.
+    "dcp": {
+        **{c: _fase2() for c in Capacidade},
+        Capacidade.CONSULTAR_PROCESSO: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Pela ferramenta do conector E pela linha de comando: 'dcp' esta "
+            "em `SISTEMAS_AUTENTICADOS` desde 13/10/2026. Consulta "
+            "autenticada pelo navegador, nos dois graus. O numero unico e o "
+            "mesmo em todas as instancias: quem escolhe a instancia e "
+            "`--linha`, e a busca lista as linhas com a instancia de cada "
+            "uma.",
+        ),
+        Capacidade.LISTAR_ANDAMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Historico completo, paginado ate o fim: no primeiro grau pelos "
+            "botoes numerados, no segundo pelo icone 'proximos 50 "
+            "movimentos'. A contagem lida e conferida contra o total que a "
+            "propria tela declara.",
+        ),
+        Capacidade.LISTAR_DOCUMENTOS: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "No segundo grau, os documentos de inteiro teor saem em lista "
+            "propria, com rotulo, endereco e data.",
+        ),
+        Capacidade.BAIXAR_DOCUMENTO: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "Um download por documento, pelo Visualizador. ATENCAO: o "
+            "Visualizador abre por PADRAO, porque `--documentos` vale 'auto'. "
+            "Consultar sem entrar nos autos exige dizer `--documentos "
+            "nenhum`.",
+        ),
+        Capacidade.BAIXAR_INTEGRA: Declaracao(
+            Situacao.EXIGE_CREDENCIAL,
+            "O portal OFERECE o botao da integra, mas medido em 20/10/2026 "
+            "ele nao entrega em processo grande: nem a integral nem o lote de "
+            "300 paginas. O que se viu entregar e um download por documento "
+            "(`--documentos um-a-um`), que reabre o Visualizador a cada um e "
+            "pula o que ja esta em disco.",
+        ),
+        Capacidade.DAR_CIENCIA_INTIMACAO: _nao_suportado(
+            "Abrir expediente dispara a ciencia e inicia o prazo."
+        ),
+    },
 }
 
 

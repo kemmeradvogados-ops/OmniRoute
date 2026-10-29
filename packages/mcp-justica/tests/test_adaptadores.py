@@ -97,19 +97,35 @@ def test_chave_explicita_vence_o_ambiente(monkeypatch):
 # ==========================================================================
 
 def test_o_dcp_nao_declara_mais_que_o_portal_nao_baixa_a_integra():
+    """A REGRA, e so ela: o Portal de Servicos oferece a integra, entao dizer
+    NAO_SUPORTADO poria na boca do servidor uma afirmacao falsa sobre o
+    tribunal.
+
+    Ate 29/10/2026 este teste exigia tambem `is NAO_IMPLEMENTADO`, o que
+    congelou a declaracao: o adaptador foi escrito ao longo de outubro e a
+    matriz nao pode mudar sem este teste quebrar. Um teste que fixa a
+    conclusao impede justamente a correcao que ele deveria permitir. A regra
+    sobrevive; a conclusao, nao.
+    """
     from justica_mcp.core.capabilities import Situacao, consultar
 
-    decl = consultar("dcp", Capacidade.BAIXAR_INTEGRA)
-    assert decl.situacao is not Situacao.NAO_SUPORTADO
-    assert decl.situacao is Situacao.NAO_IMPLEMENTADO
+    assert consultar("dcp", Capacidade.BAIXAR_INTEGRA).situacao is not (
+        Situacao.NAO_SUPORTADO)
 
 
 def test_o_motivo_do_dcp_diz_que_falta_o_adaptador_e_nao_o_portal():
+    """O motivo nao pode culpar o portal pelo que e deste lado.
+
+    A frase exigida mudou em 29/10/2026 junto com a situacao: nao se trata
+    mais de "o portal baixa e o adaptador nao foi escrito", e sim do que foi
+    MEDIDO em 20/10/2026, que o botao da integra existe e nao entrega em
+    processo grande. O que o teste guarda continua sendo o mesmo: o texto
+    atribui ao portal o que e do portal."""
     from justica_mcp.core.capabilities import consultar
 
-    motivo = consultar("dcp", Capacidade.BAIXAR_INTEGRA).motivo
-    assert "o portal baixa a integra" in motivo.lower()
-    assert "adaptador ainda nao foi escrito" in motivo
+    motivo = consultar("dcp", Capacidade.BAIXAR_INTEGRA).motivo.lower()
+    assert "o portal oferece" in motivo
+    assert "medido em" in motivo, "afirmacao sobre o portal precisa de data"
 
 
 def test_o_que_a_fonte_realmente_nao_expoe_continua_nao_suportado():
@@ -122,12 +138,15 @@ def test_o_que_a_fonte_realmente_nao_expoe_continua_nao_suportado():
 
 
 def test_nenhuma_capacidade_do_dcp_ficou_sem_declaracao():
-    from justica_mcp.core.capabilities import Situacao, consultar
+    """Toda capacidade do DCP tem situacao E motivo.
+
+    A metade que exigia `is NAO_IMPLEMENTADO` saiu em 29/10/2026 pelo motivo
+    descrito acima. O que o teste existe para impedir e uma capacidade MUDA,
+    e isso continua guardado."""
+    from justica_mcp.core.capabilities import consultar
 
     for capacidade in Capacidade:
-        decl = consultar("dcp", capacidade)
-        assert decl.situacao is Situacao.NAO_IMPLEMENTADO, capacidade
-        assert decl.motivo, capacidade
+        assert consultar("dcp", capacidade).motivo, capacidade
 
 
 # --------------------------------------------------------------------------
@@ -226,3 +245,81 @@ def test_o_recado_do_tempo_esgotado_diz_quanto_e_como_mudar():
     # aplica a regra do "nao repita diante de erro", que vale para o portal
     # autenticado e nao para esta consulta.
     assert "nao custa tentativa de autenticacao" in frase
+
+
+# ==========================================================================
+# A matriz nao pode envelhecer em silencio
+#
+# Em 28/10/2026 o advogado pediu a consulta do DCP pela extensao e recebeu
+# "DCP: nao implementado". Nao era verdade havia tres semanas: o adaptador
+# vinha sendo escrito desde 06/10, e a declaracao ficou parada. `tools.py`
+# instrui o assistente a DIZER QUE NAO DA quando a matriz diz
+# `nao_implementado`, em vez de tentar, entao uma matriz atrasada nao gera um
+# erro: gera uma recusa educada e falsa, que ninguem investiga.
+#
+# A matriz e uma afirmacao sobre o codigo. O codigo ja declara, em duas
+# constantes, quais sistemas tem consulta. Os testes abaixo amarram a
+# afirmacao as constantes, para que a proxima defasagem quebre uma linha
+# vermelha em vez de chegar ao advogado.
+# ==========================================================================
+
+def test_quem_tem_consulta_no_codigo_nao_pode_dizer_que_nao_tem():
+    """`SISTEMAS_COM_CONSULTA` e a lista do que a LINHA DE COMANDO aceita.
+    Estar nela e ter o adaptador escrito, que e a definicao exata do que
+    NAO_IMPLEMENTADO nega."""
+    from justica_mcp.core.capabilities import MATRIZ, Situacao, consultar
+    from justica_mcp.portal import SISTEMAS_COM_CONSULTA
+
+    for sistema in sorted(SISTEMAS_COM_CONSULTA):
+        assert sistema in MATRIZ, (
+            f"{sistema!r} tem consulta no codigo e nao aparece na matriz; "
+            "ausencia aqui vale como negativa, porque `consultar()` devolve "
+            "NAO_IMPLEMENTADO para quem nao declara")
+        decl = consultar(sistema, Capacidade.CONSULTAR_PROCESSO)
+        assert decl.situacao is not Situacao.NAO_IMPLEMENTADO, (
+            f"{sistema!r} esta em SISTEMAS_COM_CONSULTA e a matriz diz "
+            "nao_implementado")
+        assert decl.motivo, sistema
+
+
+def test_quem_a_ferramenta_recusa_precisa_dizer_isso_no_motivo():
+    """Os dois portoes nao sao o mesmo, e a diferenca e cara.
+
+    `SISTEMAS_COM_CONSULTA` (`portal.py`) vale para a linha de comando e tem
+    os quatro. `SISTEMAS_AUTENTICADOS` (`tools.py`) vale para a ferramenta do
+    conector e tem so `dcp` e `eproc`: o e-SAJ e o PJe sao recusados antes de
+    autenticar, de proposito.
+
+    Declarar EXIGE_CREDENCIAL sem dizer por onde faria o assistente prometer
+    ao advogado uma consulta que a ferramenta recusa em seguida, que e o erro
+    de 28/10/2026 virado do avesso. Entao: quem a ferramenta nao aceita diz
+    isso no proprio motivo.
+    """
+    from justica_mcp.core.capabilities import Situacao, consultar
+    from justica_mcp.portal import SISTEMAS_COM_CONSULTA
+    from justica_mcp.tools import SISTEMAS_AUTENTICADOS
+
+    so_na_linha_de_comando = set(SISTEMAS_COM_CONSULTA) - set(SISTEMAS_AUTENTICADOS)
+    assert so_na_linha_de_comando, (
+        "se a ferramenta passar a aceitar os quatro, este teste perde o "
+        "objeto e as ressalvas 'SO PELA LINHA DE COMANDO' precisam sair dos "
+        "motivos")
+
+    for sistema in sorted(so_na_linha_de_comando):
+        decl = consultar(sistema, Capacidade.CONSULTAR_PROCESSO)
+        assert decl.situacao is Situacao.EXIGE_CREDENCIAL, sistema
+        assert "SO PELA LINHA DE COMANDO" in decl.motivo, (
+            f"{sistema!r} e recusado pela ferramenta e o motivo nao avisa")
+
+
+def test_quem_a_ferramenta_aceita_nao_leva_a_ressalva():
+    """O contrario tambem engana: dizer 'so pela linha de comando' para o DCP
+    faria o assistente deixar de usar a ferramenta que funciona."""
+    from justica_mcp.core.capabilities import Capacidade, consultar
+    from justica_mcp.tools import SISTEMAS_AUTENTICADOS
+
+    for sistema in sorted(SISTEMAS_AUTENTICADOS):
+        for capacidade in Capacidade:
+            motivo = consultar(sistema, capacidade).motivo
+            assert "SO PELA LINHA DE COMANDO" not in motivo, (
+                f"{sistema!r}/{capacidade.value} e alcancado pela ferramenta")
