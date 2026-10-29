@@ -367,3 +367,53 @@ def test_o_eproc_nao_nega_um_download_que_ele_faz():
     for capacidade in (Capacidade.BAIXAR_INTEGRA, Capacidade.BAIXAR_DOCUMENTO):
         assert consultar("eproc", capacidade).situacao is not (
             Situacao.NAO_SUPORTADO), capacidade
+
+
+# ==========================================================================
+# A matriz fala por siglas, e ninguem fora do projeto sabe le-las
+#
+# Apontado pela PROPRIA extensao em 29/10/2026, ao ler a matriz: "Nao posso
+# verificar o significado das siglas DCP e CPE, porque o conector nao as
+# declara por extenso". Estava certa. Os nomes existiam so em COMENTARIO do
+# codigo, e comentario nao chega ao assistente: o que viaja e `motivo`.
+#
+# Para o advogado, "CPE" nao e informacao. E o escritorio escreve nomes por
+# extenso, e nao siglas, por regra de redacao da banca.
+# ==========================================================================
+
+def test_todo_adaptador_diz_seu_nome_por_extenso():
+    from justica_mcp.core.capabilities import MATRIZ, NOMES
+
+    for adaptador in MATRIZ:
+        assert adaptador in NOMES, f"{adaptador!r} nao tem nome por extenso"
+        nome = NOMES[adaptador]
+        assert len(nome) > len(adaptador), nome
+        assert nome != nome.upper(), f"{nome!r} ainda e sigla"
+
+
+def test_o_nome_por_extenso_viaja_ate_o_assistente():
+    """Nao basta existir: tem que sair na serializacao, que e o que a
+    ferramenta devolve."""
+    from justica_mcp.core.capabilities import matriz_serializavel
+
+    servida = matriz_serializavel()
+    assert "Portal de Servicos" in servida["dcp"]["nome"]
+    assert "Superior Tribunal de Justica" in servida["cpe"]["nome"]
+    for adaptador, bloco in servida.items():
+        assert bloco.get("nome"), adaptador
+        assert bloco.get("capacidades"), adaptador
+
+
+def test_nenhuma_capacidade_fica_sem_declaracao_em_adaptador_nenhum():
+    """Omissao numa matriz de declaracao nao e silencio: e negativa, e uma
+    negativa que nao explica nada. `consultar()` devolve 'Adaptador x nao
+    declara y', que a extensao mostrou como 'n/d' em 29/10/2026.
+
+    Tres faltavam: a base nacional nao declarava publicacoes por processo, e
+    o Diario nao declarava listar nem baixar documento. Nos tres casos havia
+    resposta honesta e util a dar."""
+    from justica_mcp.core.capabilities import MATRIZ
+
+    for adaptador, capacidades in MATRIZ.items():
+        faltando = [c.value for c in Capacidade if c not in capacidades]
+        assert not faltando, f"{adaptador!r} nao declara {faltando}"

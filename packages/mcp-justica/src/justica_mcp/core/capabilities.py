@@ -67,6 +67,29 @@ def _fase2(motivo: str = ("Este caminho nao foi escrito neste adaptador. O "
     return Declaracao(Situacao.NAO_IMPLEMENTADO, motivo)
 
 
+# O NOME POR EXTENSO DE CADA ADAPTADOR.
+#
+# Apontado pela propria extensao em 29/10/2026, ao ler a matriz: "Nao posso
+# verificar o significado das siglas DCP e CPE, porque o conector nao as
+# declara por extenso". Estava certa. Os nomes existiam neste arquivo, mas
+# so em COMENTARIO, e comentario nao chega ao assistente: o que viaja ate ele
+# e o que `matriz_serializavel` devolve.
+#
+# Para quem le a resposta, "CPE" nao e informacao, e o escritorio escreve
+# nomes por extenso em vez de siglas.
+NOMES: dict[str, str] = {
+    "datajud": "Base Nacional de Dados do Poder Judiciario, do Conselho "
+               "Nacional de Justica",
+    "djen": "Diario de Justica Eletronico Nacional",
+    "eproc": "eproc, da Justica Federal",
+    "esaj": "e-SAJ, do Tribunal de Justica do Estado de Sao Paulo",
+    "pje": "Processo Judicial Eletronico",
+    "cpe": "Consulta Processual Eletronica, do Superior Tribunal de Justica",
+    "dcp": "Portal de Servicos do Tribunal de Justica do Estado do Rio de "
+           "Janeiro",
+}
+
+
 MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
     "datajud": {
         Capacidade.CONSULTAR_PROCESSO: DISPONIVEL,
@@ -82,6 +105,15 @@ MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
         Capacidade.BAIXAR_INTEGRA: _nao_suportado("O DataJud nao expoe documentos."),
         Capacidade.LISTAR_PUBLICACOES_POR_OAB: _nao_suportado(
             "Nao ha campo de inscricao na Ordem no DataJud. Use o adaptador 'djen'."
+        ),
+        # Faltava declarar ate 29/10/2026, e a extensao mostrou a lacuna como
+        # "n/d". Omissao numa matriz de declaracao nao e silencio: `consultar`
+        # devolve "nao declara", que nega sem explicar, quando aqui havia
+        # resposta certa e util a dar.
+        Capacidade.LISTAR_PUBLICACOES_POR_PROCESSO: _nao_suportado(
+            "O DataJud replica movimentos processuais, nao o que foi publicado "
+            "em Diario. Publicacao de um processo se procura no adaptador "
+            "'djen'."
         ),
         Capacidade.LISTAR_INTIMACOES_PENDENTES: _nao_suportado(
             "Expediente pendente so existe no painel autenticado do portal."
@@ -101,6 +133,21 @@ MATRIZ: dict[str, dict[Capacidade, Declaracao]] = {
             "A busca do Diario e por inscricao na Ordem, processo ou tribunal."
         ),
         Capacidade.BAIXAR_INTEGRA: _nao_suportado("O Diario nao da acesso aos autos."),
+        # As duas abaixo faltavam ate 29/10/2026, e saiam como "n/d". A
+        # distincao que elas precisam fazer e fina e importa: o Diario publica
+        # o TEXTO da comunicacao, que o adaptador entrega inteiro, e nao as
+        # pecas dos autos. Quem le "nao declara" pode concluir que nem o texto
+        # da publicacao vem, e ele vem.
+        Capacidade.LISTAR_DOCUMENTOS: _nao_suportado(
+            "O Diario publica comunicacoes, nao as pecas dos autos. O texto "
+            "da propria publicacao vem inteiro nas capacidades de publicacao; "
+            "o que nao existe ali e peca de processo. Para isso, o portal do "
+            "tribunal."
+        ),
+        Capacidade.BAIXAR_DOCUMENTO: _nao_suportado(
+            "Nao ha documento a baixar: o Diario entrega o texto publicado, e "
+            "nao arquivos dos autos."
+        ),
         Capacidade.LISTAR_INTIMACOES_PENDENTES: _nao_suportado(
             "Publicacao no Diario e canal distinto do expediente do portal. "
             "Ler aqui NAO dispara ciencia, e tambem nao lista pendencias do painel."
@@ -328,11 +375,19 @@ def adaptadores_para(capacidade: Capacidade) -> list[str]:
     ]
 
 
-def matriz_serializavel() -> dict[str, dict[str, dict[str, str]]]:
+def matriz_serializavel() -> dict[str, dict]:
+    """O que a ferramenta devolve ao assistente.
+
+    O nome por extenso entra AQUI, e nao so num comentario, porque e esta
+    estrutura que viaja. Ver `NOMES`.
+    """
     return {
         adaptador: {
-            cap.value: {"situacao": d.situacao.value, "motivo": d.motivo}
-            for cap, d in caps.items()
+            "nome": NOMES.get(adaptador, adaptador),
+            "capacidades": {
+                cap.value: {"situacao": d.situacao.value, "motivo": d.motivo}
+                for cap, d in caps.items()
+            },
         }
         for adaptador, caps in MATRIZ.items()
     }
