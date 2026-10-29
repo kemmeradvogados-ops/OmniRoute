@@ -144,14 +144,21 @@ protege contra outra coisa. Conferido no código em 29/10/2026:
 | | A trava do conector | O limite do tribunal |
 | --- | --- | --- |
 | O que conta | Falhas **seguidas** de autenticação. Um acerto zera a contagem. | A política do portal, que a banca não controla. |
-| Quanto | 6 em 60 minutos (ajustável em `JUSTICA_TETO_TENTATIVAS`). | Não divulgado. |
+| Quanto | **18 em 60 minutos** na configuração da banca. O padrão do programa é 6, e foi elevado de propósito. | Não divulgado, e a banca não tem como conferir. |
 | Onde é contado | No arquivo `.justica-mcp` **da sua máquina e do seu usuário do Windows**. | Na conta do escritório, que é uma só. |
 
-A consequência é direta: **seis pessoas têm seis contagens separadas, e o
+A consequência é direta: **cada pessoa tem a sua própria contagem, e o
 tribunal vê a soma.** Cada máquina pode estar dentro do seu limite enquanto a
 conta compartilhada leva o total de todas. A trava evita que **um** programa
 em laço queime a conta sozinho; ela não evita que o escritório inteiro faça
 isso junto.
+
+E há um ponto que costuma ser lido ao contrário. O teto foi elevado de 6 para
+18 porque, com credencial compartilhada, as falhas de várias pessoas somam na
+mesma janela e o número baixo parava gente trabalhando. Mas **teto maior não
+é mais proteção, é menos**: ele faz o nosso freio parar mais tarde, portanto
+mais perto do ponto em que quem bloqueia é o tribunal. Qual é esse ponto não
+está documentado em lugar nenhum que a banca possa conferir.
 
 Por isso duas regras práticas:
 
