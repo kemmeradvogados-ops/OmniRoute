@@ -8886,3 +8886,70 @@ def test_a_recusa_da_capa_continua_saindo(tmp_path, capsys):
     saida = capsys.readouterr().out
     assert "REGRA NAO CONFERIDA: principais" in saida
     assert "Nao use `principais` como capa" in saida
+
+
+# ---------------------------------------------------------------------------
+# `estrutura --arquivo ultima`
+#
+# O comando `tela` aceita `ultima` desde 23/10/2026; `estrutura` nao aceitava.
+# Em 28/10/2026 a diferenca cobrou: a instrucao trazia um marcador de texto
+# para ser substituido, `<o arquivo que a consulta imprimir>`, e ele foi
+# colado como estava. Terceira vez neste projeto, sempre do mesmo jeito.
+# ---------------------------------------------------------------------------
+
+def _consultas_em(tmp_path, monkeypatch, nomes):
+    import json
+
+    from justica_mcp import portal
+
+    pasta = tmp_path / "consultas"
+    pasta.mkdir(parents=True)
+    import os
+    import time
+
+    for i, nome in enumerate(nomes):
+        arquivo = pasta / nome
+        arquivo.write_text(json.dumps({
+            "totais": {}, "leitura": {"conferido": {}},
+            "estrutura": {"tabelas": [], "familias": {}},
+        }), encoding="utf-8")
+        # Datas de arquivo distintas, para `ultima` ter o que ordenar.
+        os.utime(arquivo, (time.time() + i, time.time() + i))
+    monkeypatch.setattr(portal, "diretorio_estado", lambda: tmp_path,
+                        raising=False)
+    import justica_mcp.core.estado as estado
+
+    monkeypatch.setattr(estado, "diretorio_estado", lambda: tmp_path)
+    return pasta
+
+
+def test_ultima_escolhe_a_consulta_mais_recente(tmp_path, monkeypatch):
+    from justica_mcp.portal import resolver_a_consulta
+
+    pasta = _consultas_em(tmp_path, monkeypatch,
+                          ["a-20261027T000000Z.json", "b-20261028T000000Z.json"])
+    assert resolver_a_consulta("ultima") == pasta / "b-20261028T000000Z.json"
+
+
+def test_o_nome_solto_e_procurado_na_pasta(tmp_path, monkeypatch):
+    from justica_mcp.portal import resolver_a_consulta
+
+    pasta = _consultas_em(tmp_path, monkeypatch, ["a-20261027T000000Z.json"])
+    assert (resolver_a_consulta("a-20261027T000000Z.json")
+            == pasta / "a-20261027T000000Z.json")
+
+
+def test_o_marcador_colado_nao_derruba_o_comando(tmp_path, monkeypatch, capsys):
+    """Marcador em linha de comando e erro a espera: a linha PARECE pronta."""
+    from justica_mcp.portal import mostrar_estrutura
+
+    _consultas_em(tmp_path, monkeypatch, ["a-20261027T000000Z.json"])
+    assert mostrar_estrutura("<o arquivo que a consulta imprimir>") == 1
+    assert "Confira o caminho" in capsys.readouterr().err
+
+
+def test_sem_consulta_nenhuma_ultima_nao_estoura(tmp_path, monkeypatch):
+    from justica_mcp.portal import resolver_a_consulta
+
+    _consultas_em(tmp_path, monkeypatch, [])
+    assert resolver_a_consulta("ultima").name == "nenhuma-consulta-gravada.json"

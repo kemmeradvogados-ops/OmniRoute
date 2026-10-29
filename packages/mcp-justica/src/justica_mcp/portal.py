@@ -8202,6 +8202,43 @@ def _linha_de_lista(titulo: str, itens: list, teto: int = 40) -> list[str]:
     return [f"  {titulo} ({len(itens)}):{sobra}"] + [f"    {x}" for x in mostrados]
 
 
+def resolver_a_consulta(caminho: str) -> "pathlib.Path":
+    """Aceita `ultima`, o nome solto do arquivo, ou o caminho inteiro.
+
+    O comando `tela` ja fazia isso desde 23/10/2026, e `estrutura` nao. Em
+    28/10/2026 a diferenca cobrou: a instrucao trazia um marcador de texto
+    para ser substituido, `<o arquivo que a consulta imprimir>`, e ele foi
+    colado como estava. O Windows respondeu "Invalid argument".
+
+    Marcador em linha de comando e erro a espera, porque a linha PARECE
+    pronta. Ja custou tres vezes neste projeto, sempre do mesmo jeito. A
+    correcao nao e escrever o aviso maior: e o comando saber se virar.
+
+    `ultima` escolhe a consulta mais recente por data de arquivo. Nome solto
+    e procurado na pasta das consultas. Caminho inteiro continua valendo.
+    """
+    import pathlib
+
+    from .core.estado import diretorio_estado
+
+    bruto = (caminho or "").strip().strip('"').strip("'")
+    pasta = diretorio_estado() / "consultas"
+    if bruto.lower() in ("ultima", "última", "last"):
+        gravadas = sorted((a for a in pasta.glob("*.json") if a.is_file()),
+                          key=lambda a: a.stat().st_mtime)
+        if gravadas:
+            return gravadas[-1]
+        return pasta / "nenhuma-consulta-gravada.json"
+    alvo = pathlib.Path(bruto).expanduser()
+    if alvo.is_file():
+        return alvo
+    if alvo.parent in (pathlib.Path("."), pathlib.Path("")):
+        vizinho = pasta / alvo.name
+        if vizinho.is_file():
+            return vizinho
+    return alvo
+
+
 def mostrar_estrutura(caminho: str) -> int:
     """Imprime SO o bloco de estrutura de uma consulta ja gravada.
 
@@ -8220,11 +8257,16 @@ def mostrar_estrutura(caminho: str) -> int:
     import json
     import pathlib
 
-    alvo = pathlib.Path(caminho).expanduser()
+    alvo = resolver_a_consulta(caminho)
     try:
         bruto = json.loads(alvo.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        print(f"Arquivo nao encontrado: {alvo}", file=sys.stderr)
+        # O RECADO PRECISA ENSINAR A SAIDA, e nao so constatar a falta. Em
+        # 28/10/2026 um marcador de texto foi colado como caminho, e a
+        # resposta do sistema nao dizia que existe `--arquivo ultima`.
+        print(f"Arquivo nao encontrado: {alvo}\n"
+              "Confira o caminho. `--arquivo ultima` abre a consulta mais "
+              "recente sem precisar dele.", file=sys.stderr)
         return 1
     except OSError as erro:
         # Mesma razao do recado em `telas.py`: caminho invalido nao e defeito

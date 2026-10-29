@@ -5488,7 +5488,22 @@ def percorrer_os_lotes_de_50(quadro: Any, guarda: Any, segundos: int = 45,
     if declarado is not None:
         conferencia = f"; a tela declara {declarado}"
         if len(acumulado) != declarado:
-            conferencia += f", e foram juntados {len(acumulado)}: CONFIRA"
+            # DIZER DE ONDE VIERAM, e nao so que os numeros diferem.
+            #
+            # "CONFIRA" sozinho manda procurar sem dizer onde. Em 28/10/2026
+            # a diferenca era explicavel inteira: 54 blocos de fase mais 8
+            # documentos davam 62 contra 52 declarados, e os 52 sao so os
+            # movimentos, porque documento nao e andamento. Quem le precisa
+            # dessa conta, nao do aviso.
+            origens = _por_origem([
+                {"origem": (m.get("origem") or "").split(",")[0]}
+                for m in acumulado])
+            partes = ", ".join(f"{quantas} de {chave}" for chave, quantas
+                               in sorted(origens.items(),
+                                         key=lambda par: -par[1]))
+            conferencia += (f", e foram juntados {len(acumulado)}: CONFIRA. "
+                            f"Dos juntados, {partes}. A tela conta so os "
+                            "movimentos; documento nao e andamento")
         else:
             conferencia += ", e e esse o numero juntado"
 

@@ -179,8 +179,9 @@ def main(argv: list[str] | None = None) -> int:
         help="imprime SO a forma da tela de uma consulta ja gravada, sem valor "
              "de campo, para poder ser colada numa conversa")
     es.add_argument("--arquivo", required=True,
-                    help="o arquivo .json que a consulta gravou (o caminho que "
-                         "ela imprimiu em 'Conteudo completo em:')")
+                    help="'ultima' para a consulta mais recente, o nome do "
+                         "arquivo solto, ou o caminho inteiro que a consulta "
+                         "imprimiu em 'Conteudo completo em:'")
 
     t = sub.add_parser("entrar", help="envia o login UMA vez e le a tela seguinte")
     t.add_argument("--url", default=None, help=portal.AJUDA_URL)
