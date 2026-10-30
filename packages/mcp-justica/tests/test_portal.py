@@ -4070,10 +4070,23 @@ def test_depois_do_aceite_o_botao_de_download_e_procurado_de_novo():
     depois = fonte.split("_responder_segundo_fator(")[1]
     assert "achar_botao_da_integra(pagina)" in depois
     assert "_fluxo_do_botao_de_copia(" in depois
-    # E tem de vir ANTES de procurar partes soltas no quadro, que e o caminho
-    # de excecao.
-    assert depois.index("_fluxo_do_botao_de_copia(") < depois.index(
-        "_baixar_partes_do_eproc(")
+
+    # A ORDEM EXIGIDA AQUI ERA O DEFEITO, e foi invertida em 30/10/2026.
+    #
+    # Ate entao este teste exigia que `_fluxo_do_botao_de_copia` viesse ANTES
+    # de procurar as partes, tratando a busca pelo arquivo pronto como
+    # "caminho de excecao". Em campo foi o contrario: com oito processos do
+    # eproc parados, a tela ja mostrava os links "BAIXAR ARQUIVO" e o codigo
+    # clicava no botao assim mesmo, esperava oito segundos e desistia.
+    #
+    # O que este teste existe para guardar continua de pe: depois do segundo
+    # fator, o botao tem de ser procurado DE NOVO na pagina de cima, porque e
+    # so ali que ele passa a existir. O que saiu foi a ordem, que nao era
+    # regra: era a conclusao de quem ainda nao tinha visto um arquivo pronto
+    # na tela.
+    assert depois.index("_partes_ja_prontas(") < depois.index(
+        "achar_botao_da_integra("), (
+        "o arquivo pronto se recolhe antes de clicar em qualquer coisa")
 
 
 # ==========================================================================
@@ -9095,3 +9108,169 @@ def test_a_ressalva_sai_do_dado_que_o_dcp_realmente_monta():
     assert "partes" not in texto
     assert "mandados" not in texto
     assert "movimentacoes" not in texto
+
+
+# ==========================================================================
+# O arquivo PRONTO vem antes de qualquer clique
+#
+# Relatado em campo em 30/10/2026, com oito processos do eproc parados. A tela
+# ja mostrava os links "BAIXAR ARQUIVO", e mesmo assim nenhum arquivo vinha. O
+# relato da extensao descrevia o que acontecia: ela clicava em "Download
+# Completo" e desistia depois de oito segundos.
+#
+# A causa e de ORDEM, e nao de seletor. Em `_integra_pelo_acesso`:
+#
+#   1. achava o botao "Download Completo" na PAGINA DE CIMA  -> achava
+#   2. clicava e esperava TETO_DO_DOWNLOAD_DIRETO (8s)
+#   3. so entao procurava as partes prontas, e na PAGINA DE CIMA
+#
+# Os links prontos ficam na tela de geracao, que e `janela`: o quadro embutido
+# ou a aba nova. A busca acontecia no documento errado, e depois de clicar.
+#
+# Duas razoes para procurar ANTES:
+#
+#   - olhar e de graca e instantaneo; clicar pode custar horas de fila;
+#   - o proprio codigo se recusa a clicar em "forcar nova geracao" porque isso
+#     DESCARTA o arquivo pronto. Se o botao de Download Completo fizer o mesmo,
+#     cada tentativa estava jogando fora o trabalho do tribunal. Nao da para
+#     verificar isso daqui, e a ordem certa torna a pergunta irrelevante.
+# ==========================================================================
+
+def test_o_arquivo_pronto_e_recolhido_antes_de_clicar_no_botao(tmp_path, monkeypatch):
+    """O NUCLEO do defeito de 30/10/2026."""
+    from justica_mcp import portal
+
+    quadro = _TelaDePartes()                      # a tela de geracao, com as partes
+    de_cima = _TelaDePartes(com_partes=False)     # a pagina de cima, sem elas
+
+    cliques = []
+    monkeypatch.setattr(portal, "achar_botao_da_integra",
+                        lambda p: ("#btnDownloadCompletoRS", _BotaoQueAnota(cliques)))
+    monkeypatch.setattr(portal, "quadro_da_integra", lambda p: quadro)
+    monkeypatch.setattr(portal, "_assentar", lambda *a, **kw: None)
+    monkeypatch.setattr(portal, "_mensagens_de_erro", lambda p: [])
+    monkeypatch.setattr(portal, "_responder_segundo_fator",
+                        lambda *a, **kw: True)
+
+    gravados = portal._integra_pelo_acesso(
+        de_cima, _guarda_que_baixa(), _AcessoFalso(), tmp_path, "123",
+        _IdentidadeDoEproc(), 5)
+
+    assert len(gravados) == 2, "as partes prontas nao foram recolhidas"
+    assert cliques == [], (
+        "o botao de Download Completo foi clicado com o arquivo ja pronto na "
+        "tela; clicar pode descartar o arquivo e devolver o processo para a fila")
+
+
+def test_sem_arquivo_pronto_o_botao_continua_sendo_usado(tmp_path, monkeypatch):
+    """A inversao nao pode desligar o caminho normal: quando nao ha nada
+    pronto, pedir a geracao continua sendo o que se faz."""
+    from justica_mcp import portal
+
+    vazia = _TelaDePartes(com_partes=False)
+    cliques = []
+    monkeypatch.setattr(portal, "achar_botao_da_integra",
+                        lambda p: ("#btnDownloadCompletoRS", _BotaoQueAnota(cliques)))
+    monkeypatch.setattr(portal, "quadro_da_integra", lambda p: vazia)
+    monkeypatch.setattr(portal, "_assentar", lambda *a, **kw: None)
+    monkeypatch.setattr(portal, "_mensagens_de_erro", lambda p: [])
+    monkeypatch.setattr(portal, "_responder_segundo_fator", lambda *a, **kw: True)
+    monkeypatch.setattr(portal, "_fluxo_do_botao_de_copia",
+                        lambda *a, **kw: ["caminho-do-botao"])
+
+    gravados = portal._integra_pelo_acesso(
+        vazia, _guarda_que_baixa(), _AcessoFalso(), tmp_path, "123",
+        _IdentidadeDoEproc(), 5)
+
+    assert gravados == ["caminho-do-botao"]
+
+
+def test_as_partes_sao_procuradas_tambem_na_pagina_de_cima(tmp_path, monkeypatch):
+    """Nem sempre a tela de geracao e um quadro. Quando o portal resolve tudo
+    na pagina de cima, procurar so no quadro perderia o arquivo pronto."""
+    from justica_mcp import portal
+
+    de_cima = _TelaDePartes()                 # as partes estao AQUI
+    monkeypatch.setattr(portal, "achar_botao_da_integra", lambda p: (None, None))
+    monkeypatch.setattr(portal, "quadro_da_integra", lambda p: None)
+    monkeypatch.setattr(portal, "_assentar", lambda *a, **kw: None)
+    monkeypatch.setattr(portal, "_mensagens_de_erro", lambda p: [])
+    monkeypatch.setattr(portal, "_responder_segundo_fator", lambda *a, **kw: True)
+
+    gravados = portal._integra_pelo_acesso(
+        de_cima, _guarda_que_baixa(), _AcessoFalso(), tmp_path, "123",
+        _IdentidadeDoEproc(), 5)
+    assert len(gravados) == 2
+
+
+class _BotaoQueAnota:
+    def __init__(self, onde):
+        self.onde = onde
+
+    def click(self):
+        self.onde.append("Download Completo")
+
+
+class _AcessoFalso:
+    def click(self):
+        pass
+
+
+class _IdentidadeDoEproc:
+    """Nome proprio de proposito.
+
+    A primeira versao desta classe se chamava `_IdentidadeFalsa`, que ja
+    existia neste arquivo com `tribunal = "TJRJ"`. Definida depois, a minha
+    sobrescreveu a original e quebrou um teste do DCP que nao tinha nada a ver
+    com o eproc. Colisao de nome em arquivo de teste nao da erro: da resposta
+    errada num teste alheio."""
+
+    tribunal = "TRF2"
+    sistema = "eproc"
+
+
+def test_o_caminho_do_trf2_tambem_olha_antes_de_clicar(tmp_path, monkeypatch):
+    """A mesma guarda nos dois caminhos que chegam ao botao.
+
+    Metade consertada e como o defeito nasce: em 29/10/2026 tres dos quatro
+    caminhos de consulta tratavam `--documentos nenhum` e o quarto nao, e foi
+    o quarto que baixou autos contra o pedido do advogado."""
+    from justica_mcp import portal
+
+    tela = _TelaDePartes()     # ja tem o arquivo pronto
+    cliques = []
+    monkeypatch.setattr(portal, "achar_botao_da_integra",
+                        lambda p: ("#btnDownloadCompletoRS", _BotaoQueAnota(cliques)))
+    monkeypatch.setattr(portal, "_fluxo_do_botao_de_copia",
+                        lambda *a, **kw: ["nao devia ter chegado aqui"])
+
+    gravados = portal._baixar_integra(
+        tela, _guarda_que_baixa(), tmp_path, "123", _IdentidadeDoEproc(), 5)
+
+    assert len(gravados) == 2
+    assert cliques == []
+
+
+def test_erro_num_documento_nao_impede_a_procura_no_seguinte(tmp_path):
+    """Quadro que o portal troca sob os pes e corriqueiro aqui. Desistir por
+    causa dele seria desistir com o arquivo do lado."""
+    from justica_mcp.portal import _partes_ja_prontas
+
+    class _TelaQueExplode:
+        url = "https://eproc.jfrj.jus.br/x"
+
+        def query_selector_all(self, seletor):
+            raise RuntimeError("quadro trocado no meio da leitura")
+
+    gravados = _partes_ja_prontas(
+        (_TelaQueExplode(), _TelaDePartes()), _guarda_que_baixa(),
+        tmp_path, "123", 5)
+    assert len(gravados) == 2
+
+
+def test_sem_arquivo_em_lugar_nenhum_a_procura_devolve_vazio(tmp_path):
+    from justica_mcp.portal import _partes_ja_prontas
+
+    assert _partes_ja_prontas(
+        (None, _TelaDePartes(com_partes=False)), _guarda_que_baixa(),
+        tmp_path, "123", 5) == []

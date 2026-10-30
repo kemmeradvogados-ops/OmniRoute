@@ -5480,6 +5480,35 @@ class ConteudoInesperado(RuntimeError):
     """O endereco respondeu, mas o que veio nao e arquivo."""
 
 
+def _partes_ja_prontas(documentos, guarda, destino, chave: str,
+                       segundos: int) -> list:
+    """O arquivo JA GERADO, procurado em cada documento, na ordem dada.
+
+    Escrita em 30/10/2026. A tela de geracao do eproc tanto pode ser um quadro
+    embutido quanto a propria pagina de cima, e qual dos dois depende do
+    caminho por onde se chegou. Procurar num so perde o arquivo pronto que
+    esta no outro, que foi o que deixou oito processos parados.
+
+    Erro na leitura de um documento NAO cancela a procura no seguinte: um
+    quadro que o portal trocou sob os pes e coisa corriqueira aqui, e
+    desistir por causa dele seria desistir com o arquivo do lado.
+    """
+    for documento in documentos:
+        if documento is None:
+            continue
+        try:
+            partes = _baixar_partes_do_eproc(documento, guarda, destino, chave,
+                                             segundos)
+        except Exception as exc:
+            print(f"    A leitura desta tela falhou ({type(exc).__name__}: "
+                  f"{str(exc).strip().splitlines()[0][:120]}). Segue para a "
+                  "proxima.")
+            continue
+        if partes:
+            return partes
+    return []
+
+
 def _baixar_partes_do_eproc(pagina, guarda, destino, chave: str,
                             segundos: int) -> list:
     """Baixa as partes do arquivo completo que o portal ja gerou.
@@ -5666,28 +5695,38 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
     for recado in recados:
         print(f"    O portal disse: {recado}")
 
+    # ANTES DE CLICAR EM QUALQUER COISA: o que ja esta pronto.
+    #
+    # Ate 30/10/2026 esta busca vinha DEPOIS do botao, e so na pagina de cima.
+    # Com oito processos do eproc parados, a tela ja mostrava os links "BAIXAR
+    # ARQUIVO" e nenhum arquivo vinha: o codigo achava o botao de Download
+    # Completo, clicava, esperava oito segundos e so entao procurava as
+    # partes, no documento errado. Os links prontos moram na tela de geracao,
+    # que e `janela`, e nao na pagina de cima.
+    #
+    # Duas razoes para olhar primeiro, e a segunda e a que pesa:
+    #
+    #   - olhar e de graca e instantaneo; clicar pode custar horas de fila;
+    #   - este mesmo arquivo se recusa a clicar em "forcar nova geracao"
+    #     porque isso DESCARTA o arquivo pronto e devolve o processo para a
+    #     fila. Nao se sabe se o botao de Download Completo faz o mesmo, e a
+    #     ordem certa torna a pergunta irrelevante: com o arquivo em maos, nao
+    #     se clica em nada.
+    partes = _partes_ja_prontas((janela, pagina), guarda, destino, chave,
+                                segundos)
+    if partes:
+        return partes
+
     # O ACHADO de 05/10/2026: liberado o acesso, a PAGINA DE CIMA ganha
     # `#btnDownloadCompletoRS`, que antes nao existia nela. E o mesmo botao do
     # Tribunal Regional Federal da 2a Regiao. Daqui em diante os dois tribunais
     # sao o mesmo portal, e seria desperdicio escrever um caminho so para o Rio.
     seletor, botao = achar_botao_da_integra(pagina)
     if botao is not None:
-        print("    Liberado o acesso, o botao de Download Completo apareceu.")
+        print("    Nada pronto na tela. O botao de Download Completo "
+              "apareceu, e e por ele que se pede a geracao.")
         return _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor,
                                         destino, chave, segundos)
-
-    # Daqui para a frente a janela pode ser um quadro que o portal troca sob os
-    # pes. Qualquer erro vira relato, e nao traceback: a consulta ja terminou, e
-    # o que falta e descobrir como e a tela dos autos no Rio.
-    try:
-        partes = _baixar_partes_do_eproc(janela, guarda, destino, chave, segundos)
-    except Exception as exc:
-        print(f"    A leitura da tela dos autos falhou ({type(exc).__name__}: "
-              f"{str(exc).strip().splitlines()[0][:120]}).")
-        _relatar_tela(pagina, "PAGINA DE CIMA")
-        return []
-    if partes:
-        return partes
 
     baixado = _gerar_integra_do_eproc(janela, guarda, segundos)
     if baixado is GERACAO_PEDIDA:
@@ -5749,6 +5788,17 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
             for item in itens:
                 print(f"      {item}")
         return []
+
+    # A MESMA guarda do caminho do Rio, pela mesma razao. Aqui a tela e a do
+    # processo, onde normalmente nao ha arquivo pronto, e a busca devolve
+    # vazio sem custo nenhum. Ela fica porque metade consertada e como o
+    # defeito nasce: em 29/10/2026, tres dos quatro caminhos de consulta
+    # tratavam `--documentos nenhum` e o quarto nao, e foi o quarto que
+    # baixou autos contra o pedido do advogado.
+    partes = _partes_ja_prontas((pagina,), guarda, destino, chave, segundos)
+    if partes:
+        return partes
+
     return _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor, destino,
                                     chave, segundos)
 
