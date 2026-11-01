@@ -197,3 +197,60 @@ def test_a_lista_declarada_nao_tem_entrada_morta():
     achados = set(_numeros_na_arvore())
     mortas = sorted(NUMEROS_DECLARADOS - achados)
     assert not mortas, f"{len(mortas)} entrada(s) declarada(s) sem uso: {mortas}"
+
+
+# ==========================================================================
+# A espinha dorsal do monitoramento nunca funcionou
+#
+# Apontado pela auditoria de 30/10/2026: `justica_publicacoes_por_oab`
+# devolvia erro "total" para QUALQUER inscricao testada, e a descoberta do
+# dossie teve de ser feita a mao, pelo Comunica no navegador.
+#
+# A auditoria inferiu que "a resposta da fonte deixou de trazer o campo
+# 'total'". Nao e isso, e a diferenca importa: o NOSSO proprio adaptador
+# nunca devolveu esse campo. Ele devolve `total_informado`, de proposito,
+# porque a contagem da fonte satura em 10.000 e reportar aquilo como total
+# faria o agente afirmar um numero falso. A ferramenta, do outro lado,
+# sempre leu `dados['total']`.
+#
+# As duas linhas vieram na PRIMEIRA confirmacao do projeto, `ca5ed089`. A
+# ferramenta que o proprio texto dela chama de "espinha dorsal do
+# monitoramento diario" nunca funcionou, e nao havia um unico teste sobre
+# ela.
+#
+# Pior: a linha que quebrava era a do REGISTRO DE AUDITORIA, depois de os
+# dados terem chegado inteiros. A consulta funcionava e o resultado ia para
+# o lixo por causa do rotulo de uma anotacao.
+# ==========================================================================
+
+def test_o_rotulo_do_total_usa_o_campo_que_o_adaptador_devolve():
+    from justica_mcp.adapters.djen import AdaptadorDJEN
+    from justica_mcp.tools import rotulo_do_total
+
+    dados = dict(AdaptadorDJEN._resumo_total({"count": 7}, [1, 2, 3]))
+    assert "total" not in dados, (
+        "se o adaptador voltar a ter 'total', este teste perde o objeto")
+    assert rotulo_do_total(dados) == "7 item(ns)"
+
+
+def test_contagem_saturada_nao_e_anunciada_como_exata():
+    """A API satura em 10.000. Anotar isso como total exato poria no registro
+    um numero que ninguem pode confirmar."""
+    from justica_mcp.adapters.djen import AdaptadorDJEN
+    from justica_mcp.tools import rotulo_do_total
+
+    dados = dict(AdaptadorDJEN._resumo_total({"count": 10000}, []))
+    rotulo = rotulo_do_total(dados)
+    assert "10000" in rotulo
+    assert "ou mais" in rotulo, rotulo
+
+
+def test_consulta_que_deu_certo_nao_se_perde_por_causa_do_rotulo():
+    """O NUCLEO do defeito: o registro de auditoria derrubava a chamada
+    inteira. Anotacao e importante, mas nunca ao ponto de jogar fora o
+    trabalho que ja foi feito e pago."""
+    from justica_mcp.tools import rotulo_do_total
+
+    for esquisito in ({}, {"total_informado": None}, {"total_informado": "x"},
+                      None):
+        assert isinstance(rotulo_do_total(esquisito), str)

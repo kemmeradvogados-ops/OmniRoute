@@ -258,6 +258,43 @@ class BaixarAutosInput(NumeroInput):
 SISTEMAS_AUTENTICADOS = ("dcp", "eproc")
 
 
+def rotulo_do_total(dados) -> str:
+    """O quanto anotar na auditoria de uma consulta de publicacoes.
+
+    ESCRITA EM 01/11/2026, DEPOIS DE UM DEFEITO QUE DUROU O PROJETO INTEIRO.
+
+    A ferramenta de publicacoes por inscricao anotava
+    `f"{dados['total']} item(ns)"`. O adaptador nunca devolveu `total`: ele
+    devolve `total_informado`, de proposito, porque a contagem da fonte satura
+    em 10.000 e reportar aquilo como total faria o agente afirmar um numero
+    falso. As duas linhas vieram na primeira confirmacao do projeto.
+
+    O efeito: `KeyError: 'total'` em toda chamada, e a ferramenta que a
+    propria documentacao chama de espinha dorsal do monitoramento diario nunca
+    funcionou. A auditoria de 30/10/2026 a encontrou assim, e o dossie teve de
+    ser feito a mao pelo navegador.
+
+    O que mais dói e ONDE quebrava: na linha do registro de auditoria, depois
+    de os dados terem chegado inteiros. A consulta funcionava e o resultado ia
+    para o lixo por causa do rotulo de uma anotacao. Anotar importa, e com
+    credencial compartilhada importa muito, mas nunca ao ponto de jogar fora o
+    trabalho que ja foi feito.
+
+    Daqui em diante nada aqui pode levantar: o pior desfecho possivel e um
+    rotulo vago, e rotulo vago e muito melhor que consulta perdida.
+    """
+    if not isinstance(dados, dict):
+        return "quantidade nao informada"
+    bruto = dados.get("total_informado")
+    if not isinstance(bruto, int):
+        return "quantidade nao informada"
+    if dados.get("total_e_estimativa"):
+        # A fonte satura a contagem. Anotar "10000 itens" poria no registro um
+        # numero exato que ninguem pode confirmar.
+        return f"{bruto} item(ns) ou mais"
+    return f"{bruto} item(ns)"
+
+
 # A ressalva de leitura nomeia OS BLOCOS, e nao a tela inteira.
 #
 # Ate 29/10/2026 esta frase dizia "a capa E AS MOVIMENTACOES foram lidas pela
@@ -440,7 +477,8 @@ def registrar(mcp: Any) -> None:
                 sigla_tribunal=params.sigla_tribunal, pagina=params.pagina,
             )
             _estado.registrar(acao="publicacoes_por_oab", solicitante=params.solicitante,
-                              tribunal=params.sigla_tribunal, resultado=f"{dados['total']} item(ns)")
+                              tribunal=params.sigla_tribunal,
+                              resultado=rotulo_do_total(dados))
             return _json(dados)
         except Exception as exc:
             return _tratar(exc)
