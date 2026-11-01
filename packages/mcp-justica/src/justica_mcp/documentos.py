@@ -42,6 +42,23 @@ def _sem_acento(texto: str) -> str:
     )
 
 
+def _e_documento(corpo: Any) -> bool:
+    """O que chegou e peca de processo, ou e pagina?
+
+    Duas formas valem: PDF, que e o normal, e arquivo compactado, que alguns
+    portais entregam. Qualquer outra coisa e tela, e tela com nome de peca
+    engana quem le a pasta depois.
+
+    A mesma pergunta ja era feita no caminho do PJe, por `parece_pdf`. Aqui
+    faltava, e o zip entra porque este caminho tambem o recebe.
+    """
+    from .navegador import parece_pdf
+
+    if not corpo:
+        return False
+    return parece_pdf(corpo) or bytes(corpo[:4]) == b"PK\x03\x04"
+
+
 def nome_de_arquivo(evento: str, rotulo: str, extensao: str) -> str:
     """Nome previsivel e ordenavel, seguro em qualquer sistema de arquivos."""
     limpo = _INVALIDOS.sub("-", _sem_acento(rotulo)).strip(" .-") or "documento"
@@ -162,6 +179,36 @@ def baixar_documentos_dos_eventos(
                 arquivo = destino / nome_de_arquivo(
                     copia.evento, copia.rotulo, _extensao(resposta, absoluto)
                 )
+                if not _e_documento(conteudo):
+                    # PAGINA NAO E PECA, e anotar uma como a outra e pior que
+                    # falhar, porque falha se ve.
+                    #
+                    # Item 9 da auditoria de 30/10/2026: este caminho gravou
+                    # `ev0105-CERT1.html` e outras duas em vez dos PDFs, e
+                    # anotou as tres como copias bem sucedidas, com bytes
+                    # gravados. O indice passou a dizer que as pecas estavam
+                    # copiadas. A auditoria resumiu o dano numa frase exata: "o
+                    # documento parece baixado, mas nao esta".
+                    #
+                    # O que costuma vir assim e sessao expirada, tela de erro
+                    # ou moldura de visualizador. Nenhuma delas e o documento.
+                    recusado = arquivo.with_suffix(
+                        arquivo.suffix + ".recusado" + arquivo.suffix)
+                    try:
+                        # GUARDADO, e nao descartado: e a prova do que o portal
+                        # devolveu, e joga-la fora obrigaria outra autenticacao
+                        # para descobrir o que houve.
+                        recusado.write_bytes(conteudo)
+                    except OSError:
+                        pass
+                    copia.erro = (
+                        f"o que veio nao e PDF nem arquivo compactado "
+                        f"({len(conteudo)} byte(s), comeca com "
+                        f"{conteudo[:20]!r}). Costuma ser sessao expirada ou "
+                        f"tela de erro. Guardado em {recusado.name} para "
+                        f"conferencia; a peca NAO foi copiada.")
+                    resultado.copias.append(copia)
+                    continue
                 arquivo.write_bytes(conteudo)
                 copia.arquivo = str(arquivo)
                 copia.bytes_gravados = len(conteudo)

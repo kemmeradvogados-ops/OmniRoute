@@ -178,13 +178,21 @@ def test_sem_autorizacao_de_download_nada_e_copiado(tmp_path):
 
 
 def test_extensao_vem_do_tipo_de_conteudo(tmp_path):
+    """A regra: a extensao sai do tipo declarado, e nao do endereco.
+
+    Ate 01/11/2026 este teste a demonstrava com `text/html`, e por isso
+    passava a exigir que uma PAGINA fosse gravada como peca. Era justamente o
+    item 9 da auditoria de 30/10/2026: pagina gravada com nome de peca, anotada
+    como copia bem sucedida. A regra continua; mudou o exemplo, que agora usa
+    um tipo tambem distinto do endereco e que de fato e documento."""
     pedido = _Requisicao(respostas={
-        "https://eproc.exemplo/doc?id=3": _Resposta(b"<html>", tipo="text/html"),
+        "https://eproc.exemplo/doc?id=3": _Resposta(b"PK\x03\x04conteudo",
+                                                    tipo="application/zip"),
     })
     r = baixar_documentos_dos_eventos(
         _Pagina(pedido), _guarda(), EVENTOS[1:2], tmp_path, quantos_eventos=1
     )
-    assert r.gravadas[0].arquivo.endswith(".html")
+    assert r.gravadas[0].arquivo.endswith(".zip")
 
 
 @pytest.mark.parametrize("descricao,esperado", [
@@ -194,3 +202,81 @@ def test_extensao_vem_do_tipo_de_conteudo(tmp_path):
 ])
 def test_deteccao_de_comunicacao(descricao, esperado):
     assert parece_comunicacao(descricao) is esperado
+
+
+# ==========================================================================
+# Pagina de erro gravada com nome de peca nao e peca
+#
+# Item 9 da auditoria tecnica de 30/10/2026: o download documento a documento
+# do eproc gravou `ev0105-CERT1.html`, `ev0106-ALVLEVANT1.html` e
+# `ev0109-PADM1.html` em vez dos PDFs. A auditoria resumiu o dano numa frase
+# exata: "o documento parece baixado, mas nao esta".
+#
+# O codigo gravava o que viesse e anotava a copia como BEM SUCEDIDA, com bytes
+# gravados. O indice passava a dizer que a peca estava copiada, e quem lesse a
+# pasta via a peca listada. Nenhum erro aparecia em lugar nenhum.
+#
+# Isso e da mesma familia do resto deste projeto: uma declaracao que nao bate
+# com o que existe. E pior que falhar, porque falha se ve.
+#
+# A conferencia ja existia, `parece_pdf`, escrita para este exato caso no
+# caminho do PJe. Faltava usa-la aqui.
+# ==========================================================================
+
+def test_pagina_html_nao_entra_como_copia(tmp_path):
+    """O NUCLEO do item 9."""
+    resposta = _Resposta(corpo=b"<!doctype html><html>sessao expirada</html>",
+                         tipo="text/html")
+    requisicao = _Requisicao(respostas={"https://eproc.exemplo/doc?id=3": resposta})
+    resultado = baixar_documentos_dos_eventos(
+        _Pagina(requisicao), _guarda(),
+        [_evento("67", "Decisao", [("DEC1", "/doc?id=3")])], tmp_path,
+        quantos_eventos=1)
+
+    copia = resultado.copias[0]
+    assert copia.arquivo is None, (
+        "pagina HTML nao pode ser anotada como a peca copiada")
+    assert copia.erro, "a copia precisa dizer que falhou"
+    assert "pdf" in copia.erro.lower() or "html" in copia.erro.lower(), copia.erro
+
+
+def test_o_que_veio_fica_no_disco_para_conferencia(tmp_path):
+    """Nao basta recusar: o arquivo errado e a prova do que o portal devolveu,
+    e joga-lo fora obrigaria outra autenticacao para descobrir o que houve."""
+    resposta = _Resposta(corpo=b"<!doctype html><html>sessao expirada</html>",
+                         tipo="text/html")
+    requisicao = _Requisicao(respostas={"https://eproc.exemplo/doc?id=3": resposta})
+    baixar_documentos_dos_eventos(
+        _Pagina(requisicao), _guarda(),
+        [_evento("67", "Decisao", [("DEC1", "/doc?id=3")])], tmp_path,
+        quantos_eventos=1)
+
+    recusados = list(tmp_path.glob("*.recusado.html"))
+    assert recusados, "o que o portal devolveu precisa ficar para conferencia"
+    assert b"sessao expirada" in recusados[0].read_bytes()
+
+
+def test_pdf_de_verdade_continua_passando(tmp_path):
+    """A conferencia nao pode recusar o caminho que funciona."""
+    requisicao = _Requisicao()
+    resultado = baixar_documentos_dos_eventos(
+        _Pagina(requisicao), _guarda(),
+        [_evento("67", "Decisao", [("DEC1", "/doc?id=3")])], tmp_path,
+        quantos_eventos=1)
+
+    copia = resultado.copias[0]
+    assert copia.erro is None, copia.erro
+    assert copia.arquivo and copia.arquivo.endswith(".pdf")
+    assert copia.bytes_gravados > 0
+
+
+def test_arquivo_compactado_tambem_vale(tmp_path):
+    """O portal entrega zip em alguns casos, e isso e documento."""
+    resposta = _Resposta(corpo=b"PK\x03\x04conteudo", tipo="application/zip")
+    requisicao = _Requisicao(respostas={"https://eproc.exemplo/doc?id=3": resposta})
+    resultado = baixar_documentos_dos_eventos(
+        _Pagina(requisicao), _guarda(),
+        [_evento("67", "Decisao", [("DEC1", "/doc?id=3")])], tmp_path,
+        quantos_eventos=1)
+
+    assert resultado.copias[0].erro is None
