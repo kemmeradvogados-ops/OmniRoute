@@ -7243,6 +7243,57 @@ def _consultar_esaj(pagina, guarda, estado_local, identidade, *, numero,
     return 0
 
 
+def _reabrir_a_entrada_do_portal(pagina, guarda, url: str, segundos: int):
+    """Volta ao endereco de entrada, SEM digitar credencial nenhuma.
+
+    A sessao do IdServerJus continua valendo; o que se perdeu foi a tela. Por
+    isso aqui so se navega: autenticar custaria uma tentativa da conta
+    compartilhada do escritorio, e nao ha nada a autenticar.
+    """
+    guarda.permissoes.append(permissao_de_origem(
+        url, "voltar a entrada do Portal de Servicos, mesma sessao"))
+    alvo = pagina_de(pagina)
+    alvo.goto(url, wait_until="domcontentloaded",
+              timeout=max(segundos, 15) * 1000)
+    _assentar(alvo, segundos)
+    return alvo
+
+
+def entrar_com_segunda_chance(entrar, pagina, guarda, url: str, segundos: int):
+    """Entra no Portal de Servicos, e tenta de novo UMA vez se a tela sumiu.
+
+    SECAO 7.1 DA AUDITORIA DE 29/10 A 01/11/2026. Depois do primeiro processo
+    de um lote, os seguintes falhavam em cerca de dois minutos cada, com "a
+    tela de selecao de sistemas nao tem #sistema" e o endereco em
+    `www.tjrj.jus.br`. Treze dos catorze processos de um lote morreram assim.
+
+    A causa: quem corre o lote entrega sempre a aba de ORIGEM, que voltou para
+    a pagina publica, e a aba do portal do processo anterior ja nao existe.
+    `entrar_no_portal_de_servicos` sabe comecar da lista de sistemas ou de uma
+    aba do portal viva, e nao havia nenhuma das duas.
+
+    A saida NAO e autenticar de novo. A sessao continua valendo e o que falta e
+    voltar ao endereco de entrada: reabrir custa uma navegacao, autenticar
+    custaria uma tentativa da conta do escritorio inteiro.
+
+    UMA VEZ SO. Se a sessao tiver caido de verdade, a tela de login aparece, a
+    lista continua ausente e o processo para como antes. Insistir contra sessao
+    morta gastaria minutos por processo, e o lote tem catorze.
+    """
+    from .dcp import ConsultaIndisponivel
+
+    try:
+        return entrar(pagina, guarda, segundos)
+    except ConsultaIndisponivel:
+        if not url:
+            # Sem para onde voltar, reabrir seria navegar as cegas.
+            raise
+        print("  A tela de entrada do portal nao estava mais la. Voltando ao "
+              "endereco de entrada, na MESMA sessao, sem novo login.")
+        pagina = _reabrir_a_entrada_do_portal(pagina, guarda, url, segundos)
+        return entrar(pagina, guarda, segundos)
+
+
 def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
                    documentos, linha_do_resultado, motivo, paginas_a_pular,
                    perfil, segundos, segundos_download, sem_movimentacoes,
@@ -7270,7 +7321,8 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
     # Portal de Servicos so e alcancado pela entrega que aquele
     # formulario faz.
     try:
-        pagina = entrar_no_portal_de_servicos(pagina, guarda, segundos)
+        pagina = entrar_com_segunda_chance(
+            entrar_no_portal_de_servicos, pagina, guarda, url, segundos)
     except ConsultaIndisponivel as exc:
         print(f"  [PAROU] {exc}")
         _relatar_tela(pagina, "TELA DE SELECAO DE SISTEMAS")

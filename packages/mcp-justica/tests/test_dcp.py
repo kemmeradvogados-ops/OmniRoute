@@ -777,14 +777,37 @@ def test_tela_sem_o_enviar_para_sem_escolher():
 
 
 def test_a_consulta_passa_pela_selecao_antes_de_buscar():
+    """A entrada pela tela de selecao vem ANTES da busca.
+
+    Conferido em campo em 06/10/2026: navegar direto para a consulta devolveu
+    a pagina publica do tribunal. A sessao existe, e o Portal de Servicos so e
+    alcancado pela entrega que aquele formulario faz.
+
+    Ate 03/11/2026 este teste procurava a grafia `entrar_no_portal_de_servicos(`,
+    com parentese colado, e quebrou quando a entrada passou a receber uma
+    segunda chance: a funcao virou ARGUMENTO de `entrar_com_segunda_chance`, e
+    o parentese deixou de encostar no nome. A regra nunca mudou, e ficou mais
+    forte. Guardar a grafia e guardar menos do que a regra."""
+    from justica_mcp import portal  # noqa: F401  (o trecho sai do modulo)
+
+    trecho = fonte_do_portal("dcp")
+    assert trecho.index("entrar_no_portal_de_servicos") < trecho.index("buscar_dcp(")
+    assert "devolveu a" in trecho and "pagina publica" in trecho
+
+
+def test_a_entrada_no_portal_tem_segunda_chance():
+    """Secao 7.1 da auditoria de 29/10 a 01/11/2026: treze dos catorze
+    processos de um lote morreram porque a tela de entrada tinha sumido e
+    ninguem tentava de novo."""
     import inspect
 
     from justica_mcp import portal
 
-    fonte = fonte_da_consulta()
     trecho = fonte_do_portal("dcp")
-    assert trecho.index("entrar_no_portal_de_servicos(") < trecho.index("buscar_dcp(")
-    assert "devolveu a" in trecho and "pagina publica" in trecho
+    assert "entrar_com_segunda_chance(" in trecho
+    fonte = inspect.getsource(portal.entrar_com_segunda_chance)
+    assert "sem novo login" in fonte or "sem digitar credencial" in fonte, (
+        "a segunda chance nao pode gastar tentativa da conta compartilhada")
 
 
 # ==========================================================================

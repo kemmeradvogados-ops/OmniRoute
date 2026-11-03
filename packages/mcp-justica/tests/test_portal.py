@@ -9779,3 +9779,104 @@ def test_link_de_custas_nao_e_confundido_com_arquivo():
 
     for link in _links_das_partes(_TelaDeArquivoUnico()):
         assert "arrecada" not in sem_acento(link.texto.lower())
+
+
+# ==========================================================================
+# Lote: o segundo processo caia na pagina publica do tribunal
+#
+# Auditoria de 29/10 a 01/11/2026, secao 7.1. Depois do primeiro processo de um
+# lote, os seguintes falhavam em cerca de dois minutos cada, com:
+#
+#     [PAROU] A tela de selecao de sistemas nao tem #sistema.
+#     Endereco atual: https://www.tjrj.jus.br/
+#
+# Treze dos catorze processos do lote morreram assim.
+#
+# Diagnostico da auditoria: `um_processo` recebe sempre a aba de ORIGEM, que
+# voltou para a pagina publica, enquanto a aba do Portal de Servicos do
+# processo anterior ja nao existia. `entrar_no_portal_de_servicos` so sabe
+# comecar da lista de sistemas ou de uma aba do portal viva, e nao havia
+# nenhuma das duas.
+#
+# A saida NAO e autenticar de novo: a sessao do IdServerJus continua valendo, e
+# o que falta e voltar ao endereco de entrada. Reabrir custa uma navegacao;
+# autenticar custaria uma tentativa da conta compartilhada do escritorio.
+#
+# Se a sessao TIVER caido, a tela de login aparece, a lista continua ausente, e
+# o processo para como antes. Nenhuma credencial e digitada aqui.
+# ==========================================================================
+
+def test_lote_reabre_a_entrada_quando_a_lista_de_sistemas_sumiu(monkeypatch):
+    """O NUCLEO da secao 7.1."""
+    from justica_mcp import dcp, portal
+
+    tentativas = {"n": 0}
+    navegou = []
+
+    def _entrar(pagina, guarda, segundos):
+        tentativas["n"] += 1
+        if tentativas["n"] == 1:
+            raise dcp.ConsultaIndisponivel(
+                "A tela de selecao de sistemas nao tem #sistema.")
+        return pagina
+
+    monkeypatch.setattr(portal, "_reabrir_a_entrada_do_portal",
+                        lambda p, g, u, s: (navegou.append(u), p)[1])
+
+    recomecou = portal.entrar_com_segunda_chance(
+        _entrar, object(), object(),
+        "https://sistemas.exemplo/login?sgSist=PORTALSERVICOS", 5)
+
+    assert recomecou is not None, "a segunda chance nao foi dada"
+    assert tentativas["n"] == 2, "a entrada precisa ser tentada de novo"
+    assert navegou == ["https://sistemas.exemplo/login?sgSist=PORTALSERVICOS"]
+
+
+def test_a_segunda_chance_e_dada_uma_vez_so(monkeypatch):
+    """Insistir contra uma sessao caida gastaria minutos por processo, e o
+    lote inteiro tem catorze."""
+    from justica_mcp import dcp, portal
+
+    tentativas = {"n": 0}
+
+    def _entrar(pagina, guarda, segundos):
+        tentativas["n"] += 1
+        raise dcp.ConsultaIndisponivel("a lista continua ausente")
+
+    monkeypatch.setattr(portal, "_reabrir_a_entrada_do_portal",
+                        lambda p, g, u, s: p)
+
+    with pytest.raises(dcp.ConsultaIndisponivel):
+        portal.entrar_com_segunda_chance(
+            _entrar, object(), object(), "https://sistemas.exemplo/login", 5)
+    assert tentativas["n"] == 2
+
+
+def test_sem_endereco_de_entrada_nao_ha_segunda_chance(monkeypatch):
+    """Sem para onde voltar, reabrir seria navegar as cegas."""
+    from justica_mcp import dcp, portal
+
+    def _entrar(pagina, guarda, segundos):
+        raise dcp.ConsultaIndisponivel("a lista nao esta la")
+
+    monkeypatch.setattr(
+        portal, "_reabrir_a_entrada_do_portal",
+        lambda p, g, u, s: pytest.fail("reabriu sem endereco"))
+
+    with pytest.raises(dcp.ConsultaIndisponivel):
+        portal.entrar_com_segunda_chance(_entrar, object(), object(), "", 5)
+
+
+def test_a_primeira_entrada_que_da_certo_nao_reabre_nada(monkeypatch):
+    """O caso comum, que e o primeiro processo do lote, nao pode pagar nada
+    pela correcao."""
+    from justica_mcp import portal
+
+    monkeypatch.setattr(
+        portal, "_reabrir_a_entrada_do_portal",
+        lambda p, g, u, s: pytest.fail("reabriu sem precisar"))
+
+    alvo = object()
+    assert portal.entrar_com_segunda_chance(
+        lambda p, g, s: alvo, object(), object(),
+        "https://sistemas.exemplo/login", 5) is alvo
