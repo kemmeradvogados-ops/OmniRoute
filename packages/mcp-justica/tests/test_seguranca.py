@@ -142,6 +142,14 @@ NUMEROS_DECLARADOS = {
     "90040295020258230000",
     "99999999920998190001",
     "99999999920999990000",
+    # Escritos em 03/11/2026 para os testes de grau, EM SUBSTITUICAO a quatro
+    # numeros reais que vieram da auditoria de 30/10 e que este guarda pegou
+    # antes do envio. Sequenciais 0000001 e 9999999 de proposito: numero com
+    # essa cara nao se confunde com processo de ninguem.
+    "00000017220258199000",   # origem 9000, Conselho Recursal
+    "99999992920268190000",   # origem 0000, segunda instancia
+    "99999990720188190001",   # primeira instancia
+    "99999998020138190001",   # primeira instancia, numero antigo
 }
 
 

@@ -31,6 +31,16 @@ _RE_NUMERO = re.compile(
 )
 
 
+# As origens que NAO sao unidade de primeiro grau.
+#
+# `0000` vem da resolucao nº. 65/2008 do Conselho Nacional de Justica: o feito
+# nasceu no tribunal. `9000` foi confirmada pelo operador em 03/11/2026 para o
+# Tribunal de Justica do Estado do Rio de Janeiro, onde e SEMPRE Conselho
+# Recursal dos Juizados Especiais.
+ORIGEM_DO_TRIBUNAL = "0000"
+ORIGEM_DO_CONSELHO_RECURSAL = "9000"
+
+
 class NumeroCNJInvalido(ValueError):
     """Numero fora do formato da Resolucao nº. 65/2008 ou com digito incorreto."""
 
@@ -78,10 +88,29 @@ class NumeroCNJ:
         errado devolve "nao encontrado", que se confunde com processo
         inexistente.
         """
-        return 2 if self.origem == "0000" else 1
+        if self.origem in (ORIGEM_DO_TRIBUNAL, ORIGEM_DO_CONSELHO_RECURSAL):
+            return 2
+        return 1
+
+    @property
+    def conselho_recursal(self) -> bool:
+        """O feito corre no Conselho Recursal dos Juizados Especiais.
+
+        REGRA CONFIRMADA PELO OPERADOR EM 03/11/2026, para o Tribunal de
+        Justica do Estado do Rio de Janeiro: a origem `9000` e SEMPRE Conselho
+        Recursal, assim como `0000` e sempre segunda instancia.
+
+        Importa porque ate aqui `9000` caia em primeiro grau por omissao, e a
+        auditoria de 30/10/2026 registrou o preco disso: o
+        0000001-72.2025.8.19.9000 foi buscado no PJe de PRIMEIRO grau e falhou.
+        A origem do numero dizia, desde o inicio, que aquela tela nao servia.
+        """
+        return self.origem == ORIGEM_DO_CONSELHO_RECURSAL
 
     @property
     def grau_nome(self) -> str:
+        if self.conselho_recursal:
+            return "Conselho Recursal"
         return "segunda instancia" if self.grau == 2 else "primeira instancia"
 
     @property

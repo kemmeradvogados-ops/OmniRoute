@@ -69,3 +69,60 @@ def test_o_grau_nao_depende_do_tribunal():
     segmento, e por isso nao precisa de tabela nenhuma."""
     for numero in ("0069900-31.1999.5.01.0009", "0998975-53.2025.8.19.0001"):
         assert parse_numero(numero).grau == 1
+
+
+# ==========================================================================
+# O Conselho Recursal tem origem propria, e ela nao e primeiro grau
+#
+# Itens 4 e 5 da auditoria de 30/10/2026. O Agravo de Instrumento
+# 9999999-29.2026.8.19.0000 voltou com 0 eventos, e o
+# 0000001-72.2025.8.19.9000 falhou "apos a busca no PJe de primeiro grau". Nos
+# dois casos a origem do numero ja dizia que aquela nao era a tela certa, e
+# ninguem olhou para ela.
+#
+# A origem `0000` ja era reconhecida como segunda instancia, pela resolucao
+# nº. 65/2008. A `9000` nao era, e caia em primeiro grau por omissao. O
+# operador confirmou a regra em 03/11/2026: no Tribunal de Justica do Estado do
+# Rio de Janeiro, `0000` e SEMPRE segunda instancia e `9000` e SEMPRE Conselho
+# Recursal.
+#
+# Nada alem disso foi escrito. A auditoria propunha tambem mandar "numeros de
+# 2013 e anteriores, sem migracao" para o Portal de Servicos, e isso NAO entrou:
+# "sem migracao" e fato de cada processo e nao do numero, e a regra nao foi
+# confirmada. Transformar tendencia em regra aqui custaria uma autenticacao
+# para falhar na tela errada.
+# ==========================================================================
+
+def test_origem_9000_e_conselho_recursal():
+    from justica_mcp.core.cnj import parse_numero
+
+    numero = parse_numero("0000001-72.2025.8.19.9000")
+    assert numero.conselho_recursal is True
+    assert "recursal" in numero.grau_nome.lower()
+
+
+def test_origem_0000_continua_sendo_segunda_instancia():
+    from justica_mcp.core.cnj import parse_numero
+
+    numero = parse_numero("9999999-29.2026.8.19.0000")
+    assert numero.grau == 2
+    assert numero.conselho_recursal is False
+    assert numero.grau_nome == "segunda instancia"
+
+
+def test_origem_de_vara_continua_sendo_primeiro_grau():
+    """A regra nova nao pode mexer no caso comum."""
+    from justica_mcp.core.cnj import parse_numero
+
+    numero = parse_numero("9999999-07.2018.8.19.0001")
+    assert numero.grau == 1
+    assert numero.conselho_recursal is False
+    assert numero.grau_nome == "primeira instancia"
+
+
+def test_o_conselho_recursal_nao_e_tratado_como_vara():
+    """O defeito do item 6: o numero foi buscado no PJe de PRIMEIRO grau. A
+    origem 9000 dizia desde o inicio que aquela tela nao servia."""
+    from justica_mcp.core.cnj import parse_numero
+
+    assert parse_numero("0000001-72.2025.8.19.9000").grau != 1

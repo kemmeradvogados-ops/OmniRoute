@@ -161,13 +161,28 @@ def extrair_processo(pagina: Any, numero: str) -> dict[str, Any]:
     partes = extrair_partes(pagina)
     assuntos = extrair_assuntos(pagina)
     documentos = sum(len(e["documentos"]) for e in eventos)
-    return {
+    # PAGINA VALIDA E VAZIA NAO E PROCESSO SEM ANDAMENTO.
+    #
+    # Item 5 da auditoria de 30/10/2026: um numero antigo voltou com pagina
+    # valida e zero eventos, sem dizer "nao encontrado". A auditoria nomeou o
+    # risco: "resultado vazio pode ser lido como processo sem andamento".
+    #
+    # Mesmo defeito que o Portal de Servicos teve em 27/10/2026, e a frase que
+    # ficou la no codigo vale igual aqui: processo dado como vazio e da mesma
+    # familia de processo dado como inexistente, e o preco e prazo perdido.
+    #
+    # A prova nao e o numero de eventos sozinho: processo recem-distribuido tem
+    # poucos. E a COMBINACAO com zero partes, porque todo processo tem ao menos
+    # uma. Sem nenhuma, a tela nao trouxe processo nenhum.
+    localizado = bool(partes or eventos)
+    dados = {
         "numero": numero,
         "titulo_da_pagina": pagina.title(),
         "endereco": pagina.url,
         "eventos": eventos,
         "partes": partes,
         "assuntos": assuntos,
+        "localizado": localizado,
         "totais": {
             "eventos": len(eventos),
             "partes": len(partes),
@@ -175,6 +190,21 @@ def extrair_processo(pagina: Any, numero: str) -> dict[str, Any]:
             "documentos_listados": documentos,
         },
     }
+    if not localizado:
+        # O AVISO NAO INVENTA A RAZAO. Daqui nao da para saber se o numero e de
+        # outro sistema, se o processo corre em segredo, se o grau esta errado
+        # ou se a tela simplesmente nao montou. Nomear uma dessas seria dar ao
+        # advogado uma certeza que ninguem tem.
+        dados["aviso"] = (
+            "PROCESSO NAO LOCALIZADO NESTE SISTEMA. A pagina respondeu, mas "
+            "nao trouxe parte nenhuma nem evento nenhum, e todo processo tem "
+            "ao menos uma parte. Isto NAO quer dizer que o processo esteja "
+            "parado nem que nao exista: quer dizer que esta tela nao o trouxe. "
+            "As causas possiveis, nenhuma delas verificavel daqui, incluem "
+            "numero de outro sistema, grau diferente do consultado, segredo de "
+            "justica e tela que nao terminou de montar."
+        )
+    return dados
 
 
 def resumo(dados: dict[str, Any], *, ultimos: int = 5) -> list[str]:
@@ -188,6 +218,11 @@ def resumo(dados: dict[str, Any], *, ultimos: int = 5) -> list[str]:
         f"eventos: {t['eventos']}   partes: {t['partes']}   "
         f"assuntos: {t['assuntos']}   documentos listados: {t['documentos_listados']}",
     ]
+    # O AVISO VEM ANTES DOS NUMEROS quando nada foi localizado. A linha de
+    # contagens sozinha, com tudo em zero, se le como processo parado, que e
+    # exatamente a confusao que o aviso existe para desfazer.
+    if dados.get("aviso"):
+        linhas.insert(0, dados["aviso"])
     if dados["eventos"]:
         linhas.append(f"ultimos {min(ultimos, len(dados['eventos']))} evento(s):")
         for e in dados["eventos"][:ultimos]:
