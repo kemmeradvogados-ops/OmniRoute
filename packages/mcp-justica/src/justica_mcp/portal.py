@@ -685,6 +685,29 @@ def abas_abertas(navegador, teto: int = 10) -> list[str]:
     return enderecos_das_abas(paginas_vivas(navegador), teto)
 
 
+def navegador_sem_aba_viva(pagina) -> bool:
+    """O navegador inteiro caiu? Erro ao perguntar ja e resposta: caiu.
+
+    SECAO 7.3 DA AUDITORIA DE 29/10 A 01/11/2026. Com o navegador morto, os
+    processos seguintes do lote falhavam um a um em segundos
+    (`TargetClosedError: Page.query_selector_all`), e o resumo dizia "FALHOU"
+    para todos, como se tivessem sido tentados. Nenhum foi.
+
+    O NOME DA EXCECAO NAO BASTA, e isto ja custou uma corrida antes, em
+    21/10/2026, do outro lado do programa: `TargetClosedError` sozinho nao diz
+    se morreu a aba, o contexto ou o navegador. A LISTA DE ABAS VIVAS diz. A
+    mesma leitura vale aqui, e e por isso que esta funcao pergunta pelas abas
+    em vez de olhar o tipo do erro.
+
+    Nao levanta: quem chama decide o que fazer com a resposta.
+    """
+    try:
+        contexto = pagina_de(pagina).context
+        return not [a for a in (contexto.pages or []) if not a.is_closed()]
+    except Exception:
+        return True
+
+
 def _aba_em_foco(navegador, inicial):
     """A aba que o operador esta vendo, que nem sempre e a que o programa abriu.
 
@@ -8266,9 +8289,19 @@ def consultar_processo(
         laco segue: numa corrida de dez, perder o restante porque o terceiro
         nao abriu seria trocar nove resultados por um erro. O codigo de saida
         no fim diz se houve alguma falha, para quem roda por script.
+
+        NAVEGADOR MORTO E OUTRA COISA, e a diferenca nao e sutil. Secao 7.3 da
+        auditoria de 29/10 a 01/11/2026: com o navegador caido, os processos
+        seguintes falhavam um a um em segundos e o resumo dizia "FALHOU" para
+        todos, como se tivessem sido tentados. Processo que ninguem tentou
+        contado como falha e pior que silencio: o advogado le "FALHOU" e
+        conclui que o portal recusou aquele processo, quando o portal nunca foi
+        perguntado. Entao, quando nao resta aba viva, o laco PARA e os que
+        sobraram sao listados como NAO TENTADO, com o nome que lhes cabe.
         """
         quantos = len(numeros)
         falharam: list = []
+        nao_tentados: list = []
         for posicao, cada in enumerate(numeros, start=1):
             if posicao > 1:
                 print("\n" + "-" * LARGURA)
@@ -8289,14 +8322,30 @@ def consultar_processo(
                 codigo = 1
             if codigo:
                 falharam.append(cada.formatado)
+            # A CONFERENCIA VEM DEPOIS DE CADA PROCESSO, inclusive dos que
+            # deram certo: o navegador cai ao GERAR o arquivo do documento, e
+            # o processo que o pediu pode terminar bem logo antes de a janela
+            # morrer. Conferir so depois de falha deixaria o lote seguir contra
+            # um navegador que ja nao existe.
+            if navegador_sem_aba_viva(pagina):
+                nao_tentados = [n.formatado for n in numeros[posicao:]]
+                print("\n  [PAROU O LOTE] Nao ha mais aba viva neste "
+                      "navegador: ele caiu.")
+                print("  Os processos abaixo NAO foram tentados. Repetir o "
+                      "comando com eles")
+                print("  recomeca a autenticacao, porque a sessao mora no "
+                      "navegador que caiu.")
+                break
         if quantos > 1:
             print("\n" + "=" * LARGURA)
-            print(f"  {quantos - len(falharam)} de {quantos} processo(s) "
-                  "concluido(s), com UMA autenticacao.")
+            print(f"  {quantos - len(falharam) - len(nao_tentados)} de "
+                  f"{quantos} processo(s) concluido(s), com UMA autenticacao.")
             for formatado in falharam:
                 print(f"    FALHOU: {formatado}")
+            for formatado in nao_tentados:
+                print(f"    NAO TENTADO: {formatado}")
             print("=" * LARGURA)
-        return 1 if falharam else 0
+        return 1 if (falharam or nao_tentados) else 0
 
     return autenticar(
         url, tribunal, sistema, confirmado=confirmado, perfil=perfil,

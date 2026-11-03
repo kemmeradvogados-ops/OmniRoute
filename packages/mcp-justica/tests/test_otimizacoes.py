@@ -293,20 +293,99 @@ def test_o_laco_corre_todos_e_nao_para_no_primeiro_erro():
         if isinstance(no, ast.For):
             assert not [s for s in ast.walk(no) if isinstance(s, ast.Return)], \
                 "um return dentro do laco encerraria os processos seguintes"
+            # A UNICA saida antecipada permitida e o navegador morto, e ela
+            # entrou em 03/11/2026 pela secao 7.3 da auditoria: insistir
+            # contra um navegador caido contava como "FALHOU" processo que
+            # ninguem tentou. Qualquer outro `break` traria de volta o defeito
+            # que este teste existe para impedir, que e perder os nove
+            # restantes porque o terceiro nao abriu.
+            for saida in ast.walk(no):
+                if not isinstance(saida, ast.If):
+                    continue
+                if not [b for b in ast.walk(saida) if isinstance(b, ast.Break)]:
+                    continue
+                assert "navegador_sem_aba_viva" in ast.unparse(saida.test), (
+                    "so o navegador morto pode interromper o lote; esta saida "
+                    "antecipada e guardada por " + ast.unparse(saida.test))
 
 
-def test_o_codigo_de_saida_denuncia_qualquer_falha():
-    """Quem roda por script precisa saber que um dos dez nao veio."""
-    import ast
-    import inspect
-    import textwrap
+# Numeros ficticios, declarados em tests/test_seguranca.py.
+_TRES_DO_LOTE = ("0000002-98.2019.8.19.0001",
+                 "0000004-94.2021.8.19.0002",
+                 "0000001-86.2013.8.19.0078")
+
+
+class _AbaViva:
+    def is_closed(self):
+        return False
+
+
+class _NavegadorDeTeste:
+    """Pagina de mentira cujo navegador pode morrer no meio do lote."""
+
+    def __init__(self, morre_depois_de=None):
+        self.context = type("Ctx", (), {"pages": [_AbaViva()]})()
+        self.morre_depois_de = morre_depois_de
+        self.corridos = []
+
+    def correu(self, numero):
+        self.corridos.append(numero.formatado)
+        if (self.morre_depois_de is not None
+                and len(self.corridos) >= self.morre_depois_de):
+            self.context.pages = []
+
+
+def _rodar_o_lote(monkeypatch, navegador, codigos=None):
+    """Executa o laco `depois` sem navegador e sem credencial.
+
+    `autenticar` e trocado apenas para APANHAR o laco; quem o roda e o teste.
+    """
+    import types
 
     from justica_mcp import portal
 
-    fonte = textwrap.dedent(inspect.getsource(portal.consultar_processo))
-    laco = next(n for n in ast.walk(ast.parse(fonte))
-                if isinstance(n, ast.FunctionDef) and n.name == "depois")
-    assert "return 1 if falharam else 0" in ast.unparse(laco)
+    apanhado = {}
+
+    def _autenticar(url, tribunal, sistema, **k):
+        apanhado["depois"] = k["apos_autenticar"]
+        return 0
+
+    def _eproc(_p, _g, _e, _i, *, numero, **_k):
+        navegador.correu(numero)
+        return (codigos or {}).get(numero.formatado, 0)
+
+    monkeypatch.setattr(portal, "autenticar", _autenticar)
+    monkeypatch.setattr(portal, "_consultar_eproc", _eproc)
+    portal.consultar_processo(
+        "https://portal.exemplo.jus.br/", "TJRJ", "eproc", _TRES_DO_LOTE[0],
+        processos_adicionais=_TRES_DO_LOTE[1:], confirmado=True)
+    identidade = types.SimpleNamespace(sistema="eproc", tribunal="TJRJ")
+    estado = type("Estado", (), {"registrar": lambda *_a, **_k: None})()
+    return apanhado["depois"](navegador, object(), estado, identidade)
+
+
+def test_o_codigo_de_saida_denuncia_qualquer_falha(monkeypatch, capsys):
+    """Quem roda por script precisa saber que um dos dez nao veio.
+
+    Ate 03/11/2026 este teste procurava a grafia `return 1 if falharam else 0`
+    e quebrou quando o lote passou a parar com o navegador morto. A grafia
+    mudou; a regra, nao. Agora o teste RODA o laco, e a regra fica guardada
+    pelo resultado em vez de pelo texto: lote completo devolve zero, e qualquer
+    processo que nao tenha voltado devolve um, tenha ele falhado ou nem chegado
+    a ser tentado.
+    """
+    todos_bem = _NavegadorDeTeste()
+    assert _rodar_o_lote(monkeypatch, todos_bem) == 0
+    assert len(todos_bem.corridos) == 3
+
+    com_falha = _NavegadorDeTeste()
+    assert _rodar_o_lote(monkeypatch, com_falha,
+                         codigos={_TRES_DO_LOTE[1]: 1}) == 1
+
+    navegador_morto = _NavegadorDeTeste(morre_depois_de=1)
+    assert _rodar_o_lote(monkeypatch, navegador_morto) == 1, (
+        "lote interrompido com dois processos nem tentados nao pode sair zero")
+    capsys.readouterr()
 
 
 def test_a_opcao_de_processo_e_repetivel_na_linha_de_comando():

@@ -9880,3 +9880,149 @@ def test_a_primeira_entrada_que_da_certo_nao_reabre_nada(monkeypatch):
     assert portal.entrar_com_segunda_chance(
         lambda p, g, s: alvo, object(), object(),
         "https://sistemas.exemplo/login", 5) is alvo
+
+
+# ==========================================================================
+# Lote insistindo depois de o navegador cair
+#
+# Auditoria de 29/10 a 01/11/2026, secao 7.3. Com o navegador morto, os
+# processos seguintes do lote falhavam um a um em segundos
+# (`TargetClosedError: Page.query_selector_all`), e o resumo dizia "FALHOU"
+# para todos, como se tivessem sido tentados. Nenhum foi.
+#
+# Processo que ninguem tentou contado como falha e pior que silencio: o
+# advogado le "FALHOU" ao lado do numero e conclui que o portal recusou aquele
+# processo, quando o portal nunca foi perguntado.
+#
+# O que decide NAO e o nome da excecao. `TargetClosedError` sozinho nao
+# distingue aba morta de navegador morto, e isso ja custou uma corrida em
+# 21/10/2026, do outro lado do programa. A lista de abas vivas distingue.
+# ==========================================================================
+
+# Numeros ficticios, declarados em tests/test_seguranca.py.
+_LOTE_DE_TRES = ("0000002-98.2019.8.19.0001",
+                 "0000004-94.2021.8.19.0002",
+                 "0000001-86.2013.8.19.0078")
+
+
+class _AbaDoLote:
+    def __init__(self, viva=True):
+        self.viva = viva
+
+    def is_closed(self):
+        return not self.viva
+
+
+class _ContextoDoLote:
+    def __init__(self, abas):
+        self.pages = abas
+
+
+class _NavegadorDoLote:
+    """Pagina cujo navegador morre depois de um numero de processos."""
+
+    def __init__(self, morre_depois_de=None):
+        self.context = _ContextoDoLote([_AbaDoLote()])
+        self.morre_depois_de = morre_depois_de
+        self.corridos = []
+
+    def correu(self, numero):
+        self.corridos.append(numero.formatado)
+        if (self.morre_depois_de is not None
+                and len(self.corridos) >= self.morre_depois_de):
+            self.context.pages = []
+
+
+class _EstadoDoLote:
+    def registrar(self, **_k):
+        return None
+
+
+def _correr_o_lote(monkeypatch, navegador, codigos=None):
+    """Chama o laco `depois` de `consultar_processo` com fakes.
+
+    `autenticar` e trocado so para APANHAR o laco: quem o executa e o teste,
+    sem navegador nenhum e sem credencial nenhuma.
+    """
+    import types
+
+    from justica_mcp import portal
+
+    apanhado = {}
+
+    def _autenticar(url, tribunal, sistema, **k):
+        apanhado["depois"] = k["apos_autenticar"]
+        return 0
+
+    def _eproc(_pagina, _guarda, _estado, _identidade, *, numero, **_k):
+        navegador.correu(numero)
+        return (codigos or {}).get(numero.formatado, 0)
+
+    monkeypatch.setattr(portal, "autenticar", _autenticar)
+    monkeypatch.setattr(portal, "_consultar_eproc", _eproc)
+
+    portal.consultar_processo(
+        "https://portal.exemplo.jus.br/", "TJRJ", "eproc", _LOTE_DE_TRES[0],
+        processos_adicionais=_LOTE_DE_TRES[1:], confirmado=True)
+
+    identidade = types.SimpleNamespace(sistema="eproc", tribunal="TJRJ")
+    return apanhado["depois"](navegador, object(), _EstadoDoLote(), identidade)
+
+
+def test_o_lote_para_quando_nao_resta_aba_viva(monkeypatch, capsys):
+    """O NUCLEO da secao 7.3."""
+    navegador = _NavegadorDoLote(morre_depois_de=1)
+    codigo = _correr_o_lote(monkeypatch, navegador)
+    saida = capsys.readouterr().out
+
+    assert navegador.corridos == [_LOTE_DE_TRES[0]], (
+        "o lote seguiu contra um navegador que ja nao existia")
+    assert "NAO TENTADO" in saida
+    for formatado in _LOTE_DE_TRES[1:]:
+        assert f"NAO TENTADO: {formatado}" in saida
+        assert f"FALHOU: {formatado}" not in saida, (
+            "processo que ninguem tentou nao e processo que falhou")
+    assert codigo == 1, "o lote incompleto precisa aparecer no codigo de saida"
+
+
+def test_navegador_vivo_nao_interrompe_o_lote(monkeypatch, capsys):
+    """O caso comum nao pode pagar nada pela correcao, e a regra antiga
+    continua de pe: falha num processo NAO derruba os seguintes."""
+    navegador = _NavegadorDoLote(morre_depois_de=None)
+    codigo = _correr_o_lote(
+        monkeypatch, navegador, codigos={_LOTE_DE_TRES[1]: 1})
+    saida = capsys.readouterr().out
+
+    assert navegador.corridos == list(_LOTE_DE_TRES)
+    assert f"FALHOU: {_LOTE_DE_TRES[1]}" in saida
+    assert "NAO TENTADO" not in saida
+    assert codigo == 1
+
+
+def test_a_conferencia_vem_depois_do_processo_que_deu_certo(monkeypatch):
+    """O navegador cai ao GERAR o arquivo, e o processo que o pediu pode
+    terminar bem logo antes de a janela morrer. Conferir so depois de falha
+    deixaria o lote seguir contra um navegador que ja nao existe."""
+    navegador = _NavegadorDoLote(morre_depois_de=2)
+    _correr_o_lote(monkeypatch, navegador)
+    assert navegador.corridos == list(_LOTE_DE_TRES[:2])
+
+
+def test_navegador_sem_aba_viva_le_as_abas_e_nao_o_nome_do_erro():
+    from justica_mcp.portal import navegador_sem_aba_viva
+
+    class _SemContexto:
+        @property
+        def context(self):
+            raise RuntimeError("TargetClosedError")
+
+    assert navegador_sem_aba_viva(_NavegadorDoLote()) is False
+    assert navegador_sem_aba_viva(_SemContexto()) is True
+
+    so_fechadas = _NavegadorDoLote()
+    so_fechadas.context.pages = [_AbaDoLote(viva=False)]
+    assert navegador_sem_aba_viva(so_fechadas) is True
+
+    vazio = _NavegadorDoLote()
+    vazio.context.pages = []
+    assert navegador_sem_aba_viva(vazio) is True
