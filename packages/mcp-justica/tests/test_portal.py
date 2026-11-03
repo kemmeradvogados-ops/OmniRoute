@@ -9673,3 +9673,109 @@ def test_sem_pedido_de_espera_nada_espera(tmp_path, monkeypatch):
 
     assert portal.esperar_a_integra_do_eproc(
         tela, _guarda_que_baixa(), tmp_path, "123", minutos=0, segundos=5) == []
+
+
+# ==========================================================================
+# Arquivo completo em UMA parte: o rotulo e outro
+#
+# Auditoria de 29/10 a 01/11/2026, secao 1. Oito processos do eproc do Rio
+# terminavam com "Copia integral nao concluida (TimeoutError ... waiting for
+# event download)", e a tela mostrava, o tempo todo:
+#
+#     'BAIXAR ARQUIVO'  ->  .../controlador.php?acao=download_completo_download
+#
+# `_links_das_partes` so aceitava texto contendo "baixar arquivo parte". No
+# Tribunal Regional Federal da 2a Regiao, e nos processos do Tribunal estadual
+# cujo arquivo vem PARTIDO, o rotulo e "BAIXAR ARQUIVO PARTE 1". Quando o
+# arquivo vem em UMA parte so, o rotulo e apenas "BAIXAR ARQUIVO". A funcao
+# devolvia lista vazia, e o fluxo seguia clicando em gerar.
+#
+# A prova esta nos processos que davam certo: eram justamente os de duas partes.
+#
+# POR QUE ISTO NAO FOI RESOLVIDO PELO CONSERTO DE 30/10 (f1ff1453). Aquele
+# mudou a ORDEM: procurar o arquivo pronto antes de clicar. Mas quem procura e
+# esta funcao, e ela nao reconhecia o link. Olhar primeiro nao adianta quando
+# se olha com a marca errada: os dois consertos sao necessarios, e um sozinho
+# nao entrega arquivo nenhum.
+#
+# ESTA CORRECAO JA EXISTIU DUAS VEZES e foi destruida duas vezes, em 03/11, por
+# `git reset --hard` sobre alteracoes nunca confirmadas. Por isso ela entra
+# aqui com teste: codigo que vive so no disco de uma maquina morre na proxima
+# atualizacao.
+# ==========================================================================
+
+class _TelaDeArquivoUnico:
+    """A tela do eproc quando o arquivo completo vem em UMA parte."""
+
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, repetido=False):
+        self.url = "https://eproc.exemplo/eproc/controlador.php"
+        self.cliques = []
+        alvo = ("https://eproc1g-download.exemplo/eproc/controlador.php"
+                "?acao=download_completo_download")
+        self.links = [
+            _LinkDeParte(self, "Arrecadação Integrada na Web",
+                         "controlador.php?acao=custas@consultar"),
+            _LinkDeParte(self, "BAIXAR ARQUIVO", alvo),
+            _LinkDeParte(self, "forçar nova geração de download completo",
+                         "controlador.php?acao=selecionar_processos_agendar"),
+        ]
+        if repetido:
+            self.links.insert(2, _LinkDeParte(self, "BAIXAR ARQUIVO", alvo))
+        self.context = _ContextoDoNavegador(self)
+
+    def query_selector_all(self, seletor):
+        return list(self.links) if seletor == "a[href]" else []
+
+
+def test_arquivo_em_uma_parte_so_e_reconhecido():
+    """O NUCLEO: oito processos parados por causa deste rotulo."""
+    from justica_mcp.portal import _links_das_partes
+
+    achados = _links_das_partes(_TelaDeArquivoUnico())
+    assert len(achados) == 1, [l.texto for l in achados]
+    assert achados[0].texto == "BAIXAR ARQUIVO"
+
+
+def test_o_mesmo_endereco_nao_entra_duas_vezes():
+    """Auditoria, secao 1: a tela trazia dois links para o MESMO endereco, e a
+    parte unica foi gravada duas vezes, com 49.570.614 bytes cada. O
+    `indice.json` daquelas pastas conta folhas em dobro ate hoje."""
+    from justica_mcp.portal import _links_das_partes
+
+    assert len(_links_das_partes(_TelaDeArquivoUnico(repetido=True))) == 1
+
+
+def test_forcar_nova_geracao_continua_fora_mesmo_com_a_marca_nova():
+    """A marca nova e mais larga que a antiga, e por isso a exclusao do link
+    de nova geracao tem de vir ANTES dela. Clicar ali descarta o arquivo
+    pronto e devolve o processo para a fila."""
+    from justica_mcp.portal import _links_das_partes
+
+    from justica_mcp.portal import sem_acento
+
+    for tela in (_TelaDeArquivoUnico(), _TelaDeArquivoUnico(repetido=True),
+                 _TelaDePartes()):
+        for link in _links_das_partes(tela):
+            assert "geracao" not in sem_acento(link.texto.lower())
+
+
+def test_as_duas_partes_continuam_funcionando():
+    """A marca nova nao pode atrapalhar o caso que ja ia bem."""
+    from justica_mcp.portal import _links_das_partes
+
+    achados = _links_das_partes(_TelaDePartes())
+    assert [l.texto for l in achados] == [
+        "BAIXAR ARQUIVO PARTE 1", "BAIXAR ARQUIVO PARTE 2"]
+
+
+def test_link_de_custas_nao_e_confundido_com_arquivo():
+    """'Arrecadação Integrada na Web' aparece na mesma tela, entre as
+    "ligacoes com termo de copia" do relato. Ela nao e o arquivo."""
+    from justica_mcp.portal import _links_das_partes
+
+    from justica_mcp.portal import sem_acento
+
+    for link in _links_das_partes(_TelaDeArquivoUnico()):
+        assert "arrecada" not in sem_acento(link.texto.lower())

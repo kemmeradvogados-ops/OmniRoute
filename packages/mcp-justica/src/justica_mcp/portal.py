@@ -4223,6 +4223,24 @@ GERACAO_PEDIDA = "geracao pedida"
 #   3. a mesma tela serve para pedir a geracao e para buscar o resultado.
 MARCA_DE_PARTE = "baixar arquivo parte"
 
+# ARQUIVO COMPLETO EM UMA PARTE SO.
+#
+# Conferido em campo em 30/10/2026, no eproc do Tribunal de Justica do Estado
+# do Rio de Janeiro: quando o arquivo nao vem partido, o rotulo perde o
+# "PARTE 1" e fica apenas "BAIXAR ARQUIVO". Oito processos ficaram parados por
+# causa disso, com o link na tela o tempo todo e o comando clicando em gerar.
+#
+# A prova de que era so o rotulo esta nos processos que davam certo antes:
+# eram justamente os de duas partes.
+#
+# Comparado por IGUALDADE, e nao por conteudo, para nao casar com frases
+# vizinhas que apenas contenham essas duas palavras.
+MARCA_DE_ARQUIVO_UNICO = "baixar arquivo"
+
+# A acao que o portal de fato chama, vista no endereco do link. Serve de rede
+# para quando o rotulo mudar outra vez: o rotulo e da tela, a acao e do portal.
+MARCA_DO_ENDERECO_DO_COMPLETO = "download_completo_download"
+
 # NUNCA clicado por conta propria. Este link descarta o arquivo que ja esta
 # pronto e manda gerar tudo de novo: quem o aperta por engano joga fora o
 # trabalho e volta para a fila. Esta aqui para ser RECONHECIDO e evitado.
@@ -5453,16 +5471,43 @@ def _links_das_partes(pagina) -> list:
     acidente de ordem.
     """
     achados = []
+    vistos: set = set()
     for link in pagina.query_selector_all("a[href]"):
         try:
-            texto = sem_acento(link.inner_text() or "")
+            texto = sem_acento(link.inner_text() or "").strip().lower()
             endereco = link.get_attribute("href") or ""
         except Exception:
             continue
+        # SEMPRE PRIMEIRO. A marca do arquivo unico e mais larga que a das
+        # partes, e o link de forcar nova geracao tambem comeca por "baixar"
+        # em algumas telas: a exclusao tem de vir antes de qualquer aceitacao.
+        # Clicar ali descarta o arquivo pronto e devolve o processo para a fila.
         if MARCA_DE_NOVA_GERACAO in texto:
             continue
-        if MARCA_DE_PARTE in texto and endereco:
-            achados.append(link)
+        if not endereco:
+            continue
+        serve = (
+            MARCA_DE_PARTE in texto
+            # ARQUIVO EM UMA PARTE SO. Conferido em campo em 30/10/2026, no
+            # eproc do Rio: quando o completo nao e partido, o rotulo perde o
+            # "PARTE 1" e fica apenas "BAIXAR ARQUIVO". A comparacao e EXATA,
+            # e nao por conteudo, para "baixar arquivo" nao casar com frases
+            # vizinhas que apenas contenham essas palavras.
+            or texto == MARCA_DE_ARQUIVO_UNICO
+            # E pelo endereco, que e o que o portal de fato chama. Serve de
+            # rede quando o rotulo muda de novo.
+            or MARCA_DO_ENDERECO_DO_COMPLETO in endereco
+        )
+        if not serve:
+            continue
+        # O MESMO ENDERECO NAO ENTRA DUAS VEZES. Em 30/10/2026 a tela trouxe
+        # dois links para o mesmo arquivo, e a parte unica foi gravada duas
+        # vezes, com 49.570.614 bytes cada; o indice daquelas pastas conta
+        # folhas em dobro ate hoje.
+        if endereco in vistos:
+            continue
+        vistos.add(endereco)
+        achados.append(link)
     return achados
 
 
