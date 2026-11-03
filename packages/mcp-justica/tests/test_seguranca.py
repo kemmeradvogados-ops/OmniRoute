@@ -254,3 +254,83 @@ def test_consulta_que_deu_certo_nao_se_perde_por_causa_do_rotulo():
     for esquisito in ({}, {"total_informado": None}, {"total_informado": "x"},
                       None):
         assert isinstance(rotulo_do_total(esquisito), str)
+
+
+# ==========================================================================
+# O cliente desiste em 60s, e a consulta continua rodando
+#
+# Item 2 da auditoria de 30/10/2026, constatado em mais de uma chamada: o
+# cliente desiste apos 60 segundos, a consulta CONTINUA, termina e grava, e o
+# resultado so aparece depois em `justica_consulta_gravada`.
+#
+# Essa espera NAO esta no nosso codigo: ela e do aplicativo do Claude, e nao
+# temos como mudar. O que da para mudar e de quem e a ultima palavra. Hoje
+# quem desiste e o cliente, e o que ele mostra ao advogado e um erro, embora a
+# consulta tenha dado certo. O risco esta na reacao: repetir a chamada, gastar
+# outra tentativa da conta compartilhada, e nao precisava.
+#
+# Entao o servidor responde ANTES do limite dele, dizendo onde o resultado vai
+# aparecer. O trabalho segue: `asyncio.to_thread` nao para quando a espera
+# acaba, e e por isso que a consulta gravava mesmo depois de o cliente sumir.
+# ==========================================================================
+
+def test_consulta_que_passa_do_teto_vira_recado_e_nao_erro():
+    import asyncio
+
+    from justica_mcp.tools import esperar_ou_avisar
+
+    async def _demorada():
+        await asyncio.sleep(0.2)
+        return {"ok": True}
+
+    async def _correr():
+        return await esperar_ou_avisar(_demorada(), teto=0.01,
+                                       aviso={"em_curso": True})
+
+    assert asyncio.run(_correr()) == {"em_curso": True}
+
+
+def test_consulta_rapida_devolve_o_resultado_de_verdade():
+    """O recado e para o caso lento. Processo pequeno tem de continuar
+    respondendo de uma vez, sem obrigar a uma segunda pergunta."""
+    import asyncio
+
+    from justica_mcp.tools import esperar_ou_avisar
+
+    async def _rapida():
+        return {"ok": True}
+
+    async def _correr():
+        return await esperar_ou_avisar(_rapida(), teto=5,
+                                       aviso={"em_curso": True})
+
+    assert asyncio.run(_correr()) == {"ok": True}
+
+
+def test_erro_da_consulta_continua_subindo():
+    """O teto nao pode engolir falha: erro de credencial precisa chegar ao
+    advogado como erro, e nao como 'ainda esta rodando'."""
+    import asyncio
+
+    from justica_mcp.tools import esperar_ou_avisar
+
+    async def _explode():
+        raise RuntimeError("credencial recusada")
+
+    async def _correr():
+        return await esperar_ou_avisar(_explode(), teto=5, aviso={})
+
+    try:
+        asyncio.run(_correr())
+    except RuntimeError as exc:
+        assert "credencial recusada" in str(exc)
+    else:
+        raise AssertionError("a falha foi engolida pelo teto")
+
+
+def test_o_teto_do_servidor_fica_abaixo_do_teto_do_cliente():
+    """Sessenta segundos e o que a auditoria mediu no cliente. Responder em
+    cima da hora nao resolveria: o recado tem de chegar ANTES."""
+    from justica_mcp.tools import TETO_DA_RESPOSTA_AO_CLIENTE
+
+    assert TETO_DA_RESPOSTA_AO_CLIENTE < 60

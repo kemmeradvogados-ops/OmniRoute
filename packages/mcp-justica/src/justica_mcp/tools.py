@@ -258,6 +258,42 @@ class BaixarAutosInput(NumeroInput):
 SISTEMAS_AUTENTICADOS = ("dcp", "eproc")
 
 
+# Quanto o servidor espera antes de responder "ainda estou nisso".
+#
+# O limite real e do CLIENTE, e nao nosso: a auditoria de 30/10/2026 mediu, em
+# mais de uma chamada, que o aplicativo desiste em 60 segundos. Nao temos como
+# mudar isso. O que da para mudar e de quem e a ultima palavra.
+#
+# Hoje quem desiste e o cliente, e o que ele mostra ao advogado e um ERRO,
+# embora a consulta tenha dado certo: ela continua, termina e grava. O risco
+# esta na reacao a esse erro, que e repetir a chamada e gastar outra tentativa
+# da conta compartilhada do escritorio, sem precisar.
+#
+# Quarenta e cinco deixa quinze segundos de folga para a resposta atravessar.
+TETO_DA_RESPOSTA_AO_CLIENTE = 45
+
+
+async def esperar_ou_avisar(tarefa, *, teto: float, aviso: dict):
+    """Espera a tarefa ate o teto; passando disso, devolve o aviso.
+
+    O TRABALHO NAO PARA. `asyncio.to_thread` roda numa linha de execucao
+    propria, e desistir de esperar por ela nao a interrompe: ela termina e
+    grava do mesmo jeito. E por isso que, mesmo com o cliente fora, a consulta
+    aparecia depois em `justica_consulta_gravada`.
+
+    FALHA NAO VIRA AVISO. Erro de credencial, numero invalido ou teto de
+    tentativas precisam chegar ao advogado como erro. Dizer "ainda esta
+    rodando" sobre algo que ja falhou faria ele esperar por um resultado que
+    nao vem.
+    """
+    import asyncio
+
+    try:
+        return await asyncio.wait_for(asyncio.shield(tarefa), timeout=teto)
+    except asyncio.TimeoutError:
+        return aviso
+
+
 def rotulo_do_total(dados) -> str:
     """O quanto anotar na auditoria de uma consulta de publicacoes.
 
@@ -621,6 +657,12 @@ def registrar(mcp: Any) -> None:
         ferramenta recusa quando ele e atingido. **Nao repita a chamada diante
         de erro**: relate ao advogado e espere instrucao.
 
+        RESPOSTA COM `em_curso: true`: a consulta passou do teto de resposta e
+        CONTINUA rodando. Nao e erro, nao foi cancelada e a tentativa ja foi
+        gasta. NAO repita esta chamada. Diga ao advogado que a consulta esta em
+        curso, espere cerca de um minuto e use `justica_consulta_gravada` com o
+        mesmo numero: o resultado aparece la quando terminar.
+
         Use `justica_consultar_processo` (base nacional) quando bastarem classe,
         orgao e movimentos: e instantaneo, gratuito e sem risco.
         """
@@ -665,11 +707,43 @@ def registrar(mcp: Any) -> None:
 
             # Playwright sincrono nao roda dentro do laco de eventos; vai para
             # uma thread propria.
-            dados = await asyncio.to_thread(
-                partial(consultar_processo_estruturado, tribunal.codigo, sistema,
-                        numero.formatado, solicitante=params.solicitante,
-                        linha=params.linha)
+            #
+            # E ESPERADO COM TETO, porque quem desiste primeiro e o cliente.
+            # A auditoria de 30/10/2026 mediu que o aplicativo abandona a
+            # chamada em 60 segundos e mostra um ERRO ao advogado, enquanto a
+            # consulta continua, termina e grava. O perigo nao e o erro: e a
+            # reacao a ele, que e repetir a chamada e gastar outra tentativa da
+            # conta compartilhada.
+            #
+            # Respondendo antes, o advogado recebe um recado que diz onde o
+            # resultado vai aparecer, e a linha de execucao segue ate o fim.
+            dados = await esperar_ou_avisar(
+                asyncio.to_thread(
+                    partial(consultar_processo_estruturado, tribunal.codigo,
+                            sistema, numero.formatado,
+                            solicitante=params.solicitante, linha=params.linha)
+                ),
+                teto=TETO_DA_RESPOSTA_AO_CLIENTE,
+                aviso={
+                    "em_curso": True,
+                    "processo": numero.formatado,
+                    "tribunal": tribunal.codigo,
+                    "sistema": sistema,
+                    "recado": (
+                        f"A consulta passou de {TETO_DA_RESPOSTA_AO_CLIENTE}s "
+                        "e CONTINUA rodando: ela nao foi cancelada e nao "
+                        "falhou. Autenticar no portal leva dezenas de "
+                        "segundos."),
+                    "o_que_fazer": (
+                        "NAO repita esta chamada: a tentativa ja foi gasta e "
+                        "repetir gasta outra, no teto que e da conta do "
+                        "escritorio inteiro. Espere cerca de um minuto e use "
+                        "`justica_consulta_gravada` com o mesmo numero: o "
+                        "resultado aparece la quando terminar."),
+                },
             )
+            if dados.get("em_curso"):
+                return _json(dados)
             # A confianca sai do PROPRIO dado, e nao de uma constante: quem
             # le por estrutura nao sabe o mesmo que quem le por seletor
             # conferido, e dizer "alta" para os dois apaga essa diferenca
