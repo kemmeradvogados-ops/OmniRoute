@@ -5509,6 +5509,89 @@ def _gravar_pela_sessao(contexto, endereco: str, arquivo) -> str:
     return str(arquivo)
 
 
+# A espera pelo arquivo do eproc, DENTRO da sessao ja autenticada.
+#
+# A primeira volta pergunta cedo, porque processo pequeno fica pronto rapido e
+# nao faz sentido dormir meia hora por ele. Dali em diante o intervalo cresce,
+# porque montagem de processo grande leva horas e perguntar a cada minuto gasta
+# volta a toa. O teto existe para a espera nao virar um intervalo longo demais
+# entre uma pergunta e outra justamente quando o arquivo acabou de ficar pronto.
+ESPERA_INICIAL_ENTRE_VOLTAS = 60
+ESPERA_MAXIMA_ENTRE_VOLTAS = 10 * 60
+CRESCIMENTO_DA_ESPERA = 1.8
+
+
+def esperar_a_integra_do_eproc(pagina, guarda, destino, chave: str, *,
+                               minutos: int, segundos: int) -> list:
+    """Espera o portal montar o arquivo, sem sair da sessao autenticada.
+
+    ESCRITA EM 03/11/2026, pelo item 7 da auditoria de 30/10. A primeira
+    chamada do download integral so PEDE a montagem, e e preciso chamar de novo
+    depois. A auditoria propos reagendar sozinho.
+
+    Reagendar re-autentica a cada tentativa, e a credencial do tribunal e UMA,
+    do escritorio: dez tentativas sao dez autenticacoes somadas ao teto de todos
+    os que trabalham com ela. Com oito processos pendentes, oitenta. Esperar
+    dentro da sessao ja paga custa ZERO autenticacao a mais, por mais voltas que
+    de.
+
+    Vale para o eproc porque o operador confirmou, em 03/11/2026, que a sessao
+    de la dura bastante. No Portal de Servicos do Rio a sessao e curta, e por
+    isso este caminho NAO serve para ele.
+
+    A ESPERA E PEDIDA, nunca automatica. Segurar o navegador aberto por horas e
+    decisao do operador, ainda mais numa maquina que opera com 30 a 90 MB
+    livres, como a auditoria registrou. Com `minutos=0` nada acontece.
+    """
+    if minutos <= 0:
+        return []
+
+    limite = time.monotonic() + minutos * 60
+    espera = ESPERA_INICIAL_ENTRE_VOLTAS
+    volta = 0
+    print(f"\n    Esperando o portal montar o arquivo, por ate {minutos} "
+          f"minuto(s), NESTA MESMA sessao: nenhuma autenticacao a mais sera "
+          f"gasta, por mais voltas que isto de.")
+
+    while time.monotonic() < limite:
+        volta += 1
+        time.sleep(espera)
+        espera = min(espera * CRESCIMENTO_DA_ESPERA, ESPERA_MAXIMA_ENTRE_VOLTAS)
+
+        # A SESSAO PRIMEIRO. Sessao caida PARECE arquivo que nao fica pronto, e
+        # confundir as duas faria a espera consumir o prazo inteiro contra uma
+        # tela morta, para terminar dizendo que o portal demorou. A prova e
+        # positiva, como manda `_sessao_ja_aberta`: concluir por ausencia aqui
+        # seria repetir o erro que aquela funcao existe para impedir.
+        if not _sessao_ja_aberta(pagina, "eproc"):
+            print("\n    A SESSAO CAIU durante a espera, e isto nao e o mesmo "
+                  "que o arquivo nao ter ficado pronto.")
+            print("    O pedido de montagem continua de pe no portal: repita o "
+                  "comando mais tarde e as partes prontas serao recolhidas,")
+            print("    por UMA autenticacao.")
+            return []
+
+        try:
+            partes = _partes_ja_prontas((pagina,), guarda, destino, chave,
+                                        segundos)
+        except Exception as exc:
+            print(f"    A leitura da tela falhou nesta volta "
+                  f"({type(exc).__name__}). Segue esperando.")
+            continue
+        if partes:
+            print(f"\n    O arquivo ficou pronto na volta {volta}.")
+            return partes
+        restante = int((limite - time.monotonic()) / 60)
+        print(f"    Volta {volta}: ainda nao ha arquivo. Restam cerca de "
+              f"{max(restante, 0)} minuto(s) de espera.")
+
+    print(f"\n    O prazo de {minutos} minuto(s) acabou e o arquivo nao ficou "
+          f"pronto. Nada se perdeu: o pedido de montagem continua de pe,")
+    print("    e repetir o comando mais tarde recolhe as partes por UMA "
+          "autenticacao.")
+    return []
+
+
 def _biscoitos_do_navegador(contexto) -> dict:
     """Os biscoitos da sessao, no formato que um cliente de rede entende.
 
@@ -5738,7 +5821,8 @@ SELETOR_DO_ACESSO = 'a:"Acesso integra do processo"'
 
 
 def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
-                         identidade, segundos: int) -> list:
+                         identidade, segundos: int,
+                         minutos_de_espera: int = 0) -> list:
     """Caminho da copia no eproc do Rio, pelo quadro "Acoes" da tela do processo.
 
     Tres diferencas em relacao ao do Tribunal Regional Federal da 2a Regiao, e
@@ -5841,11 +5925,14 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
         print("    Nada pronto na tela. O botao de Download Completo "
               "apareceu, e e por ele que se pede a geracao.")
         return _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor,
-                                        destino, chave, segundos)
+                                        destino, chave, segundos,
+                                        minutos_de_espera)
 
     baixado = _gerar_integra_do_eproc(janela, guarda, segundos)
     if baixado is GERACAO_PEDIDA:
-        return []
+        return esperar_a_integra_do_eproc(
+            janela, guarda, destino, chave,
+            minutos=minutos_de_espera, segundos=segundos)
     if baixado is not None:
         from pathlib import Path
 
@@ -5861,7 +5948,7 @@ def _integra_pelo_acesso(pagina, guarda, acesso, destino, chave: str,
 
 
 def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
-                    segundos: int) -> list:
+                    segundos: int, minutos_de_espera: int = 0) -> list:
     """Copia integral pelo botao do proprio portal.
 
     Unico download que exige clique: o botao nao tem endereco proprio, o
@@ -5891,7 +5978,8 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
         acesso = _acesso_a_integra(pagina)
         if acesso is not None:
             return _integra_pelo_acesso(pagina, guarda, acesso, destino, chave,
-                                        identidade, segundos)
+                                        identidade, segundos,
+                                        minutos_de_espera)
         print(f"    Nenhum botao de copia integral nesta tela "
               f"({', '.join(BOTOES_DA_INTEGRA)}), e tambem nao ha")
         print('    link de "acesso a integra do processo".')
@@ -5915,11 +6003,12 @@ def _baixar_integra(pagina, guarda, destino, chave: str, identidade,
         return partes
 
     return _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor, destino,
-                                    chave, segundos)
+                                    chave, segundos, minutos_de_espera)
 
 
 def _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor: str, destino,
-                             chave: str, segundos: int) -> list:
+                             chave: str, segundos: int,
+                             minutos_de_espera: int = 0) -> list:
     """Do botao de Download Completo em diante: gerar e baixar as partes.
 
     Separado de `_baixar_integra` porque o Rio chega a este mesmo botao por
@@ -5965,7 +6054,9 @@ def _fluxo_do_botao_de_copia(pagina, guarda, botao, seletor: str, destino,
             return partes
         baixado = _gerar_integra_do_eproc(pagina, guarda, segundos)
         if baixado is GERACAO_PEDIDA:
-            return []
+            return esperar_a_integra_do_eproc(
+                pagina, guarda, destino, chave,
+                minutos=minutos_de_espera, segundos=segundos)
         if baixado is None:
             print("    Segue o que ha na tela, para o seletor ser conferido antes de")
             print("    virar codigo. Nada mais foi clicado.")
@@ -7650,7 +7741,7 @@ def buscar_no_eproc(pagina, guarda, numero, segundos) -> tuple:
 
 
 def _consultar_eproc(pagina, guarda, estado_local, identidade, *, numero,
-                     documentos, segundos) -> int:
+                     documentos, segundos, minutos_de_espera: int = 0) -> int:
     """O caminho do eproc, pela barra de busca rapida, que existe em toda tela.
 
     E tambem o caminho padrao: portal novo que tenha busca rapida cai aqui.
@@ -7792,7 +7883,7 @@ def _consultar_eproc(pagina, guarda, estado_local, identidade, *, numero,
                     # processo, entao aqui se recebe uma lista.
                     arquivos = _baixar_integra(
                         pagina, guarda, pasta, numero.apenas_digitos,
-                        identidade, segundos
+                        identidade, segundos, minutos_de_espera
                     )
                 except Exception as exc:
                     arquivos, falhou = [], True
@@ -7931,6 +8022,12 @@ def consultar_processo(
     motivo: Optional[str] = None,
     segundos_download: Optional[int] = None,
     sem_movimentacoes: bool = False,
+    # Quantos minutos esperar, DENTRO da sessao ja autenticada, o portal
+    # montar o arquivo completo. Zero e nao esperar, que e o padrao: segurar o
+    # navegador aberto por horas e decisao do operador. Ver
+    # `esperar_a_integra_do_eproc`. So vale para o eproc, porque so la a
+    # sessao dura e so la ha prova positiva de sessao aberta.
+    minutos_de_espera: int = 0,
     # Qual das linhas do resultado abrir. A busca por numero unico devolve mais
     # de uma quando o processo existe em serventias ou graus diferentes, e cada
     # uma tem historico proprio. Ver o bloco em `JS_DAS_LINHAS_DESCRITAS`.
@@ -8056,7 +8153,8 @@ def consultar_processo(
                 url=url)
         return _consultar_eproc(
             pagina, guarda, estado_local, identidade, numero=numero,
-            documentos=documentos, segundos=segundos)
+            documentos=documentos, segundos=segundos,
+            minutos_de_espera=minutos_de_espera)
 
     def depois(pagina, guarda, estado_local, identidade):
         """Corre os processos pedidos, todos na MESMA sessao autenticada.

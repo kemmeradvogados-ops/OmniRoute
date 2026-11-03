@@ -9525,3 +9525,151 @@ def test_sem_fluxo_o_caminho_antigo_ainda_grava(tmp_path, monkeypatch):
     alvo = tmp_path / "parte1.pdf"
     portal._gravar_pela_sessao(_Ctx(), "https://eproc-down.jfrj.jus.br/x", alvo)
     assert alvo.read_bytes() == b"%PDF-1.4 pelo navegador"
+
+
+# ==========================================================================
+# Esperar o arquivo NA MESMA SESSAO, em vez de autenticar de novo
+#
+# Item 7 da auditoria de 30/10/2026: a primeira chamada do download integral
+# do eproc so pede a montagem ("ACEITOU... montando"), e e preciso chamar de
+# novo depois. A auditoria propos reagendar sozinho, com intervalo crescente.
+#
+# Reagendar re-autentica a cada tentativa, e a credencial do tribunal e UMA,
+# do escritorio: dez tentativas sao dez autenticacoes somadas ao teto de todos.
+# Com oito processos pendentes, oitenta.
+#
+# O operador confirmou em 03/11/2026 que a sessao do eproc dura bastante, e
+# por isso a espera acontece DENTRO da sessao ja paga: custa zero autenticacao
+# a mais, por mais voltas que de.
+#
+# Tres coisas que a espera precisa fazer, e todas vem de defeitos ja vistos
+# neste projeto:
+#
+#   1. conferir que a sessao AINDA vale, por prova positiva, antes de concluir
+#      que o arquivo nao veio. Sessao caida parece arquivo que nao fica pronto;
+#   2. parar por tempo, e nao so por numero de voltas, porque o navegador
+#      aberto custa memoria numa maquina que opera com 30 a 90 MB livres;
+#   3. dizer por que parou. Silencio aqui vira "nao baixou" sem causa.
+# ==========================================================================
+
+def _relogio_falso(monkeypatch, tela=None):
+    """Relogio e sono andam JUNTOS.
+
+    A primeira versao destes testes trocava `time.sleep` por um duble e
+    deixava `time.monotonic` real: o laco girava sem o tempo andar, e o teste
+    rodou ate ser interrompido. Quem controla o sono tem de controlar o
+    relogio, senao mede outra coisa.
+    """
+    from justica_mcp import portal
+
+    relogio = {"agora": 0.0, "dormidas": []}
+
+    def _dormir(quanto):
+        relogio["dormidas"].append(quanto)
+        relogio["agora"] += quanto
+        if tela is not None:
+            tela.voltas += 1
+
+    monkeypatch.setattr(portal.time, "monotonic", lambda: relogio["agora"])
+    monkeypatch.setattr(portal.time, "sleep", _dormir)
+    return relogio
+
+
+class _TelaQueFicaPronta:
+    """A tela de geracao: vazia nas primeiras voltas, com as partes depois."""
+
+    viewport_size = {"width": 1280, "height": 720}
+
+    def __init__(self, pronta_na_volta=2, sessao_cai_na_volta=None):
+        self.url = "https://eproc.jfrj.jus.br/eproc/controlador.php"
+        self.voltas = 0
+        self.pronta_na_volta = pronta_na_volta
+        self.sessao_cai_na_volta = sessao_cai_na_volta
+        self.cliques = []
+        self.context = _ContextoDoNavegador(self)
+
+    @property
+    def links(self):
+        if self.voltas >= self.pronta_na_volta:
+            return _TelaDePartes().links
+        return []
+
+    def query_selector_all(self, seletor):
+        return list(self.links) if seletor == "a[href]" else []
+
+
+def test_a_espera_recolhe_o_arquivo_quando_ele_fica_pronto(tmp_path, monkeypatch):
+    from justica_mcp import portal
+
+    tela = _TelaQueFicaPronta(pronta_na_volta=2)
+    relogio = _relogio_falso(monkeypatch, tela)
+    monkeypatch.setattr(portal, "_sessao_ja_aberta", lambda p, s: True)
+
+    partes = portal.esperar_a_integra_do_eproc(
+        tela, _guarda_que_baixa(), tmp_path, "123", minutos=60, segundos=5)
+
+    assert len(partes) == 2
+    assert relogio["dormidas"], "a espera precisa dormir entre as voltas"
+
+
+def test_a_espera_para_quando_a_sessao_cai(tmp_path, monkeypatch):
+    """Sessao caida PARECE arquivo que nao fica pronto. Confundir as duas
+    faria a espera consumir o prazo inteiro contra uma tela morta, e terminar
+    dizendo que o portal demorou."""
+    from justica_mcp import portal
+
+    tela = _TelaQueFicaPronta(pronta_na_volta=99)
+    _relogio_falso(monkeypatch, tela)
+    monkeypatch.setattr(portal, "_sessao_ja_aberta",
+                        lambda p, s: tela.voltas < 2)
+
+    partes = portal.esperar_a_integra_do_eproc(
+        tela, _guarda_que_baixa(), tmp_path, "123", minutos=600, segundos=5)
+
+    assert partes == []
+    assert tela.voltas < 10, "parou cedo, e nao no fim do prazo"
+
+
+def test_a_espera_respeita_o_teto_de_tempo(tmp_path, monkeypatch):
+    """Navegador aberto custa memoria, e a maquina do escritorio opera com 30
+    a 90 MB livres."""
+    from justica_mcp import portal
+
+    tela = _TelaQueFicaPronta(pronta_na_volta=99)
+    relogio = _relogio_falso(monkeypatch)
+    monkeypatch.setattr(portal, "_sessao_ja_aberta", lambda p, s: True)
+
+    portal.esperar_a_integra_do_eproc(
+        tela, _guarda_que_baixa(), tmp_path, "123", minutos=30, segundos=5)
+
+    assert relogio["agora"] <= 30 * 60 + portal.ESPERA_MAXIMA_ENTRE_VOLTAS
+
+
+def test_o_intervalo_cresce_em_vez_de_martelar(tmp_path, monkeypatch):
+    """Montagem leva horas. Perguntar a cada minuto gasta volta a toa."""
+    from justica_mcp import portal
+
+    tela = _TelaQueFicaPronta(pronta_na_volta=99)
+    relogio = _relogio_falso(monkeypatch)
+    monkeypatch.setattr(portal, "_sessao_ja_aberta", lambda p, s: True)
+
+    portal.esperar_a_integra_do_eproc(
+        tela, _guarda_que_baixa(), tmp_path, "123", minutos=120, segundos=5)
+
+    dormidas = relogio["dormidas"]
+    assert dormidas == sorted(dormidas), "o intervalo nao pode encolher"
+    assert dormidas[-1] <= portal.ESPERA_MAXIMA_ENTRE_VOLTAS
+    assert len(set(dormidas)) > 1, "o intervalo precisa crescer de fato"
+
+
+def test_sem_pedido_de_espera_nada_espera(tmp_path, monkeypatch):
+    """A espera e PEDIDA, nunca automatica: segurar o navegador por horas e
+    decisao do operador, e nao efeito colateral de um download."""
+    from justica_mcp import portal
+
+    tela = _TelaQueFicaPronta(pronta_na_volta=1)
+    monkeypatch.setattr(portal.time, "sleep",
+                        lambda s: pytest.fail("dormiu sem a espera ter sido pedida"))
+
+    assert portal.esperar_a_integra_do_eproc(
+        tela, _guarda_que_baixa(), tmp_path, "123", minutos=0, segundos=5) == []

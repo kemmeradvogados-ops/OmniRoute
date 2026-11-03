@@ -304,6 +304,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="justificativa do acesso aos autos, quando o portal a "
                          "pedir. O do Rio de Janeiro pede, no campo 'Motivo', "
                          "antes de abrir o Visualizador. Padrao: 'consulta'")
+    cp.add_argument("--esperar-a-integra", type=int, default=0, metavar="MINUTOS",
+                    dest="minutos_de_espera",
+                    help="SO NO EPROC. Espera, por ate tantos minutos, o portal "
+                         "terminar de montar a copia integral, SEM SAIR da "
+                         "sessao ja autenticada: nenhuma autenticacao a mais e "
+                         "gasta, por mais voltas que a espera de. Zero, o "
+                         "padrao, nao espera: pede a montagem e volta, e cabe "
+                         "a voce repetir o comando mais tarde. Segurar o "
+                         "navegador aberto por horas custa memoria, por isso a "
+                         "espera e pedida e nunca automatica. A espera para "
+                         "sozinha se a sessao cair, dizendo isso")
     cp.add_argument("--sem-movimentacoes", action="store_true",
                     dest="sem_movimentacoes",
                     help="pula a leitura do historico de movimentacoes, que no "
@@ -520,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
                 aceitar_termo=args.aceitar_termo, motivo=args.motivo,
                 segundos_download=args.segundos_download,
                 sem_movimentacoes=args.sem_movimentacoes,
+                minutos_de_espera=args.minutos_de_espera,
                 linha_do_resultado=args.linha,
                 paginas_a_pular=portal._paginas_pedidas(args.pular),
                 perfil=args.perfil, oculto=args.oculto, segundos=args.segundos,
