@@ -2688,6 +2688,61 @@ def ja_esta_na_consulta(pagina: Any) -> bool:
         return False
 
 
+def recarregar_a_consulta(pagina: Any, guarda: Any, segundos: int = 45) -> None:
+    """Recarrega a aba presa nos DETALHES do processo anterior. Sem login novo.
+
+    SECAO 7.4 DA AUDITORIA DE 29/10 A 01/11/2026. A partir do terceiro
+    processo de um lote, a busca parava com "a tela da consulta nao tem
+    input[name=numeroProcesso]", e o relato dizia onde a procura tinha
+    corrido: num quadro embutido ainda em `consultar/detalhes-processo`, isto
+    e, nos detalhes do processo ANTERIOR.
+
+    Por que a segunda chance que ja existia nao resolvia: `ja_esta_na_consulta`
+    olha o endereco DE FORA, e ele continua sendo `#/consproc/` o tempo todo,
+    porque a rota nunca mudou. Entao `abrir_consulta_pelo_menu` voltava na
+    primeira linha, sem clicar em nada, e a segunda chance de
+    `achar_o_formulario` virava um nada. A auditoria registrou o mesmo em
+    campo: "reabrir pelo menu nao muda a rota externa".
+
+    Recarregar troca o quadro embutido, que e onde o processo anterior ficou
+    preso. NAO custa credencial: a sessao mora no perfil do navegador, nao na
+    pagina. Se o portal voltar a pedir o tipo de usuario, isso e dito aqui, em
+    vez de virar "a tela da consulta nao tem o campo", que acusa a tela errada.
+
+    SO E CHAMADA NA SEGUNDA CHANCE, depois de o formulario ja nao ter sido
+    achado. O caminho comum nao passa por aqui, e isso importa: em 06/10/2026
+    ficou registrado que mandar o navegador ir ate a rota `#/` recarrega a
+    pagina inteira e o portal pode mandar o visitante para a pagina publica. O
+    risco e real, e por isso ele so e corrido onde a corrida ja ia parar.
+    """
+    from .core.guarda_navegacao import Permissao
+    from .portal import _assentar, endereco_sem_dado, permissao_efemera
+
+    guarda.permissoes.append(Permissao(
+        padrao_url=permissao_efemera(pagina.url).padrao_url,
+        descricao="recarregar a consulta presa no processo anterior",
+        conferido_em="execucao atual",
+    ))
+    print("    [PRESA] A aba continua na rota da consulta, e o quadro "
+          "embutido ficou no processo anterior.")
+    print("    Recarregando a aba na MESMA sessao. Isso nao gasta tentativa "
+          "de login.")
+    try:
+        pagina.reload(wait_until="domcontentloaded",
+                      timeout=max(segundos, 15) * 1000)
+    except Exception as erro:
+        raise ConsultaIndisponivel(
+            "A aba da consulta nao recarregou "
+            f"({type(erro).__name__}). Endereco atual: "
+            f"{endereco_sem_dado(pagina.url, 80)}. Nada foi digitado.")
+    _assentar(pagina, segundos)
+    if na_tela_de_perfil(pagina):
+        raise ConsultaIndisponivel(
+            "Depois de recarregar, o portal voltou a pedir o TIPO DE USUARIO. "
+            "A sessao continua aberta e nada foi digitado: repita o comando, "
+            "que ele escolhe o perfil de novo sem autenticar outra vez.")
+
+
 # Classe que o portal poe no submenu fechado. Lida na marcacao em 08/10/2026:
 #
 #   <li class="collapse submenu ng-star-inserted">Consultas Processuais</li>
@@ -2997,6 +3052,16 @@ def achar_o_formulario(pagina: Any, guarda: Any, segundos: int,
 
     UMA vez so, e dizendo que tentou: repetir sem limite esconderia portal
     fora do ar atras de uma espera longa.
+
+    E HA DUAS FORMAS DE REABRIR, porque sao dois defeitos diferentes.
+
+    Quando a tela nao montou, reabrir pelo menu basta. Quando a aba ficou
+    PRESA nos detalhes do processo anterior, nao: a rota de fora continua
+    sendo `#/consproc/` o tempo todo, `abrir_consulta_pelo_menu` volta na
+    primeira linha sem clicar em nada e esta segunda chance virava um nada.
+    Foi a secao 7.4 da auditoria de 29/10 a 01/11/2026, e custou do terceiro
+    processo em diante em cada lote. Nesse caso o que troca o quadro embutido
+    e recarregar a aba, e nenhuma das duas formas gasta login.
     """
     quadro = quadro_da_consulta(pagina)
     try:
@@ -3005,7 +3070,7 @@ def achar_o_formulario(pagina: Any, guarda: Any, segundos: int,
     except ConsultaIndisponivel as primeira_falha:
         print(f"    [NAO MONTOU] {primeira_falha}")
         print("    A autenticacao ja foi paga, entao vale reabrir a consulta "
-              "pelo menu e esperar de novo.")
+              "e esperar de novo.")
         print("    Isso nao gasta tentativa de login. Uma vez so.")
         try:
             from .telas import gravar_a_tela
@@ -3013,7 +3078,22 @@ def achar_o_formulario(pagina: Any, guarda: Any, segundos: int,
             gravar_a_tela(pagina, "antes-de-reabrir-a-consulta")
         except Exception:
             pass
-        abrir_consulta_pelo_menu(pagina, guarda, segundos)
+        try:
+            if ja_esta_na_consulta(pagina):
+                recarregar_a_consulta(pagina, guarda, segundos)
+            else:
+                abrir_consulta_pelo_menu(pagina, guarda, segundos)
+        except ConsultaIndisponivel as falha_ao_reabrir:
+            # A PRIMEIRA RECUSA SOBREVIVE. Ela e a que diz o que faltava na
+            # tela, com o nome do campo e as tres causas possiveis; a segunda
+            # so conta que a tentativa de recuperacao nao foi adiante. Deixar
+            # a segunda tomar o lugar da primeira trocaria o diagnostico certo
+            # por um generico, e foi o que a suite apanhou em 03/11/2026
+            # quando a recarga entrou.
+            raise ConsultaIndisponivel(
+                f"{falha_ao_reabrir}\n    O QUE A TELA DIZIA ANTES DA "
+                f"TENTATIVA DE REABRIR, que e o diagnostico que vale: "
+                f"{primeira_falha}") from primeira_falha
         assentar(pagina, segundos)
         quadro = quadro_da_consulta(pagina)
         achado = conferir_forma_do_formulario(

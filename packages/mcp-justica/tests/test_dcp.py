@@ -10971,3 +10971,216 @@ def test_a_recusa_nomeia_os_rotulos_dos_dois_graus():
     # A nota antiga mandava procurar na secao errada: aquele titulo aparece
     # dez vezes na tela, como cabecalho de uma janela por movimento.
     assert "Descricao Detalhada" not in explicacao
+
+
+# ==========================================================================
+# Tela da consulta presa nos detalhes do processo anterior
+#
+# Auditoria de 29/10 a 01/11/2026, secao 7.4. Do terceiro processo de cada
+# lote em diante:
+#
+#   A tela da consulta nao tem input[name=numeroProcesso] ...
+#   A procura correu no quadro embutido .../consultar/detalhes-processo?...
+#
+# O quadro embutido continuava nos detalhes do processo ANTERIOR.
+#
+# Por que a segunda chance que ja existia nao resolvia: `ja_esta_na_consulta`
+# olha o endereco DE FORA, e ele continua sendo `#/consproc/` o tempo todo,
+# porque a rota nunca muda. `abrir_consulta_pelo_menu` voltava na primeira
+# linha sem clicar em nada, e a segunda chance de `achar_o_formulario` virava
+# um nada. A propria auditoria registrou: "reabrir pelo menu nao muda a rota
+# externa".
+# ==========================================================================
+
+
+class _AbaPresaNoProcessoAnterior:
+    """A aba na rota da consulta, com o quadro preso no processo anterior.
+
+    Recarregar troca o quadro, que e o que a correcao faz.
+    """
+
+    def __init__(self, *, recarregar_resolve=True, pede_perfil_depois=False):
+        self.url = ("https://portal.exemplo.jus.br/portalservicos/"
+                    "#/consproc/consultaportal")
+        self.recarregou = 0
+        self.recarregar_resolve = recarregar_resolve
+        self.pede_perfil_depois = pede_perfil_depois
+        self.navegou = []
+        self.cliques = []
+
+    def reload(self, **_k):
+        self.recarregou += 1
+
+    def goto(self, endereco, **_k):
+        self.navegou.append(endereco)
+
+    def wait_for_load_state(self, *_a, **_k):
+        return None
+
+    def wait_for_selector(self, *_a, **_k):
+        return None
+
+    def wait_for_timeout(self, *_a, **_k):
+        return None
+
+    def query_selector(self, *_a, **_k):
+        return None
+
+    @property
+    def frames(self):
+        return []
+
+
+class _GuardaDaRecarga:
+    def __init__(self):
+        self.permissoes = []
+
+    def pode_executar(self, *_a, **_k):
+        return True
+
+
+def test_a_aba_presa_no_processo_anterior_e_recarregada(monkeypatch):
+    """O NUCLEO da secao 7.4."""
+    from justica_mcp import dcp
+
+    aba = _AbaPresaNoProcessoAnterior()
+    monkeypatch.setattr(dcp, "na_tela_de_perfil", lambda *_a, **_k: False)
+    dcp.recarregar_a_consulta(aba, _GuardaDaRecarga(), 5)
+
+    assert aba.recarregou == 1
+    assert aba.navegou == [], (
+        "rota `#/` nao se alcanca por endereco: foi isso que derrubou a "
+        "sessao em 06/10/2026")
+
+
+def test_a_recarga_nao_digita_credencial_nenhuma(monkeypatch):
+    """A sessao mora no perfil do navegador, nao na pagina.
+
+    A prova e o que a funcao FAZ na aba, nao a frase que ela imprime: um teste
+    que procurasse a frase quebraria na primeira quebra de linha e nao diria
+    nada sobre credencial.
+    """
+    import inspect
+
+    from justica_mcp import dcp
+
+    aba = _AbaPresaNoProcessoAnterior()
+    monkeypatch.setattr(dcp, "na_tela_de_perfil", lambda *_a, **_k: False)
+    dcp.recarregar_a_consulta(aba, _GuardaDaRecarga(), 5)
+    assert aba.navegou == [], "recarregar nao navega para endereco nenhum"
+
+    fonte = inspect.getsource(dcp.recarregar_a_consulta)
+    for proibido in ("fill(", ".type(", "pwdSenha", "txtUsuario",
+                     "sbmEntrar", "autenticar("):
+        assert proibido not in fonte, (
+            f"a recarga nao pode encostar em credencial, e usa {proibido!r}")
+
+
+def test_a_recarga_que_cai_no_tipo_de_usuario_diz_isso(monkeypatch):
+    """Acusar "a tela da consulta nao tem o campo" seria acusar a tela errada,
+    e o operador perderia a corrida procurando defeito no lugar errado."""
+    from justica_mcp import dcp
+
+    aba = _AbaPresaNoProcessoAnterior()
+    monkeypatch.setattr(dcp, "na_tela_de_perfil", lambda *_a, **_k: True)
+    with pytest.raises(dcp.ConsultaIndisponivel) as erro:
+        dcp.recarregar_a_consulta(aba, _GuardaDaRecarga(), 5)
+    recado = str(erro.value)
+    assert "TIPO DE USUARIO" in recado
+    assert "sem autenticar outra vez" in recado
+
+
+def test_a_segunda_chance_recarrega_quando_a_rota_ja_e_a_da_consulta(monkeypatch):
+    """O defeito inteiro: a segunda chance chamava o menu, que voltava na
+    primeira linha, e nada acontecia."""
+    from justica_mcp import dcp
+
+    chamadas = []
+    monkeypatch.setattr(dcp, "quadro_da_consulta", lambda *_a, **_k: object())
+    monkeypatch.setattr(dcp, "descrever_o_quadro", lambda *_a, **_k: "em lugar nenhum")
+    monkeypatch.setattr(dcp, "abrir_consulta_pelo_menu",
+                        lambda *_a, **_k: chamadas.append("menu"))
+    monkeypatch.setattr(dcp, "recarregar_a_consulta",
+                        lambda *_a, **_k: chamadas.append("recarga"))
+
+    tentativas = {"n": 0}
+
+    def _conferir(_quadro, _segundos, _onde):
+        tentativas["n"] += 1
+        if tentativas["n"] == 1:
+            raise dcp.ConsultaIndisponivel(
+                "a tela da consulta nao tem input[name=numeroProcesso]")
+        return ("inicio", "origem", "pesquisar", None)
+
+    monkeypatch.setattr(dcp, "conferir_forma_do_formulario", _conferir)
+
+    aba = _AbaPresaNoProcessoAnterior()
+    achado = dcp.achar_o_formulario(aba, _GuardaDaRecarga(), 5,
+                                    lambda *_a, **_k: None)
+    assert achado[0] == "inicio"
+    assert chamadas == ["recarga"], (
+        "na rota da consulta o menu e um nada; quem troca o quadro e a recarga")
+
+
+def test_fora_da_rota_da_consulta_a_segunda_chance_continua_sendo_o_menu(monkeypatch):
+    """A correcao do 7.4 nao pode trocar o caminho que ja funcionava."""
+    from justica_mcp import dcp
+
+    chamadas = []
+    monkeypatch.setattr(dcp, "quadro_da_consulta", lambda *_a, **_k: object())
+    monkeypatch.setattr(dcp, "descrever_o_quadro", lambda *_a, **_k: "no painel")
+    monkeypatch.setattr(dcp, "abrir_consulta_pelo_menu",
+                        lambda *_a, **_k: chamadas.append("menu"))
+    monkeypatch.setattr(dcp, "recarregar_a_consulta",
+                        lambda *_a, **_k: chamadas.append("recarga"))
+
+    tentativas = {"n": 0}
+
+    def _conferir(_quadro, _segundos, _onde):
+        tentativas["n"] += 1
+        if tentativas["n"] == 1:
+            raise dcp.ConsultaIndisponivel("a tela nao montou")
+        return ("inicio", "origem", "pesquisar", None)
+
+    monkeypatch.setattr(dcp, "conferir_forma_do_formulario", _conferir)
+
+    aba = _AbaPresaNoProcessoAnterior()
+    aba.url = "https://portal.exemplo.jus.br/portalservicos/#/tela-menu"
+    dcp.achar_o_formulario(aba, _GuardaDaRecarga(), 5, lambda *_a, **_k: None)
+    assert chamadas == ["menu"]
+
+
+def test_a_recusa_que_vale_e_a_primeira_quando_reabrir_tambem_falha(monkeypatch):
+    """A primeira recusa diz o que faltava na tela; a segunda so conta que a
+    recuperacao nao foi adiante.
+
+    Apanhado pela suite em 03/11/2026, quando a recarga do 7.4 entrou: um
+    quadro sem `#inputSufixoUnica3` passou a devolver "a aba nao recarregou",
+    e o operador perdia o nome do campo e as tres causas possiveis. Trocar o
+    diagnostico certo por um generico e pior do que nao ter a correcao, e
+    acontece no PRIMEIRO processo, nao so no terceiro.
+    """
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "quadro_da_consulta", lambda *_a, **_k: object())
+    monkeypatch.setattr(dcp, "descrever_o_quadro", lambda *_a, **_k: "no quadro")
+    monkeypatch.setattr(dcp, "conferir_forma_do_formulario",
+                        lambda *_a, **_k: (_ for _ in ()).throw(
+                            dcp.ConsultaIndisponivel(
+                                "A tela da consulta nao tem "
+                                "#inputSufixoUnica3. Nada foi digitado.")))
+    monkeypatch.setattr(dcp, "recarregar_a_consulta",
+                        lambda *_a, **_k: (_ for _ in ()).throw(
+                            dcp.ConsultaIndisponivel(
+                                "A aba da consulta nao recarregou.")))
+
+    aba = _AbaPresaNoProcessoAnterior()
+    with pytest.raises(dcp.ConsultaIndisponivel) as erro:
+        dcp.achar_o_formulario(aba, _GuardaDaRecarga(), 1,
+                               lambda *_a, **_k: None)
+    recado = str(erro.value)
+    assert "#inputSufixoUnica3" in recado, (
+        "a recusa que nomeia o campo nao pode ser engolida pela tentativa de "
+        "recuperacao")
+    assert "nao recarregou" in recado, (
+        "e a tentativa de recuperacao tambem precisa aparecer")
