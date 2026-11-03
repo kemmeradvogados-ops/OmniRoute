@@ -24,8 +24,11 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
+
+import httpx
 
 from .core.acesso import PortalNaoConfigurado, config_portal, portais_configurados
 from .core.cofre import Cofre, CredencialAusente, Identidade
@@ -4175,6 +4178,20 @@ TEXTOS_A_NUNCA_CLICAR = ("cancelar", "limpar", "voltar", "fechar", "sair")
 # viu chegar por ali. O clique continua; o que encolheu foi a espera.
 TETO_DO_DOWNLOAD_DIRETO = 8
 
+# Gravacao em blocos do arquivo completo. Ver `_gravar_em_blocos`.
+#
+# O BLOCO E O TETO DE MEMORIA desta operacao: nunca se segura mais que isto de
+# cada vez, entao um processo de 33 MB custa o mesmo que um de 3 MB. Um mega e
+# grande o bastante para nao transformar o download em milhares de escritas
+# pequenas, e pequeno o bastante para caber numa maquina apertada, que foi
+# exatamente o caso que trouxe este conserto.
+TAMANHO_DO_BLOCO = 1024 * 1024
+
+# Prazo da conexao, e nao do arquivo inteiro: o eproc monta o arquivo ANTES de
+# comecar a responder, e depois disso os blocos vem em ritmo de rede. Prazo
+# curto demais aqui mataria um download que estava indo bem.
+TEMPO_DO_BLOCO = 120
+
 BOTAO_GERAR_INTEGRA = "#btnGerar"
 MARCA_DA_TELA_DE_GERACAO = "agendar_arquivo_completo"
 
@@ -5463,6 +5480,22 @@ def _gravar_pela_sessao(contexto, endereco: str, arquivo) -> str:
     arquivo e corpo de HTML, e gravada com nome de PDF ela entra no acervo como
     se fossem autos: o advogado so descobre ao abrir, meses depois.
     """
+    # O FLUXO NAO PODE PROVAR NADA DE NEGATIVO, e por isso qualquer desfecho
+    # ruim dele cai para a sessao do navegador, inclusive recusa de conteudo.
+    #
+    # Ele e um atalho: carrega os biscoitos do navegador, mas nao e o
+    # navegador. Se a sessao nao viajar inteira, o portal devolve tela de
+    # login, que e HTML, e tratar isso como "o arquivo nao e arquivo"
+    # transformaria um download que funciona numa falha dura. Quem pode
+    # afirmar que o portal nao entregou e a sessao autenticada, e so ela.
+    if _tem_sessao_para_o_fluxo(contexto):
+        try:
+            return _gravar_em_blocos(contexto, endereco, arquivo)
+        except Exception as exc:
+            print(f"      A gravacao em blocos nao entregou "
+                  f"({type(exc).__name__}). Seguindo pela sessao do "
+                  f"navegador, que gasta mais memoria.")
+
     resposta = contexto.request.get(endereco)
     if not resposta.ok:
         raise ConteudoInesperado(f"o portal respondeu {resposta.status}")
@@ -5473,6 +5506,88 @@ def _gravar_pela_sessao(contexto, endereco: str, arquivo) -> str:
             f"o que veio nao e PDF nem arquivo compactado (tipo {tipo}, "
             f"{len(corpo)} byte(s))")
     arquivo.write_bytes(corpo)
+    return str(arquivo)
+
+
+def _biscoitos_do_navegador(contexto) -> dict:
+    """Os biscoitos da sessao, no formato que um cliente de rede entende.
+
+    Vazio quando o contexto nao sabe informa-los, e nesse caso o fluxo nem e
+    tentado: sem sessao o portal so devolveria tela de login, e o pedido seria
+    uma ida de rede gasta para nada.
+    """
+    biscoitos: dict = {}
+    try:
+        for biscoito in contexto.cookies() or []:
+            nome, valor = biscoito.get("name"), biscoito.get("value")
+            if nome is not None and valor is not None:
+                biscoitos[str(nome)] = str(valor)
+    except Exception:
+        return {}
+    return biscoitos
+
+
+def _tem_sessao_para_o_fluxo(contexto) -> bool:
+    return bool(_biscoitos_do_navegador(contexto))
+
+
+def _gravar_em_blocos(contexto, endereco: str, arquivo) -> str:
+    """O mesmo arquivo, gravado pedaco a pedaco, sem passar inteiro pela memoria.
+
+    ESCRITA EM 01/11/2026, pelo item 8 da auditoria de 30/10: falha de memoria
+    no download integral de um processo de 33 MB, numa maquina que operava com
+    30 a 90 MB livres.
+
+    `body()` do Playwright nao transmite em blocos: ele materializa a resposta
+    inteira. Para 33 MB isso exige 33 MB de uma vez, mais a copia que o proprio
+    Playwright guarda enquanto monta o retorno. Em blocos nunca se segura mais
+    que um pedaco, entao o tamanho do processo deixa de importar.
+
+    A SESSAO VAI NOS BISCOITOS. O endereco da parte e autenticado, e sem eles
+    o portal devolveria tela de login. Os biscoitos saem do proprio navegador,
+    que e quem autenticou.
+
+    [Inferencia] O bilhete do endereco e tratado como reutilizavel dentro da
+    mesma geracao, conforme o comentario de `_links_das_partes` ("um ticket
+    gerado na hora, que muda a cada geracao"). Se ele fosse de uso unico, uma
+    tentativa falha aqui queimaria o bilhete e o caminho de recuo falharia
+    tambem. Nao foi medido em campo.
+    """
+    biscoitos = _biscoitos_do_navegador(contexto)
+
+    primeiro = True
+    with httpx.Client(timeout=TEMPO_DO_BLOCO, follow_redirects=True,
+                      cookies=biscoitos) as cliente:
+        with cliente.stream("GET", endereco) as resposta:
+            if getattr(resposta, "status_code", 200) >= 400:
+                raise ConteudoInesperado(
+                    f"o portal respondeu {resposta.status_code}")
+            # Gravado so depois de o PRIMEIRO pedaco provar que e arquivo.
+            # Deixar o arquivo crescer para conferir no fim gravaria lixo em
+            # disco e gastaria justamente a memoria que se queria poupar.
+            try:
+                with open(arquivo, "wb") as destino:
+                    for pedaco in resposta.iter_bytes(chunk_size=TAMANHO_DO_BLOCO):
+                        if primeiro:
+                            if bytes(pedaco[:4]) not in (b"%PDF", b"PK\x03\x04"):
+                                tipo = (resposta.headers or {}).get(
+                                    "content-type", "desconhecido")
+                                raise ConteudoInesperado(
+                                    f"o que veio nao e PDF nem arquivo "
+                                    f"compactado (tipo {tipo})")
+                            primeiro = False
+                        destino.write(pedaco)
+            except BaseException:
+                # NADA FICA EM DISCO quando a gravacao nao termina. Arquivo
+                # pela metade, com nome de peca, e o defeito que o item 9
+                # desta mesma auditoria descreve: parece baixado e nao esta.
+                try:
+                    Path(arquivo).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+    if primeiro:
+        raise ConteudoInesperado("o portal nao devolveu conteudo nenhum")
     return str(arquivo)
 
 

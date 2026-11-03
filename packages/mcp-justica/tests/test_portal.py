@@ -9274,3 +9274,254 @@ def test_sem_arquivo_em_lugar_nenhum_a_procura_devolve_vazio(tmp_path):
     assert _partes_ja_prontas(
         (None, _TelaDePartes(com_partes=False)), _guarda_que_baixa(),
         tmp_path, "123", 5) == []
+
+
+# ==========================================================================
+# Arquivo grande nao pode passar inteiro pela memoria
+#
+# Item 8 da auditoria tecnica de 30/10/2026: falha de memoria no download
+# integral de um processo de 33 MB, numa maquina que operava com 30 a 90 MB
+# livres. A auditoria inferiu a causa, e a inferencia estava certa:
+#
+#     corpo = resposta.body()        <- o arquivo inteiro na memoria
+#     arquivo.write_bytes(corpo)
+#
+# `body()` do Playwright nao transmite em blocos: ele materializa a resposta
+# toda. Para um processo de 33 MB isso exige 33 MB de uma vez, e mais a copia
+# que o proprio Playwright guarda enquanto monta o retorno.
+#
+# Gravar em blocos resolve de verdade, e nao por folga: nunca se segura mais
+# que um pedaco por vez, entao o tamanho do processo deixa de importar.
+# ==========================================================================
+
+class _RespostaEmFluxo:
+    """Dubla a resposta de httpx em modo de fluxo."""
+
+    def __init__(self, pedacos, status=200, tipo="application/pdf"):
+        self._pedacos = pedacos
+        self.status_code = status
+        self.headers = {"content-type": tipo}
+        self.leu_tudo_de_uma_vez = False
+
+    @property
+    def content(self):
+        self.leu_tudo_de_uma_vez = True
+        return b"".join(self._pedacos)
+
+    def read(self):
+        self.leu_tudo_de_uma_vez = True
+        return self.content
+
+    def iter_bytes(self, chunk_size=None):
+        yield from self._pedacos
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _ClienteEmFluxo:
+    def __init__(self, resposta, erro=None):
+        self.resposta, self.erro = resposta, erro
+        self.pedidos = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def stream(self, metodo, endereco, **kw):
+        self.pedidos.append(endereco)
+        if self.erro:
+            raise self.erro
+        return self.resposta
+
+
+def _contexto_com_biscoitos():
+    class _Ctx:
+        def cookies(self):
+            return [{"name": "sessao", "value": "x", "domain": "eproc-down.jfrj.jus.br",
+                     "path": "/"}]
+
+        class request:
+            @staticmethod
+            def get(endereco, **kw):
+                raise AssertionError(
+                    "o caminho de fluxo nao devia cair na sessao do navegador")
+
+    return _Ctx()
+
+
+def test_o_arquivo_e_gravado_em_blocos_e_nao_de_uma_vez(tmp_path, monkeypatch):
+    """O NUCLEO do item 8."""
+    from justica_mcp import portal
+
+    pedacos = [b"%PDF-1.4 cabecalho", b"miolo" * 1000, b"fim"]
+    resposta = _RespostaEmFluxo(pedacos)
+    cliente = _ClienteEmFluxo(resposta)
+    monkeypatch.setattr(portal.httpx, "Client", lambda **kw: cliente)
+
+    alvo = tmp_path / "parte1.pdf"
+    portal._gravar_pela_sessao(_contexto_com_biscoitos(),
+                               "https://eproc-down.jfrj.jus.br/x", alvo)
+
+    assert alvo.read_bytes() == b"".join(pedacos)
+    assert not resposta.leu_tudo_de_uma_vez, (
+        "o conteudo inteiro foi materializado; era isso que estourava a memoria")
+
+
+def test_pagina_de_erro_e_recusada_antes_de_gravar(tmp_path, monkeypatch):
+    """A recusa tem de acontecer no PRIMEIRO pedaco. Deixar o arquivo crescer
+    para so depois conferir gravaria lixo em disco e gastaria a memoria que se
+    queria poupar.
+
+    Aqui os DOIS caminhos veem pagina: o fluxo e, depois dele, a sessao do
+    navegador. So entao a recusa e definitiva."""
+    from justica_mcp import portal
+
+    resposta = _RespostaEmFluxo([b"<!doctype html><html>erro</html>"],
+                                tipo="text/html")
+    monkeypatch.setattr(portal.httpx, "Client",
+                        lambda **kw: _ClienteEmFluxo(resposta))
+
+    class _CtxQueTambemVePagina:
+        @staticmethod
+        def cookies():
+            return [{"name": "sessao", "value": "x"}]
+
+        class request:
+            @staticmethod
+            def get(endereco, **kw):
+                class _R:
+                    ok = True
+                    status = 200
+                    headers = {"content-type": "text/html"}
+
+                    @staticmethod
+                    def body():
+                        return b"<!doctype html><html>erro</html>"
+
+                return _R()
+
+    alvo = tmp_path / "parte1.pdf"
+    with pytest.raises(portal.ConteudoInesperado, match="nao e PDF"):
+        portal._gravar_pela_sessao(_CtxQueTambemVePagina(),
+                                   "https://eproc-down.jfrj.jus.br/x", alvo)
+    assert not alvo.exists(), "nada pode ficar em disco quando o conteudo e recusado"
+
+
+def test_pagina_no_fluxo_nao_condena_o_download(tmp_path, monkeypatch):
+    """O DEFEITO DE DESENHO QUE EU QUASE ENVIEI, em 01/11/2026.
+
+    A primeira versao tratava recusa de conteudo vinda do FLUXO como
+    definitiva, sem cair para a sessao. Mas o fluxo e um atalho: leva os
+    biscoitos do navegador e nao e o navegador. Se a sessao nao viajar
+    inteira, o portal devolve tela de login, que e HTML, e aquilo
+    transformaria um download que funciona numa falha dura.
+
+    Oito testes antigos cairam de uma vez e mostraram isso antes de chegar
+    perto da maquina do advogado."""
+    from justica_mcp import portal
+
+    pagina = _RespostaEmFluxo([b"<!doctype html>login</html>"], tipo="text/html")
+    monkeypatch.setattr(portal.httpx, "Client",
+                        lambda **kw: _ClienteEmFluxo(pagina))
+
+    class _CtxComSessaoBoa:
+        @staticmethod
+        def cookies():
+            return [{"name": "sessao", "value": "x"}]
+
+        class request:
+            @staticmethod
+            def get(endereco, **kw):
+                class _R:
+                    ok = True
+                    status = 200
+                    headers = {"content-type": "application/pdf"}
+
+                    @staticmethod
+                    def body():
+                        return b"%PDF-1.4 os autos de verdade"
+
+                return _R()
+
+    alvo = tmp_path / "parte1.pdf"
+    portal._gravar_pela_sessao(_CtxComSessaoBoa(),
+                               "https://eproc-down.jfrj.jus.br/x", alvo)
+    assert alvo.read_bytes() == b"%PDF-1.4 os autos de verdade"
+
+
+def test_sem_biscoitos_o_fluxo_nem_e_tentado(tmp_path, monkeypatch):
+    """Sem sessao o portal so devolveria tela de login: o pedido seria uma ida
+    de rede gasta para nada, e em teste seria rede de verdade."""
+    from justica_mcp import portal
+
+    def _nao_devia_subir(**kw):
+        raise AssertionError("o fluxo foi tentado sem biscoitos")
+
+    monkeypatch.setattr(portal.httpx, "Client", _nao_devia_subir)
+
+    class _CtxSemBiscoitos:
+        @staticmethod
+        def cookies():
+            return []
+
+        class request:
+            @staticmethod
+            def get(endereco, **kw):
+                class _R:
+                    ok = True
+                    status = 200
+                    headers = {"content-type": "application/pdf"}
+
+                    @staticmethod
+                    def body():
+                        return b"%PDF-1.4 pela sessao"
+
+                return _R()
+
+    alvo = tmp_path / "parte1.pdf"
+    portal._gravar_pela_sessao(_CtxSemBiscoitos(),
+                               "https://eproc-down.jfrj.jus.br/x", alvo)
+    assert alvo.read_bytes() == b"%PDF-1.4 pela sessao"
+
+
+def test_sem_fluxo_o_caminho_antigo_ainda_grava(tmp_path, monkeypatch):
+    """O fluxo e melhor, nao obrigatorio. Se ele nao puder correr, a sessao do
+    navegador continua entregando o arquivo: pior em memoria, e muito melhor
+    que nao entregar."""
+    from justica_mcp import portal
+
+    monkeypatch.setattr(
+        portal.httpx, "Client",
+        lambda **kw: _ClienteEmFluxo(None, erro=RuntimeError("sem rede direta")))
+
+    class _Ctx:
+        def cookies(self):
+            return []
+
+        class request:
+            @staticmethod
+            def get(endereco, **kw):
+                class _R:
+                    ok = True
+                    status = 200
+                    headers = {"content-type": "application/pdf"}
+
+                    @staticmethod
+                    def body():
+                        return b"%PDF-1.4 pelo navegador"
+
+                return _R()
+
+    alvo = tmp_path / "parte1.pdf"
+    portal._gravar_pela_sessao(_Ctx(), "https://eproc-down.jfrj.jus.br/x", alvo)
+    assert alvo.read_bytes() == b"%PDF-1.4 pelo navegador"
