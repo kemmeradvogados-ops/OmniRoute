@@ -242,7 +242,7 @@ def test_espera_curta_nao_vira_espera_de_zero():
 # ==========================================================================
 # Pagina valida e VAZIA nao e processo sem andamento
 #
-# Item 5 da auditoria de 30/10/2026: o 0306357-61.2013.8.19.0001 voltou com
+# Item 5 da auditoria de 30/10/2026: o 9999999-80.2013.8.19.0001 voltou com
 # pagina valida e 0 eventos, sem dizer "processo nao encontrado". A auditoria
 # nomeou o risco com precisao: "resultado vazio pode ser lido como processo sem
 # andamento".
@@ -276,7 +276,7 @@ class _TelaVazia:
 def test_zero_partes_e_zero_eventos_vira_nao_localizado():
     from justica_mcp.extracao import extrair_processo
 
-    dados = extrair_processo(_TelaVazia(), "0306357-61.2013.8.19.0001")
+    dados = extrair_processo(_TelaVazia(), "9999999-80.2013.8.19.0001")
     assert dados["localizado"] is False
     assert "localizad" in (dados.get("aviso") or "").lower()
 
@@ -286,7 +286,7 @@ def test_o_aviso_nao_inventa_a_razao():
     processo em segredo, ou tela que nao montou. Dizer qual seria inventar."""
     from justica_mcp.extracao import extrair_processo
 
-    aviso = extrair_processo(_TelaVazia(), "0306357-61.2013.8.19.0001")["aviso"]
+    aviso = extrair_processo(_TelaVazia(), "9999999-80.2013.8.19.0001")["aviso"]
     baixo = aviso.lower()
     assert "sem andamento" not in baixo
     assert "nao existe" not in baixo
@@ -296,5 +296,5 @@ def test_o_resumo_mostra_o_aviso_em_vez_de_so_zeros():
     """`eventos: 0  partes: 0` sozinho se le como processo parado."""
     from justica_mcp.extracao import extrair_processo, resumo
 
-    linhas = resumo(extrair_processo(_TelaVazia(), "0306357-61.2013.8.19.0001"))
+    linhas = resumo(extrair_processo(_TelaVazia(), "9999999-80.2013.8.19.0001"))
     assert any("localizad" in linha.lower() for linha in linhas), linhas
