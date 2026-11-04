@@ -227,24 +227,42 @@ def test_valor_torto_cai_no_padrao_em_vez_de_quebrar(monkeypatch):
         assert tempo_limite() == SEGUNDOS_PADRAO, torto
 
 
-def test_o_recado_do_tempo_esgotado_diz_quanto_e_como_mudar():
-    import inspect
+def test_o_recado_do_tempo_esgotado_diz_quanto_e_como_mudar(monkeypatch):
+    """O recado precisa dizer QUANTO se esperou, como mudar, e que repetir
+    nao custa tentativa.
+
+    A ultima parte nao e enfeite: sem ela o advogado aplica a regra do "nao
+    repita diante de erro", que vale para o portal autenticado e nao para
+    esta consulta, e desiste de um dado que viria na segunda tentativa.
+
+    Ate 04/11/2026 este teste lia o FONTE de `_buscar` e procurava a frase
+    la dentro. Quebrou quando a frase mudou de funcao, sem que uma letra dela
+    mudasse. Agora ele levanta o tempo esgotado de verdade e le a mensagem:
+    onde a frase mora deixou de importar, que e como deveria ser desde o
+    inicio.
+    """
+    import asyncio
+
+    import httpx
 
     from justica_mcp.adapters.datajud import AdaptadorDataJud
+    from justica_mcp.core.tribunais import identificar_tribunal
 
-    # O texto e quebrado em varias linhas no fonte, entao as aspas e as
-    # quebras saem antes da comparacao: o que se confere e a FRASE, e nao
-    # como ela foi digitada.
-    import re
+    adaptador = AdaptadorDataJud()
+    monkeypatch.setattr(adaptador, "_cabecalhos", lambda: {})
 
-    fonte = inspect.getsource(AdaptadorDataJud._buscar)
-    frase = " ".join(re.sub(r'"\s*\n\s*"', "", fonte).split())
-    assert "JUSTICA_DATAJUD_SEGUNDOS" in frase
-    assert "nao respondeu em" in frase
-    # E precisa dizer que repetir nao custa tentativa: senao o advogado
-    # aplica a regra do "nao repita diante de erro", que vale para o portal
-    # autenticado e nao para esta consulta.
-    assert "nao custa tentativa de autenticacao" in frase
+    async def _estourar(*_a, **_k):
+        raise httpx.ConnectTimeout("tempo esgotado")
+
+    monkeypatch.setattr(adaptador, "_uma_busca", _estourar)
+
+    with pytest.raises(TimeoutError) as erro:
+        asyncio.run(adaptador._buscar(identificar_tribunal("8.19"),
+                                      {"query": {}}))
+    recado = str(erro.value)
+    assert "JUSTICA_DATAJUD_SEGUNDOS" in recado
+    assert "nao respondeu em" in recado
+    assert "nao custa tentativa de autenticacao" in recado
 
 
 # ==========================================================================

@@ -92,3 +92,149 @@ def test_a_data_da_ficha_aparece_no_motivo():
     """O agente precisa poder dizer ao advogado o quao velha e a informacao."""
     r = sistema_de_documento(_doc(dias_atras=5), TRT1)
     assert "atualizada em" in r.motivo
+
+
+# ==========================================================================
+# 429 da base nacional: recuar, e recuar pouco
+#
+# Auditoria de 03/11/2026: o DataJud devolveu `429 Too Many Requests` durante
+# a verificacao em lote, e a recusa chegava ao advogado como
+#
+#   erro_interno: Falha inesperada: HTTPStatusError ... 429 Too Many Requests
+#
+# que e falso em duas frentes: nao foi inesperada, e nao foi falha. A fonte
+# estava no ar e disse, com todas as letras, para esperar.
+# ==========================================================================
+
+
+class _RespostaFalsa:
+    def __init__(self, status, headers=None, corpo=None):
+        self.status_code = status
+        self.headers = headers or {}
+        self._corpo = corpo if corpo is not None else {"hits": {"hits": []}}
+
+    def json(self):
+        return self._corpo
+
+    def raise_for_status(self):
+        return None
+
+
+def _adaptador_com_respostas(monkeypatch, respostas, dormidas):
+    """Adaptador cujas buscas devolvem a fila dada, sem rede e sem dormir."""
+    import asyncio
+
+    from justica_mcp.adapters.datajud import AdaptadorDataJud
+
+    adaptador = AdaptadorDataJud()
+    fila = list(respostas)
+    monkeypatch.setattr(adaptador, "_cabecalhos", lambda: {})
+
+    async def _uma(_url, _consulta, _segundos):
+        return fila.pop(0)
+
+    async def _dormir(quanto):
+        dormidas.append(quanto)
+
+    monkeypatch.setattr(adaptador, "_uma_busca", _uma)
+    monkeypatch.setattr(asyncio, "sleep", _dormir)
+    return adaptador
+
+
+def _tribunal_do_rio():
+    from justica_mcp.core.tribunais import identificar_tribunal
+
+    return identificar_tribunal("8.19")
+
+
+def test_o_429_e_tentado_de_novo_antes_de_virar_recusa(monkeypatch):
+    """O NUCLEO: rajada que bate no limite nao pode morrer na primeira."""
+    import asyncio
+
+    dormidas = []
+    adaptador = _adaptador_com_respostas(
+        monkeypatch,
+        [_RespostaFalsa(429), _RespostaFalsa(200, corpo={"hits": {"hits": [1]}})],
+        dormidas)
+
+    dados = asyncio.run(adaptador._buscar(_tribunal_do_rio(), {"query": {}}))
+    assert dados == {"hits": {"hits": [1]}}
+    assert dormidas == [2.0], "a primeira espera e a curta"
+
+
+def test_o_429_que_insiste_vira_recusa_que_diz_quanto_esperar(monkeypatch):
+    import asyncio
+
+    from justica_mcp.core.resiliencia import LimiteDeTaxa, PortalIndisponivel
+
+    dormidas = []
+    adaptador = _adaptador_com_respostas(
+        monkeypatch, [_RespostaFalsa(429)] * 3, dormidas)
+
+    with pytest.raises(LimiteDeTaxa) as erro:
+        asyncio.run(adaptador._buscar(_tribunal_do_rio(), {"query": {}}))
+
+    recado = str(erro.value)
+    assert "excesso de chamadas" in recado
+    assert "nao falhou por defeito nosso" in recado.replace("NAO", "nao")
+    assert "disjuntor" not in recado.lower(), (
+        "limite de taxa nao e disjuntor; a frase mandaria procurar defeito "
+        "que nao existe")
+    # Herda de PortalIndisponivel para que `_tratar` ja a traduza como
+    # "aguarde a janela indicada antes de repetir".
+    assert isinstance(erro.value, PortalIndisponivel)
+
+
+def test_a_espera_pedida_pela_fonte_e_obedecida_e_dita(monkeypatch):
+    """Retry-After nao e sugestao, e o advogado precisa saber de onde veio o
+    numero: "a fonte pediu" pesa diferente de "este e o nosso padrao"."""
+    import asyncio
+
+    from justica_mcp.core.resiliencia import LimiteDeTaxa
+
+    dormidas = []
+    adaptador = _adaptador_com_respostas(
+        monkeypatch,
+        [_RespostaFalsa(429, headers={"Retry-After": "3"}),
+         _RespostaFalsa(200)],
+        dormidas)
+    asyncio.run(adaptador._buscar(_tribunal_do_rio(), {"query": {}}))
+    assert dormidas == [3.0], "a espera da fonte vale mais que o nosso padrao"
+
+    dormidas.clear()
+    adaptador = _adaptador_com_respostas(
+        monkeypatch, [_RespostaFalsa(429, headers={"Retry-After": "600"})],
+        dormidas)
+    with pytest.raises(LimiteDeTaxa) as erro:
+        asyncio.run(adaptador._buscar(_tribunal_do_rio(), {"query": {}}))
+    assert dormidas == [], (
+        "600s estoura o teto: a recusa sai na hora em vez de o cliente perder "
+        "a janela esperando")
+    assert "a propria fonte pediu" in str(erro.value)
+
+
+def test_a_espera_total_nao_passa_do_teto(monkeypatch):
+    """O cliente do conector desiste por volta de 45s. Recuo generoso aqui
+    trocaria um erro honesto por um silencio."""
+    import asyncio
+
+    from justica_mcp.adapters.datajud import AdaptadorDataJud
+
+    assert sum(AdaptadorDataJud.ESPERAS_NO_429) <= AdaptadorDataJud.TETO_DA_ESPERA_NO_429
+    assert AdaptadorDataJud.TETO_DA_ESPERA_NO_429 < 45, (
+        "a espera precisa caber na janela que o cliente ainda aguarda")
+
+
+def test_retry_after_ilegivel_cai_no_padrao_em_vez_de_quebrar(monkeypatch):
+    """A norma admite data HTTP no cabecalho. Adivinhar uma data seria pior
+    que usar o padrao."""
+    import asyncio
+
+    dormidas = []
+    adaptador = _adaptador_com_respostas(
+        monkeypatch,
+        [_RespostaFalsa(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}),
+         _RespostaFalsa(200)],
+        dormidas)
+    asyncio.run(adaptador._buscar(_tribunal_do_rio(), {"query": {}}))
+    assert dormidas == [2.0]

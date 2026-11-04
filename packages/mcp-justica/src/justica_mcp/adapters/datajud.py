@@ -12,6 +12,7 @@ matriz de capacidades recusa essas chamadas antes de sair para a rede.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any, Optional
 
@@ -19,6 +20,7 @@ import httpx
 
 from ..core.capabilities import Capacidade
 from ..core.cnj import NumeroCNJ
+from ..core.resiliencia import LimiteDeTaxa
 from ..core.schemas import Confianca, Metodo, RespostaProcesso, SistemaResolvido
 from ..core.tribunais import Tribunal
 from .base import AdaptadorBase
@@ -149,27 +151,68 @@ class AdaptadorDataJud(AdaptadorBase):
             )
         return " ".join(partes)
 
+    # RECUO NO 429, e por que ele e curto.
+    #
+    # Auditoria de 03/11/2026: o DataJud devolveu `429 Too Many Requests`
+    # durante a verificacao em lote, e a recusa chegava ao advogado como
+    # "Falha inesperada: HTTPStatusError". Nao era inesperada nem era falha: a
+    # fonte estava no ar e pediu para esperar.
+    #
+    # Duas tentativas a mais, nao mais que isso, e o total de espera tem teto.
+    # A razao e do outro lado do programa: o cliente do conector desiste da
+    # resposta por volta de 45s (`TETO_DA_RESPOSTA_AO_CLIENTE` em tools.py).
+    # Recuo generoso aqui faria a consulta vencer o limite da fonte e perder a
+    # janela do cliente, que e trocar um erro honesto por um silencio.
+    TENTATIVAS_EXTRAS_NO_429 = 2
+    ESPERAS_NO_429 = (2.0, 5.0)
+    TETO_DA_ESPERA_NO_429 = 15.0
+
+    @staticmethod
+    def _espera_pedida(resposta: Any, padrao: float) -> tuple[float, bool]:
+        """Quanto esperar, e se foi a FONTE quem pediu.
+
+        O segundo valor nao e detalhe: a recusa diz ao advogado de onde veio o
+        numero, e "a fonte pediu 60s" e informacao de peso diferente de "este
+        e o nosso padrao".
+        """
+        try:
+            bruto = (resposta.headers or {}).get("Retry-After")
+        except Exception:
+            bruto = None
+        if bruto is None:
+            return padrao, False
+        try:
+            # Segundos. A forma com data HTTP tambem e valida na norma e NAO e
+            # tratada aqui: cair no padrao e melhor que adivinhar uma data.
+            pedido = float(str(bruto).strip())
+        except (TypeError, ValueError):
+            return padrao, False
+        if pedido <= 0:
+            return padrao, False
+        return pedido, True
+
     async def _buscar(self, tribunal: Tribunal, consulta: dict[str, Any]) -> dict[str, Any]:
         url = f"{BASE}/{tribunal.alias_datajud}/_search"
         segundos = tempo_limite()
-        try:
-            async with httpx.AsyncClient(timeout=segundos) as cliente:
-                resposta = await self._requisitar(
-                    cliente, method="POST", url=url,
-                    headers=self._cabecalhos(), json=consulta
-                )
-        except httpx.TimeoutException as exc:
-            # O tempo esgotado precisa dizer QUANTO se esperou e como mudar.
-            # Sem isso, "tempo esgotado" nao distingue interface fora do ar de
-            # limite curto demais, que foi o caso em 26/10/2026.
-            raise TimeoutError(
-                f"A base nacional nao respondeu em {segundos:.0f}s. A consulta "
-                "por numero de processo e mais pesada que as demais e pode "
-                "passar disso em rede lenta. Para esperar mais, o operador "
-                "define JUSTICA_DATAJUD_SEGUNDOS no .env. A interface pode "
-                "tambem estar lenta no momento: tentar de novo nao custa "
-                "tentativa de autenticacao nenhuma."
-            ) from exc
+        gasto_esperando = 0.0
+        for volta in range(self.TENTATIVAS_EXTRAS_NO_429 + 1):
+            try:
+                resposta = await self._uma_busca(url, consulta, segundos)
+            except httpx.TimeoutException as exc:
+                raise self._tempo_esgotado(segundos) from exc
+            if resposta.status_code != 429:
+                break
+            padrao = self.ESPERAS_NO_429[min(volta, len(self.ESPERAS_NO_429) - 1)]
+            espera, pela_fonte = self._espera_pedida(resposta, padrao)
+            ultima = volta >= self.TENTATIVAS_EXTRAS_NO_429
+            # Esperar mais do que o teto seria perder a janela do cliente sem
+            # garantia nenhuma de que a fonte libera. Melhor recusar dizendo
+            # quanto aguardar.
+            if ultima or gasto_esperando + espera > self.TETO_DA_ESPERA_NO_429:
+                raise LimiteDeTaxa("A base nacional (DataJud)", espera,
+                                   pedido_pela_fonte=pela_fonte)
+            await asyncio.sleep(espera)
+            gasto_esperando += espera
         if resposta.status_code == 401:
             raise PermissionError(self._diagnostico_do_401())
         if resposta.status_code == 403:
@@ -181,6 +224,29 @@ class AdaptadorDataJud(AdaptadorBase):
             )
         resposta.raise_for_status()
         return resposta.json()
+
+    async def _uma_busca(self, url: str, consulta: dict[str, Any], segundos: float):
+        async with httpx.AsyncClient(timeout=segundos) as cliente:
+            return await self._requisitar(
+                cliente, method="POST", url=url,
+                headers=self._cabecalhos(), json=consulta
+            )
+
+    @staticmethod
+    def _tempo_esgotado(segundos: float) -> TimeoutError:
+        """O tempo esgotado precisa dizer QUANTO se esperou e como mudar.
+
+        Sem isso, "tempo esgotado" nao distingue interface fora do ar de
+        limite curto demais, que foi o caso em 26/10/2026.
+        """
+        return TimeoutError(
+            f"A base nacional nao respondeu em {segundos:.0f}s. A consulta "
+            "por numero de processo e mais pesada que as demais e pode "
+            "passar disso em rede lenta. Para esperar mais, o operador "
+            "define JUSTICA_DATAJUD_SEGUNDOS no .env. A interface pode "
+            "tambem estar lenta no momento: tentar de novo nao custa "
+            "tentativa de autenticacao nenhuma."
+        )
 
     async def buscar_documento(
         self, numero: NumeroCNJ, tribunal: Tribunal

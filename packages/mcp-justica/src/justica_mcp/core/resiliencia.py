@@ -35,6 +35,38 @@ class PortalIndisponivel(RuntimeError):
         self.segundos_restantes = segundos
 
 
+class LimiteDeTaxa(PortalIndisponivel):
+    """A fonte recusou por excesso de chamadas, e nao por falha nossa.
+
+    AUDITORIA DE 03/11/2026. O DataJud devolveu `429 Too Many Requests`
+    durante a verificacao em lote, e isso chegava ao advogado como "Falha
+    inesperada: HTTPStatusError", que e falso em duas frentes: nao foi
+    inesperada, e nao foi falha. A fonte estava no ar e disse, com todas as
+    letras, para esperar.
+
+    Herda de `PortalIndisponivel` porque a conduta e a mesma, aguardar a
+    janela antes de repetir, e `_tratar` ja a traduz assim. O que muda e a
+    FRASE: dizer "disjuntor aberto, falhas seguidas recentes" sobre um limite
+    de taxa mandaria o leitor procurar defeito que nao existe.
+    """
+
+    def __init__(self, fonte: str, segundos: float, *, pedido_pela_fonte: bool) -> None:
+        de_onde = ("a propria fonte pediu esta espera"
+                   if pedido_pela_fonte
+                   else "a fonte nao disse quanto, entao este e o nosso padrao")
+        RuntimeError.__init__(
+            self,
+            f"{fonte} recusou por excesso de chamadas (429). Ja esperei e "
+            f"tentei de novo, e continuou recusando. Aguarde cerca de "
+            f"{segundos:.0f}s antes de repetir ({de_onde}). A consulta NAO "
+            f"falhou por defeito nosso nem gasta tentativa de autenticacao: "
+            f"pedir em rajada e que atinge o limite, entao prefira espacar as "
+            f"chamadas a repetir esta agora."
+        )
+        self.portal = fonte
+        self.segundos_restantes = segundos
+
+
 @dataclass
 class LimitadorTaxa:
     """Espacamento minimo entre chamadas ao mesmo portal.
