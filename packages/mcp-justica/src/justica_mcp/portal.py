@@ -7442,9 +7442,47 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
         buscar_dcp(pagina, guarda, numero, url, segundos,
                    linha_do_resultado)
     except ConsultaIndisponivel as exc:
-        print(f"  [PAROU] {exc}")
-        _relatar_tela(pagina, "TELA ONDE PAROU")
-        return 1
+        # O PERFIL PODE SER PEDIDO DEPOIS, e ate 04/11/2026 isso derrubava a
+        # consulta com a autenticacao ja paga.
+        #
+        # Visto em campo nesta data, no acervo do operador: a tela do portal
+        # estava em `#/dashboard` quando o programa perguntou "e a tela de
+        # perfil?". Nao era. Ele seguiu para a busca e, nesse meio-tempo, o
+        # portal navegou para `#/usuarios/alterar-perfil`. A verificacao do
+        # perfil era feita UMA VEZ, e foi feita cedo demais.
+        #
+        # O proprio programa descreveu o defeito e parou: a recusa de
+        # `abrir_consulta_pelo_menu` ja diz "se o endereco ainda for
+        # /usuarios/alterar-perfil, a escolha do perfil e que nao chegou ao
+        # fim". Sabia e nao agia.
+        #
+        # Escolher o perfil agora NAO custa credencial: a sessao continua
+        # aberta, e o perfil vem do .env quando nao foi dado no comando (ver
+        # `args.perfil = config.perfil`). UMA vez so: se a segunda tambem
+        # falhar, a tela e outra e insistir nao a muda.
+        if not na_tela_de_perfil(pagina):
+            print(f"  [PAROU] {exc}")
+            _relatar_tela(pagina, "TELA ONDE PAROU")
+            return 1
+        print("  O portal pediu o TIPO DE USUARIO DEPOIS de abrir o painel.")
+        print("  Escolhendo o perfil agora, na MESMA sessao, e repetindo a "
+              "busca. Sem novo login.")
+        try:
+            escolher_perfil(pagina, guarda, perfil, segundos)
+            print(f"  Tipo de usuario: {perfil}.")
+            _assentar(pagina, segundos)
+            pagina = reencontrar_o_portal(pagina, min(segundos, 15))
+            buscar_dcp(pagina, guarda, numero, url, segundos,
+                       linha_do_resultado)
+        except (ConsultaIndisponivel, PerfilNaoInformado,
+                NavegacaoBloqueada) as depois_do_perfil:
+            print(f"  [PAROU] {depois_do_perfil}")
+            # A PRIMEIRA RECUSA SOBREVIVE: e ela que descreve a tela onde a
+            # consulta realmente travou.
+            print(f"  O QUE A TELA DIZIA ANTES DE O PERFIL SER ESCOLHIDO, que "
+                  f"e o diagnostico que vale: {exc}")
+            _relatar_tela(pagina, "TELA ONDE PAROU")
+            return 1
     except NavegacaoBloqueada as exc:
         # Mesma razao da escolha do perfil, logo acima, e o caso
         # aconteceu em 16/10/2026: a trava barrou o clique na linha do

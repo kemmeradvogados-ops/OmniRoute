@@ -7553,14 +7553,39 @@ def test_a_trava_barrando_a_busca_nao_sobe_como_traceback():
 
     from justica_mcp import portal
 
-    fonte = fonte_da_consulta()
-    depois = fonte.split("buscar_dcp(pagina, guarda, numero, url, segundos")[1]
-    # O trecho entre a busca e a linha seguinte do caminho normal e onde moram
-    # os tratamentos de parada dela.
-    tratamentos = depois.split('print(f"  Endereco:')[0]
-    assert "except ConsultaIndisponivel" in tratamentos
-    assert "except NavegacaoBloqueada" in tratamentos
-    assert "[PAROU]" in tratamentos
+    import ast
+    import textwrap
+
+    # PELA ARVORE, e nao recortando o texto entre duas grafias. Ate 04/11/2026
+    # este teste cortava o fonte depois da chamada da busca e antes da linha
+    # seguinte; a busca repetida apos a escolha tardia do perfil mudou onde o
+    # corte caia, e o teste perdeu de vista um tratamento que continuava la.
+    arvore = ast.parse(textwrap.dedent(inspect.getsource(portal._consultar_dcp)))
+    protecoes = [no for no in ast.walk(arvore)
+                 if isinstance(no, ast.Try)
+                 and any("buscar_dcp" in ast.unparse(x) for x in no.body)]
+    assert protecoes, "a busca do DCP deixou de ser protegida"
+
+    tratadas = set()
+    for protecao in protecoes:
+        for h in protecao.handlers:
+            tratadas.update(ast.unparse(h.type or "").replace(
+                "(", " ").replace(")", " ").replace(",", " ").split())
+            # E nenhum deles pode devolver o erro cru ao operador.
+            assert not [r for r in ast.walk(h)
+                        if isinstance(r, ast.Raise) and r.exc is None], (
+                "a trava barrando o proprio programa nao pode subir como "
+                "traceback")
+    for esperada in ("ConsultaIndisponivel", "NavegacaoBloqueada"):
+        assert esperada in tratadas, (
+            f"a busca do DCP deixou de tratar {esperada}")
+
+    # E TODO tratamento avisa o operador em vez de calar.
+    for protecao in protecoes:
+        for h in protecao.handlers:
+            assert "[PAROU]" in ast.unparse(h), (
+                "tratamento que nao diz ao operador que parou: "
+                + ast.unparse(h.type or "")) 
 
 
 # ==========================================================================

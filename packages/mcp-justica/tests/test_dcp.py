@@ -1736,11 +1736,41 @@ def test_o_caminho_reencontra_o_portal_a_cada_fronteira():
 
     from justica_mcp import portal
 
-    fonte = fonte_da_consulta()
-    assert fonte.count("reencontrar_o_portal(pagina") == 2
-    # A primeira vem antes de a tela de perfil ser olhada.
-    assert fonte.index("reencontrar_o_portal(pagina") < fonte.index(
-        "if na_tela_de_perfil(pagina):")
+    import ast
+    import textwrap
+
+    # A REGRA, e nao o numero de fronteiras. Ate 04/11/2026 este teste CONTAVA
+    # duas ocorrencias, que era como se dizia "nas duas fronteiras" quando
+    # havia duas. A escolha tardia do perfil criou uma terceira fronteira, que
+    # tambem reencontra o portal, e a contagem acusou algo que estava certo.
+    #
+    # O que importa e que TODA escolha de perfil seja seguida de um
+    # reencontro: e depois dela que o portal troca de janela, e foi carregar a
+    # pagina entre passos o defeito que este teste existe para impedir.
+    #
+    # Conferido por LINHA, e nao por vizinhanca: o reencontro pode estar
+    # dentro do mesmo `try` da escolha, e olhar so os irmaos nao o veria.
+    arvore = ast.parse(textwrap.dedent(inspect.getsource(portal._consultar_dcp)))
+    chamadas = [n for n in ast.walk(arvore) if isinstance(n, ast.Call)]
+    escolhas = [n.lineno for n in chamadas
+                if ast.unparse(n.func).endswith("escolher_perfil")]
+    reencontros = [n.lineno for n in chamadas
+                   if ast.unparse(n.func).endswith("reencontrar_o_portal")]
+
+    assert len(escolhas) >= 2, (
+        "o caminho do DCP precisa escolher o perfil na entrada E quando o "
+        "portal o pede tarde")
+    for onde in escolhas:
+        assert any(r > onde for r in reencontros), (
+            f"escolha de perfil na linha {onde} sem reencontrar o portal "
+            "depois dela")
+    # E a PRIMEIRA vem antes de a tela de perfil ser olhada: perguntar "e a
+    # tela de perfil?" na janela errada responde "nao" com confianca.
+    olhadas = [n.lineno for n in chamadas
+               if ast.unparse(n.func).endswith("na_tela_de_perfil")]
+    assert olhadas, "ninguem mais confere a tela de perfil"
+    assert min(reencontros) < min(olhadas), (
+        "a tela de perfil foi olhada antes de o portal ser reencontrado")
 
 
 # ==========================================================================
@@ -11476,3 +11506,81 @@ def test_a_escada_aceita_o_teto_na_propria_opcao():
 
     fonte = inspect.getsource(portal._consultar_dcp)
     assert 'escolha.startswith("cascata:")' in fonte
+
+
+# ==========================================================================
+# O portal pede o TIPO DE USUARIO depois de abrir o painel
+#
+# Visto em campo em 04/11/2026, no acervo do operador, com a autenticacao ja
+# paga:
+#
+#   Tela do portal: https://www3.tjrj.jus.br/portalservicos/#/dashboard
+#   [PAROU] O menu #CONSULTAS nao esta na tela
+#           (https://www3.tjrj.jus.br/portalservicos/#/usuarios/alterar-perfil)
+#
+# A tela estava em `#/dashboard` quando o programa perguntou "e a tela de
+# perfil?". Nao era. Ele seguiu para a busca e, nesse meio-tempo, o portal
+# navegou para `alterar-perfil`. A verificacao era feita UMA VEZ, e foi feita
+# cedo demais.
+#
+# O proprio programa descreveu o defeito e parou: a recusa de
+# `abrir_consulta_pelo_menu` ja diz "se o endereco ainda for
+# /usuarios/alterar-perfil, a escolha do perfil e que nao chegou ao fim".
+# ==========================================================================
+
+
+def test_o_perfil_pedido_tarde_e_escolhido_em_vez_de_derrubar_a_consulta():
+    import inspect
+
+    from justica_mcp import portal
+
+    import ast
+    import textwrap
+
+    # Pela ARVORE: o que importa e que o tratamento da recusa da busca
+    # confira o perfil, escolha-o e BUSQUE DE NOVO. Procurar texto antes e
+    # depois de uma grafia erraria assim que a chamada mudasse de forma.
+    arvore = ast.parse(textwrap.dedent(inspect.getsource(portal._consultar_dcp)))
+    tratamentos = []
+    for no in ast.walk(arvore):
+        if not isinstance(no, ast.Try):
+            continue
+        if not any("buscar_dcp" in ast.unparse(x) for x in no.body):
+            continue
+        tratamentos.extend(no.handlers)
+    assert tratamentos, "a busca do DCP deixou de ser protegida"
+
+    cuida_do_perfil = [h for h in tratamentos
+                       if "na_tela_de_perfil" in ast.unparse(h)]
+    assert cuida_do_perfil, (
+        "a recusa da busca nao pode ser o fim quando a tela virou a do perfil")
+    corpo = ast.unparse(cuida_do_perfil[0])
+    assert "escolher_perfil(" in corpo
+    assert "buscar_dcp(" in corpo, "o perfil foi escolhido e ninguem buscou"
+
+
+def test_escolher_o_perfil_tarde_nao_gasta_credencial():
+    """A sessao continua aberta: o que falta e uma escolha na tela, nao uma
+    autenticacao."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._consultar_dcp)
+    trecho = fonte.split("pediu o TIPO DE USUARIO DEPOIS")[1][:900]
+    assert "Sem novo login" in trecho
+    for proibido in ("autenticar(", "pwdSenha", "txtUsuario", "#senha"):
+        assert proibido not in trecho, (
+            f"a segunda chance do perfil nao pode encostar em {proibido!r}")
+
+
+def test_a_recusa_da_busca_sobrevive_quando_o_perfil_tardio_tambem_falha():
+    """A primeira recusa descreve a tela onde a consulta realmente travou.
+    Deixar a segunda tomar o lugar dela trocaria o diagnostico certo por um
+    generico, que foi o defeito que a suite pegou hoje no 7.4."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._consultar_dcp)
+    assert "O QUE A TELA DIZIA ANTES DE O PERFIL SER ESCOLHIDO" in fonte
