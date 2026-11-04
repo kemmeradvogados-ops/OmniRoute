@@ -629,8 +629,29 @@ def registrar(mcp: Any) -> None:
         como `nao_suportado` ou `nao_implementado`, diga isso em vez de tentar
         contornar por outro caminho.
         """
+        # A VERSAO E LIDA, NAO DIGITADA.
+        #
+        # Ate 04/11/2026 esta linha era a cadeia literal
+        # "0.1.0 (somente leitura; ...)". Ela nunca mudou e nunca mudaria
+        # sozinha, e o advogado perguntou a versao por aqui durante dias
+        # recebendo 0.1.0 de uma instalacao que era 0.9.9. Com isso nenhuma
+        # das auditorias conseguia dizer qual codigo estava rodando.
+        #
+        # O proprio projeto ja tinha a resposta: `core/versao.py`, escrito em
+        # 26/10/2026 depois de um episodio igual, com a frase que vale aqui,
+        # "dois numeros de versao que discordam sao pior do que nenhum,
+        # porque cada um parece certo sozinho". So a linha de comando o usava.
+        #
+        # O CAMINHO VAI JUNTO, e nao e enfeite: foi ele que, naquele episodio,
+        # separou "a versao esta velha" de "ha duas instalacoes e voce
+        # atualizou a outra", que era o caso real.
+        from .core.versao import onde_esta_o_codigo, versao_instalada
+
         return _json({
-            "versao": "0.1.0 (somente leitura; acesso autenticado disponivel para dcp e eproc)",
+            "versao": versao_instalada(),
+            "codigo_rodando_de": str(onde_esta_o_codigo() or "desconhecido"),
+            "acesso": ("somente leitura; acesso autenticado disponivel para "
+                       "dcp e eproc"),
             "adaptadores": matriz_serializavel(),
             "datajud_configurado": _datajud.configurado,
         })

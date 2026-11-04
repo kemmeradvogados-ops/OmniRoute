@@ -71,3 +71,101 @@ def test_o_ambiente_mostra_versao_e_caminho():
 
 def test_onde_esta_o_codigo_aponta_para_o_pacote():
     assert onde_esta_o_codigo().name == "justica_mcp"
+
+
+# ==========================================================================
+# Nenhum numero de versao digitado a mao
+#
+# 04/11/2026. O advogado perguntou a versao pela extensao durante dias e
+# recebeu 0.1.0 de uma instalacao que era 0.9.9. Eram QUATRO fontes, e duas
+# mentiam:
+#
+#   conector/manifest.json        0.9.9   (a que vale)
+#   pyproject.toml                0.9.9
+#   src/justica_mcp/__init__.py   0.1.0   <- literal parado
+#   tools.py, justica_capacidades 0.1.0   <- literal parado, e o que ele lia
+#
+# Com isso nenhuma auditoria conseguia dizer qual codigo estava rodando, e eu
+# cheguei a afirmar que a instalacao dele era a 0.9.5 apoiado nesse numero.
+#
+# Havia teste ligando manifesto e pyproject desde 26/10. Nao havia nenhum
+# sobre os outros dois, que foram justamente os que mentiram.
+# ==========================================================================
+
+
+def _versao_do_manifesto() -> str:
+    import json
+
+    return json.loads(caminho_do_manifesto().read_text(encoding="utf-8"))["version"]
+
+
+def test_a_versao_do_pacote_nao_e_um_literal():
+    """`justica_mcp.__version__` vem do manifesto, como todo o resto."""
+    import justica_mcp
+
+    assert justica_mcp.__version__ == _versao_do_manifesto()
+
+
+def test_a_ferramenta_de_capacidades_nao_tem_versao_digitada():
+    """O que o advogado consulta precisa ser lido, e nao recitado.
+
+    Este teste guarda a REGRA, nao a grafia: procura qualquer coisa com cara
+    de numero de versao dentro da ferramenta. Literal novo, com outro numero,
+    cai aqui do mesmo jeito.
+    """
+    import inspect
+    import re
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    trecho = fonte.split("async def justica_capacidades")[1].split("@mcp.tool")[0]
+    # Comentarios contam a historia e citam os numeros de proposito.
+    codigo = "\n".join(l for l in trecho.splitlines()
+                       if not l.strip().startswith("#"))
+    digitados = re.findall(r'["\']\s*\d+\.\d+\.\d+', codigo)
+    assert not digitados, (
+        f"versao digitada na ferramenta de capacidades: {digitados}. "
+        "Use versao_instalada(), que le o manifesto.")
+    assert "versao_instalada()" in codigo
+
+
+def test_as_capacidades_dizem_tambem_de_onde_o_codigo_roda():
+    """O caminho separa "a versao esta velha" de "ha duas instalacoes e voce
+    atualizou a outra", que foi o caso real de 26/10/2026."""
+    import inspect
+
+    from justica_mcp import tools
+
+    fonte = inspect.getsource(tools.registrar)
+    trecho = fonte.split("async def justica_capacidades")[1].split("@mcp.tool")[0]
+    assert "onde_esta_o_codigo()" in trecho
+
+
+def test_todo_modulo_com_main_ou_e_executavel_ou_nao_finge_ser():
+    """04/11/2026: `python -m justica_mcp.cli ambiente` voltou VAZIO, com
+    codigo de sucesso.
+
+    Sem a guarda `__main__`, o modulo e importado, `main` e definida e nada a
+    chama. Para quem roda, e indistinguivel de um comando que funcionou e nao
+    tinha o que mostrar, e foi essa a leitura do advogado. Programa que cala
+    onde devia falar e o defeito que a auditoria de 30/10/2026 apontou em
+    outro canto do codigo.
+    """
+    import ast
+
+    raiz = caminho_do_manifesto().parent.parent / "src" / "justica_mcp"
+    mudos = []
+    for caminho in sorted(raiz.rglob("*.py")):
+        fonte = caminho.read_text(encoding="utf-8")
+        arvore = ast.parse(fonte)
+        tem_main = any(
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "main"
+            for n in arvore.body)
+        if not tem_main:
+            continue
+        if "__main__" not in fonte:
+            mudos.append(caminho.name)
+    assert not mudos, (
+        f"modulo(s) com main() e sem guarda __main__: {mudos}. "
+        "`python -m` neles sai calado e com codigo de sucesso.")

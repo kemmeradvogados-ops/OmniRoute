@@ -600,3 +600,17 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
     return 2
+
+
+# EXECUTAVEL DE VERDADE, e por que isto estava faltando.
+#
+# Em 04/11/2026 o advogado rodou `python -m justica_mcp.cli ambiente` e o
+# prompt voltou VAZIO, com codigo de sucesso. Sem esta guarda, o modulo e
+# importado, `main` e definida e nada a chama: para quem roda, e
+# indistinguivel de um comando que funcionou e nao tinha o que mostrar. Foi
+# essa a leitura dele, e era a leitura razoavel.
+#
+# Programa que cala onde devia falar e o mesmo defeito que a auditoria de
+# 30/10/2026 apontou em outro canto do codigo. Duas linhas resolvem.
+if __name__ == "__main__":
+    raise SystemExit(main())
