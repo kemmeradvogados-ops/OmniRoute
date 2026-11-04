@@ -342,3 +342,206 @@ def test_o_teto_do_servidor_fica_abaixo_do_teto_do_cliente():
     from justica_mcp.tools import TETO_DA_RESPOSTA_AO_CLIENTE
 
     assert TETO_DA_RESPOSTA_AO_CLIENTE < 60
+
+
+# ==========================================================================
+# A auditoria nao pode guardar so o que deu certo
+#
+# Auditoria de 03/11/2026, feita pelo proprio advogado com
+# `justica_auditoria_recente`. Ela registrou, na secao "o que o registro NAO
+# mostra":
+#
+#   Nenhuma chamada justica_publicacoes_por_oab consta nos ultimos 100
+#   registros, nem erro.
+#   Os erros 429 do DataJud tambem nao aparecem como registros.
+#
+# A causa nao era a falha acontecer antes do registro: era o registro nunca
+# ser escrito. Doze das vinte ferramentas anotavam o SUCESSO e, no `except`,
+# faziam apenas `return _tratar(exc)`.
+#
+# Com credencial compartilhada do escritorio, registro que so guarda o que deu
+# certo nao e auditoria: e curriculo. E a propria mensagem generica de erro
+# manda "consulte a auditoria local para o contexto da chamada", isto e, manda
+# o leitor a uma gaveta que, para aquele erro, esta vazia.
+# ==========================================================================
+
+
+def _ferramentas_do_conector():
+    """Cada ferramenta `justica_*` com o que ela anota, lida da arvore.
+
+    Pela arvore, e nao por uma lista escrita a mao: ferramenta nova nasce
+    coberta por este guarda sem ninguem lembrar de inscreve-la.
+    """
+    import ast as _ast
+
+    fonte = (_Path(__file__).resolve().parent.parent
+             / "src" / "justica_mcp" / "tools.py").read_text()
+    arvore = _ast.parse(fonte)
+
+    # QUEM ALCANCA A AUDITORIA, e nao quem se chama `registrar`.
+    #
+    # A primeira versao deste guarda, escrita minutos antes da correcao,
+    # procurava uma chamada cujo nome terminasse em "registrar", e por isso
+    # continuou acusando as doze depois de consertadas: elas passaram a anotar
+    # por `_falhar` e `_anotar_falha`. Guardar a grafia e guardar menos do que
+    # a regra, e e o erro que mais se repetiu neste projeto.
+    #
+    # Aqui o conjunto e calculado por ponto fixo: comeca em quem chama
+    # `.registrar` e cresce com quem chama alguem ja dentro dele. Auxiliar
+    # novo com outro nome entra sozinho.
+    funcoes = {n.name: n for n in _ast.walk(arvore)
+               if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    def _chamados(no) -> set:
+        return {_ast.unparse(c.func).split(".")[-1] for c in _ast.walk(no)
+                if isinstance(c, _ast.Call)}
+
+    alcancam = {nome for nome, no in funcoes.items()
+                if any(_ast.unparse(c.func).endswith(".registrar")
+                       for c in _ast.walk(no) if isinstance(c, _ast.Call))}
+    while True:
+        cresceu = {nome for nome, no in funcoes.items()
+                   if _chamados(no) & alcancam}
+        if cresceu <= alcancam:
+            break
+        alcancam |= cresceu
+
+    def anota(no) -> bool:
+        for n in _ast.walk(no):
+            if not isinstance(n, _ast.Call):
+                continue
+            alvo = _ast.unparse(n.func)
+            if alvo.endswith(".registrar") or alvo.lstrip("_") in {
+                    a.lstrip("_") for a in alcancam}:
+                return True
+        return False
+
+    achadas = {}
+    for no in _ast.walk(arvore):
+        if not isinstance(no, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        if not no.name.startswith("justica_"):
+            continue
+        tem_except = False
+        anota_erro = False
+        for t in _ast.walk(no):
+            if isinstance(t, _ast.Try):
+                for h in t.handlers:
+                    tem_except = True
+                    if any(anota(s) for s in h.body):
+                        anota_erro = True
+        achadas[no.name] = {
+            "anota_sucesso": anota(no),
+            "tem_except": tem_except,
+            "anota_erro": anota_erro,
+        }
+    return achadas
+
+
+def test_ferramenta_que_anota_o_sucesso_tambem_anota_o_erro():
+    """O guarda do achado de 03/11/2026.
+
+    Ferramenta que nao anota nada, como `justica_capacidades`, esta fora: ela
+    nao toca portal nem credencial e nao ha o que auditar. O que este teste
+    proibe e a assimetria: anotar quando deu certo e calar quando deu errado.
+    """
+    mudas = sorted(
+        nome for nome, como in _ferramentas_do_conector().items()
+        if como["anota_sucesso"] and como["tem_except"] and not como["anota_erro"]
+    )
+    assert not mudas, (
+        f"{len(mudas)} ferramenta(s) anotam o sucesso e calam o erro: {mudas}. "
+        "Com credencial compartilhada, auditoria que so guarda o que deu certo "
+        "nao e auditoria.")
+
+
+def test_o_conselho_de_consultar_a_auditoria_tem_o_que_consultar():
+    """A mensagem generica manda consultar a auditoria local.
+
+    Ela so pode mandar isso enquanto TODAS as ferramentas que falham
+    escreverem la. Mandar o leitor a uma gaveta vazia e pior do que nao
+    mandar: ele vai, nao acha, e conclui que a chamada nunca aconteceu.
+    """
+    import inspect
+
+    from justica_mcp import tools
+
+    conselho = inspect.getsource(tools._tratar)
+    if "auditoria local" not in conselho:
+        return
+    como = _ferramentas_do_conector()
+    calam = [nome for nome, c in como.items()
+             if c["tem_except"] and c["anota_sucesso"] and not c["anota_erro"]]
+    assert not calam, (
+        "a mensagem generica promete contexto na auditoria, e estas "
+        f"ferramentas nao escrevem nada la quando falham: {sorted(calam)}")
+
+
+# Numero ficticio, ja declarado em NUMEROS_DECLARADOS acima.
+PROCESSO_DE_TESTE = "0000002-98.2019.8.19.0001"
+
+
+def test_a_falha_de_uma_ferramenta_chega_mesmo_ao_banco(tmp_path, monkeypatch):
+    """O guarda acima le a arvore; este corre a ferramenta de verdade.
+
+    Arvore prova que a chamada existe. So a execucao prova que a linha chega
+    ao banco com acao, solicitante e detalhe legiveis, que e o que o advogado
+    le em `justica_auditoria_recente`.
+    """
+    import asyncio
+
+    from justica_mcp import tools
+    from justica_mcp.core.estado import Estado
+
+    estado = Estado(tmp_path / "auditoria.sqlite3")
+    monkeypatch.setattr(tools, "_estado", estado)
+
+    async def _explodir(*_a, **_k):
+        raise RuntimeError("429 Too Many Requests")
+
+    monkeypatch.setattr(tools._datajud, "listar_andamentos", _explodir)
+
+    capturadas = {}
+
+    class _Mcp:
+        def tool(self, *, name, annotations=None):
+            def guardar(funcao):
+                capturadas[name] = funcao
+                return funcao
+            return guardar
+
+    tools.registrar(_Mcp())
+    ferramenta = capturadas["justica_listar_andamentos"]
+    entrada = tools.AndamentosInput(numero=PROCESSO_DE_TESTE,
+                                    solicitante="auditoria-do-teste")
+    resposta = asyncio.run(ferramenta(entrada))
+
+    assert "erro_interno" in resposta, "o agente continua recebendo a recusa"
+    registros = estado.auditoria_recente(10)
+    assert registros, "a falha nao chegou ao banco"
+    linha = registros[0]
+    assert linha["acao"] == "listar_andamentos"
+    assert linha["resultado"] == "erro"
+    assert linha["solicitante"] == "auditoria-do-teste"
+    assert "429" in (linha["detalhe"] or ""), (
+        "o detalhe precisa dizer o que aconteceu, e nao so o tipo da excecao")
+
+
+def test_anotar_a_falha_nunca_derruba_a_resposta(monkeypatch):
+    """A licao do defeito que durou o projeto inteiro.
+
+    Ate 01/11/2026 a consulta de publicacoes morria na linha do registro de
+    auditoria, DEPOIS de os dados terem chegado. Agora que o registro entrou
+    tambem no caminho do erro, ele nao pode repetir a historia: anotador que
+    falha nao pode trocar a recusa util por um erro do proprio anotador.
+    """
+    from justica_mcp import tools
+
+    class _BancoQuebrado:
+        def registrar(self, **_k):
+            raise OSError("disco cheio")
+
+    monkeypatch.setattr(tools, "_estado", _BancoQuebrado())
+    resposta = tools._falhar("listar_andamentos", LookupError("nada aqui"),
+                             numero=PROCESSO_DE_TESTE)
+    assert "nao_encontrado" in resposta

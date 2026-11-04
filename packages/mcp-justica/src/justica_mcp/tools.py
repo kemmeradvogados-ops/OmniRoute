@@ -38,6 +38,48 @@ def _erro(mensagem: str, codigo: str, sugestao: Optional[str] = None) -> str:
     return _json(Erro(erro=mensagem, codigo=codigo, sugestao=sugestao).model_dump(exclude_none=True))
 
 
+def _anotar_falha(acao: str, exc: BaseException, **campos) -> None:
+    """Escreve a falha na auditoria. NUNCA levanta, aconteca o que acontecer.
+
+    POR QUE ESTA FUNCAO EXISTE.
+
+    A auditoria de 03/11/2026, feita pelo proprio advogado, registrou numa
+    secao chamada "o que o registro NAO mostra" que nem a falha repetida do
+    `justica_publicacoes_por_oab` nem os `429` do DataJud apareciam em
+    registro nenhum. Nao apareciam porque nunca foram escritos: doze das vinte
+    ferramentas anotavam o sucesso e, no `except`, apenas devolviam a recusa.
+
+    Com credencial compartilhada do escritorio, registro que guarda so o que
+    deu certo nao e auditoria: e curriculo. Pior, a mensagem generica de erro
+    manda "consulte a auditoria local para o contexto da chamada", isto e,
+    manda o leitor a uma gaveta que, para aquele erro, esta vazia.
+
+    POR QUE NUNCA LEVANTA.
+
+    Esta e a segunda vez que o registro de auditoria entra no caminho de uma
+    resposta, e a primeira custou o projeto inteiro: ate 01/11/2026 a consulta
+    de publicacoes morria com `KeyError: 'total'` na linha da anotacao, DEPOIS
+    de os dados terem chegado inteiros, e a ferramenta que a documentacao
+    chama de espinha dorsal do monitoramento nunca funcionou. Ver
+    `rotulo_do_total`.
+
+    Anotar importa muito. Nunca ao ponto de trocar a recusa util do agente por
+    um erro do proprio anotador. Aqui a falha de gravar e silenciosa de
+    proposito: o agente ja esta recebendo a recusa de que precisa.
+    """
+    try:
+        _estado.registrar(acao=acao, resultado="erro",
+                          detalhe=detalhe_do_erro(exc), **campos)
+    except Exception:
+        pass
+
+
+def _falhar(acao: str, exc: Exception, **campos) -> str:
+    """Anota a falha e devolve a recusa acionavel ao agente, nesta ordem."""
+    _anotar_falha(acao, exc, **campos)
+    return _tratar(exc)
+
+
 def _tratar(exc: Exception) -> str:
     """Erro acionavel: o agente precisa saber o proximo passo, nao so que falhou."""
     if isinstance(exc, NumeroCNJInvalido):
@@ -449,7 +491,8 @@ def registrar(mcp: Any) -> None:
                               numero=numero.formatado, resultado=resolvido.origem_da_resolucao)
             return _json(resolvido.model_dump())
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("resolver_sistema", exc, solicitante=params.solicitante,
+                            numero=params.numero)
 
     @mcp.tool(name="justica_consultar_processo", annotations=somente_leitura("Consultar processo"))
     async def justica_consultar_processo(params: NumeroInput) -> str:
@@ -492,7 +535,8 @@ def registrar(mcp: Any) -> None:
                               tribunal=tribunal.codigo, numero=numero.formatado, resultado="ok")
             return _json(dados)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("listar_andamentos", exc, solicitante=params.solicitante,
+                            numero=params.numero)
 
     @mcp.tool(name="justica_publicacoes_por_oab", annotations=somente_leitura("Publicacoes por inscricao na Ordem"))
     async def justica_publicacoes_por_oab(params: PublicacoesOabInput) -> str:
@@ -517,7 +561,8 @@ def registrar(mcp: Any) -> None:
                               resultado=rotulo_do_total(dados))
             return _json(dados)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("publicacoes_por_oab", exc, solicitante=params.solicitante,
+                            tribunal=params.sigla_tribunal)
 
     @mcp.tool(name="justica_publicacoes_por_processo", annotations=somente_leitura("Publicacoes do processo"))
     async def justica_publicacoes_por_processo(params: NumeroInput) -> str:
@@ -530,7 +575,8 @@ def registrar(mcp: Any) -> None:
                               tribunal=tribunal.codigo, numero=numero.formatado, resultado="ok")
             return _json(dados)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("publicacoes_por_processo", exc,
+                            solicitante=params.solicitante, numero=params.numero)
 
     @mcp.tool(name="justica_verificar_novos_andamentos", annotations=somente_leitura("Verificar novidades"))
     async def justica_verificar_novos_andamentos(params: NumeroInput) -> str:
@@ -572,7 +618,8 @@ def registrar(mcp: Any) -> None:
                               resultado=f"{resultado.get('quantidade_novos', 0)} novo(s)")
             return _json(resultado)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("verificar_novos_andamentos", exc,
+                            solicitante=params.solicitante, numero=params.numero)
 
     @mcp.tool(name="justica_capacidades", annotations=somente_leitura("Capacidades declaradas"))
     async def justica_capacidades() -> str:
@@ -826,7 +873,8 @@ def registrar(mcp: Any) -> None:
                               resultado=f"{len(dados['pecas'])} peca(s)")
             return _json(dados)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("pecas_do_processo", exc, solicitante=params.solicitante,
+                            numero=params.numero)
 
     @mcp.tool(name="justica_cobertura_do_processo",
               annotations=somente_leitura("Cobertura da pasta do processo"))
@@ -908,7 +956,8 @@ def registrar(mcp: Any) -> None:
                 resultado=f"{len(faltam)} faixa(s) faltando")
             return _json(dados)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("cobertura_do_processo", exc, solicitante=params.solicitante,
+                            numero=params.numero)
 
     @mcp.tool(name="justica_consulta_gravada",
               annotations=somente_leitura("Ultima consulta ja gravada"))
@@ -961,7 +1010,8 @@ def registrar(mcp: Any) -> None:
                 resultado=f"gravada em {quando}")
             return _json(dados)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("consulta_gravada", exc, solicitante=params.solicitante,
+                            numero=params.numero)
 
     @mcp.tool(name="justica_processos_guardados",
               annotations=somente_leitura("Processos na pasta de copias"))
@@ -995,7 +1045,7 @@ def registrar(mcp: Any) -> None:
                 "processos": cortados,
             })
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("processos_guardados", exc)
 
     @mcp.tool(name="justica_ler_peca",
               annotations=somente_leitura("Ler o texto de uma peca"))
@@ -1037,7 +1087,8 @@ def registrar(mcp: Any) -> None:
                            f"{dados.get('caracteres', 0)} caractere(s)"))
             return _json(dados)
         except Exception as exc:
-            return _tratar(exc)
+            return _falhar("ler_peca", exc, solicitante=params.solicitante,
+                            numero=params.numero)
 
     @mcp.tool(name="justica_acesso_autenticado_situacao",
               annotations=somente_leitura("Situacao do acesso autenticado"))
@@ -1156,8 +1207,12 @@ def registrar(mcp: Any) -> None:
                 )
             tribunal = _tribunal_de(numeros[0].chave_segmento_tribunal)
         except NumeroCNJInvalido as exc:
+            _anotar_falha("sondar_sistemas", exc,
+                          solicitante=params.solicitante)
             return _erro(str(exc), "numero_invalido")
         except TribunalForaDoEscopo as exc:
+            _anotar_falha("sondar_sistemas", exc,
+                          solicitante=params.solicitante)
             return _erro(str(exc), "tribunal_fora_do_escopo")
 
         configurados = sorted(
@@ -1185,6 +1240,9 @@ def registrar(mcp: Any) -> None:
         try:
             LimiteTentativas.do_ambiente(_estado).exigir_folga()
         except TetoDeTentativasAtingido as exc:
+            _anotar_falha("sondar_sistemas", exc,
+                          solicitante=params.solicitante,
+                          tribunal=tribunal.codigo)
             return _erro(str(exc), "teto_de_tentativas")
 
         argumentos = ["sondar", "--tribunal", tribunal.codigo,
@@ -1306,10 +1364,19 @@ def registrar(mcp: Any) -> None:
                     )
                 outros.append(outro)
         except NumeroCNJInvalido as exc:
+            _anotar_falha("baixar_autos", exc,
+                          solicitante=params.solicitante,
+                          numero=params.numero)
             return _erro(str(exc), "numero_invalido")
         except TribunalForaDoEscopo as exc:
+            _anotar_falha("baixar_autos", exc,
+                          solicitante=params.solicitante,
+                          numero=params.numero)
             return _erro(str(exc), "tribunal_fora_do_escopo")
         except PortalNaoConfigurado as exc:
+            _anotar_falha("baixar_autos", exc,
+                          solicitante=params.solicitante,
+                          numero=params.numero)
             return _erro(str(exc), "portal_nao_configurado",
                          "O endereco do portal mora no arquivo de configuracao "
                          "da banca, e nao em parametro de ferramenta.")
@@ -1331,6 +1398,9 @@ def registrar(mcp: Any) -> None:
         try:
             LimiteTentativas.do_ambiente(_estado).exigir_folga()
         except TetoDeTentativasAtingido as exc:
+            _anotar_falha("baixar_autos", exc,
+                          solicitante=params.solicitante,
+                          tribunal=tribunal.codigo, numero=numero.formatado)
             return _erro(str(exc), "teto_de_tentativas")
 
         argumentos = [
