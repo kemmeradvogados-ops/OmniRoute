@@ -8739,16 +8739,52 @@ def test_arquivo_que_nao_abre_nao_derruba_o_percurso(tmp_path, monkeypatch):
 
 
 def test_o_percurso_nao_pula_peca_por_inferencia():
-    """Guarda de fonte. Pular por faixa inferida poria falta INVISIVEL na
-    pasta, porque a peca anterior cobre o buraco."""
+    """Peca contida e BAIXADA, salvo opcao expressa do advogado.
+
+    Pular por faixa inferida poria falta INVISIVEL na pasta, porque a peca
+    anterior cobre o buraco, e falta invisivel e o pior resultado possivel
+    deste programa.
+
+    Ate 04/11/2026 este teste exigia que nao houvesse `continue` nenhum no
+    bloco, e quebrou quando a opcao `sem-contidos` voltou (secao 7.5 da
+    auditoria). A regra nao mudou: por OMISSAO nada e pulado. O que mudou e
+    que agora existe um caminho de pulo, e ele precisa estar guardado por
+    duas condicoes ao mesmo tempo, a opcao expressa e a faixa inteira ja em
+    disco. Guardar "nenhum continue" era guardar menos do que a regra.
+    """
+    import ast
     import inspect
+    import textwrap
 
     from justica_mcp import dcp
 
-    fonte = inspect.getsource(dcp.baixar_um_a_um)
-    trecho = fonte.split("if inicio <= coberto_ate:")[1].split("try:")[0]
-    assert "continue" not in trecho, "avisa, nao pula"
-    assert "repetidas.append" in trecho
+    fonte = textwrap.dedent(inspect.getsource(dcp.baixar_um_a_um))
+    arvore = ast.parse(fonte)
+
+    # Por omissao nunca se pula.
+    assert inspect.signature(dcp.baixar_um_a_um).parameters[
+        "pular_contidos"].default is False
+
+    bloco = None
+    for no in ast.walk(arvore):
+        if isinstance(no, ast.If) and "inicio <= coberto_ate" in ast.unparse(no.test):
+            bloco = no
+            break
+    assert bloco is not None, "o bloco da peca contida sumiu"
+    assert "repetidas.append" in ast.unparse(bloco)
+
+    saidas = [n for n in ast.walk(bloco) if isinstance(n, ast.Continue)]
+    for saida in saidas:
+        guardas = [n for n in ast.walk(bloco)
+                   if isinstance(n, ast.If)
+                   and saida in list(ast.walk(n))
+                   and n is not bloco]
+        condicoes = " ".join(ast.unparse(g.test) for g in guardas)
+        assert "pular_contidos" in condicoes, (
+            "pulo sem a opcao expressa do advogado: " + condicoes)
+        assert "faixa_toda_coberta" in condicoes, (
+            "pulo sem conferir a faixa INTEIRA; foi esse o defeito de 30/10: "
+            + condicoes)
 
 
 # ==========================================================================
@@ -11184,3 +11220,110 @@ def test_a_recusa_que_vale_e_a_primeira_quando_reabrir_tambem_falha(monkeypatch)
         "recuperacao")
     assert "nao recarregou" in recado, (
         "e a tentativa de recuperacao tambem precisa aparecer")
+
+
+# ==========================================================================
+# sem-contidos: pular so quando a FAIXA INTEIRA ja esta em disco
+#
+# Auditoria de 29/10 a 01/11/2026, secao 7.5. Visto em campo:
+#
+#   30/184 pagina 30: cai dentro do que ja veio (coberto ate 40). PULADO
+#
+# e o documento ia ate a pagina 218, porque o proximo inicio no indice era
+# 219. Pulou-se uma peca de 189 folhas por causa das 11 primeiras. A
+# "pagina 2" que reaparece no fim do indice foi pulada pela mesma razao,
+# sendo que a pagina 2 nunca tinha vindo.
+#
+# Estar coberto NO COMECO nao e estar coberto.
+# ==========================================================================
+
+
+def test_faixa_coberta_so_quando_toda_ela_esta_em_disco():
+    from justica_mcp.dcp import faixa_toda_coberta
+
+    assert faixa_toda_coberta([(30, 218)], 30, 218) is True
+    # O CASO DE 30/10: coberto ate 40, faixa vai ate 218.
+    assert faixa_toda_coberta([(1, 40)], 30, 218) is False
+    # Duas pecas emendadas cobrem juntas o que nenhuma cobre sozinha.
+    assert faixa_toda_coberta([(30, 120), (121, 218)], 30, 218) is True
+    # Um buraco no meio nao e cobertura.
+    assert faixa_toda_coberta([(30, 120), (122, 218)], 30, 218) is False
+    # Nada em disco.
+    assert faixa_toda_coberta([], 30, 218) is False
+
+
+def test_sem_faixa_nao_se_pula():
+    """A duvida pesa a favor de baixar: falta invisivel na pasta e o pior
+    resultado possivel deste programa."""
+    from justica_mcp.dcp import faixa_toda_coberta, proximo_inicio_do_indice
+
+    # Ultimo documento do indice: nao ha proximo inicio.
+    assert proximo_inicio_do_indice([1, 30, 219], 3) is None
+    # Faixa invertida nao e faixa.
+    assert faixa_toda_coberta([(1, 999)], 219, 2) is False
+
+
+def test_o_proximo_inicio_segue_a_ORDEM_do_indice(capsys):
+    """Indice fora de ordem e onde o defeito aparecia.
+
+    SUGESTAO Nº. 12 DA AUDITORIA DE 30/10/2026, nas palavras dela: "teste de
+    regressao para o sem-contidos com indice fora de ordem (1..30, 219, 2,
+    220...), conferindo que a faixa 30 a 218 e baixada".
+    """
+    from justica_mcp.dcp import proximo_inicio_do_indice
+
+    indice = [1, 30, 219, 2, 220]
+    # O documento da pagina 30 e o segundo: o seguinte comeca em 219.
+    assert proximo_inicio_do_indice(indice, 2) == 219
+    # O da pagina 219 e o terceiro, e o seguinte comeca ANTES dele: sem faixa.
+    assert proximo_inicio_do_indice(indice, 3) is None
+    # O da pagina 2 e o quarto, e o seguinte comeca em 220.
+    assert proximo_inicio_do_indice(indice, 4) == 220
+
+
+def test_a_peca_de_189_folhas_nao_e_mais_pulada_por_causa_das_11_primeiras():
+    """O caso exato de 30/10/2026, montado com os numeros do relato."""
+    from justica_mcp.dcp import faixa_toda_coberta, proximo_inicio_do_indice
+
+    indice = [1, 30, 219]
+    em_disco = [(1, 40)]          # o que tinha vindo: coberto ate 40
+    seguinte = proximo_inicio_do_indice(indice, 2)
+    assert seguinte == 219
+    ate_onde = seguinte - 1
+    assert ate_onde == 218
+    assert faixa_toda_coberta(em_disco, 30, ate_onde) is False, (
+        "a peca das paginas 30 a 218 nao pode ser pulada porque as 11 "
+        "primeiras ja vieram")
+
+
+def test_a_pagina_2_que_reaparece_no_fim_do_indice_e_baixada():
+    """Ela foi pulada em 30/10 porque 2 < 219, e nunca tinha vindo."""
+    from justica_mcp.dcp import faixa_toda_coberta, proximo_inicio_do_indice
+
+    indice = [1, 30, 219, 2, 220]
+    em_disco = [(1, 1), (30, 218), (219, 219)]
+    seguinte = proximo_inicio_do_indice(indice, 4)
+    assert seguinte == 220
+    assert faixa_toda_coberta(em_disco, 2, seguinte - 1) is False, (
+        "a pagina 2 nunca veio; a faixa 2 a 219 nao esta toda em disco")
+
+
+def test_sem_contidos_e_opcao_e_nunca_o_padrao():
+    """Sem a opcao, peca contida e baixada assim mesmo. Falta invisivel na
+    pasta e o pior resultado possivel deste programa."""
+    import inspect
+
+    from justica_mcp import dcp
+
+    assinatura = inspect.signature(dcp.baixar_um_a_um)
+    assert assinatura.parameters["pular_contidos"].default is False
+
+
+def test_a_opcao_chega_pela_linha_de_comando():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._consultar_dcp)
+    assert "um-a-um-sem-contidos" in fonte
+    assert "pular_contidos=sem_contidos" in fonte

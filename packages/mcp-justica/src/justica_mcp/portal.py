@@ -7484,8 +7484,10 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
             arquivos = [baixar_uma_peca(
                 janela, guarda, pasta, numero.apenas_digitos,
                 int(alvo), prazo_do_arquivo)]
-        elif (escolha in ("um-a-um", "um a um", "umaum", "cada")
-              or escolha.startswith("um-a-um:")):
+        elif (escolha in ("um-a-um", "um a um", "umaum", "cada",
+                          "um-a-um-sem-contidos")
+              or escolha.startswith("um-a-um:")
+              or escolha.startswith("um-a-um-sem-contidos:")):
             # O unico tamanho que este portal entrega. Ver o bloco em
             # `baixar_um_a_um`: integra e lote de 25 documentos nao
             # vieram em 900s; um documento de 131 paginas veio, e em
@@ -7512,10 +7514,20 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
                           "documentos. Use 'um-a-um:400'.")
                     return 1
                 teto_do_percurso = int(pedido)
+            # OPCAO DO ADVOGADO, NUNCA O PADRAO. Sem ela, peca contida e
+            # baixada assim mesmo, porque a conteneza e inferida da faixa e
+            # falta invisivel na pasta e o pior resultado deste programa.
+            sem_contidos = escolha.startswith("um-a-um-sem-contidos")
+            if sem_contidos:
+                print("  Pecas contidas serao PULADAS, e so quando a faixa "
+                      "inteira estimada ja estiver em disco.")
+                print("  A conteneza e inferida da faixa, nao do conteudo: "
+                      "cada pulo sai nomeado para conferencia na leitura.")
             resposta = baixar_um_a_um(
                 janela, guarda, pasta, numero.apenas_digitos,
                 reabrir_o_visualizador, prazo_do_arquivo,
-                teto=teto_do_percurso, pular=paginas_a_pular)
+                teto=teto_do_percurso, pular=paginas_a_pular,
+                pular_contidos=sem_contidos)
             janela = resposta["janela"]
             arquivos = resposta["arquivos"]
             if resposta["pulados"]:

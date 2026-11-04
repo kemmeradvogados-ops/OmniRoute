@@ -2111,6 +2111,56 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
 # 08/10/2026, e sem pular o que ja esta em disco ela custaria tudo de novo.
 
 
+def faixa_toda_coberta(faixas: list, de: int, ate: int) -> bool:
+    """Todas as paginas de `de` ate `ate` ja estao em arquivo gravado?
+
+    SECAO 7.5 DA AUDITORIA DE 29/10 A 01/11/2026, e o ponto dela inteiro.
+
+    A opcao `sem-contidos` pulava a peca cujo INICIO caisse dentro do que ja
+    tinha vindo. Visto em campo:
+
+        30/184 pagina 30: cai dentro do que ja veio (coberto ate 40). PULADO
+
+    e o documento ia ate a pagina 218, porque o proximo inicio no indice era
+    219. Pulou-se uma peca de 189 folhas por causa das 11 primeiras. A
+    "pagina 2" que reaparece no fim do indice foi pulada pela mesma razao,
+    sendo que a pagina 2 nunca tinha vindo.
+
+    Estar coberto NO COMECO nao e estar coberto. So pular quando a faixa
+    inteira estiver em disco, e nao pular quando nao houver como estimar a
+    faixa, e o que separa economia de buraco invisivel na pasta. Buraco
+    invisivel e o pior resultado possivel deste programa: a pasta nao mostra
+    falta nenhuma porque a peca anterior cobre o comeco.
+    """
+    if ate < de:
+        return False
+    # Uniao das faixas, e nao "cabe em alguma": duas pecas emendadas cobrem
+    # juntas o que nenhuma delas cobre sozinha.
+    paginas = set()
+    for inicio, fim in faixas:
+        if fim >= inicio:
+            paginas.update(range(inicio, fim + 1))
+    return all(p in paginas for p in range(de, ate + 1))
+
+
+def proximo_inicio_do_indice(paginas: list, ordem: int) -> Optional[int]:
+    """A pagina inicial do documento SEGUINTE no indice, se der para saber.
+
+    Pela ORDEM do indice, nao pela ordenacao dos numeros: a auditoria de
+    30/10/2026 registrou indice fora de ordem (1..30, 219, 2, 220...), e e
+    justamente nele que o defeito aparecia.
+
+    Devolve `None` no ultimo documento e quando o seguinte comeca ANTES deste,
+    porque nos dois casos nao ha faixa a estimar. Sem faixa, nao se pula: a
+    duvida pesa a favor de baixar.
+    """
+    if ordem >= len(paginas):
+        return None
+    seguinte = paginas[ordem]
+    atual = paginas[ordem - 1]
+    return seguinte if seguinte > atual else None
+
+
 def ja_baixado(destino: Any, chave: str, inicio: int) -> Optional[str]:
     """O arquivo deste documento, se ja estiver em disco. O nome dele comeca
     por `<chave>-pagina<N>-`, e o fim vem do portal."""
@@ -2205,7 +2255,8 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
                    segundos: int = TETO_DO_DOWNLOAD,
                    segundos_do_indice: int = SEGUNDOS_DO_INDICE,
                    teto: int = TETO_DE_DOCUMENTOS_UM_A_UM,
-                   pular: Any = ()) -> dict:
+                   pular: Any = (),
+                   pular_contidos: bool = False) -> dict:
     """Baixa o processo inteiro, UM documento por vez.
 
     Devolve {"arquivos": [...], "pulados": [...], "falhas": [...],
@@ -2251,6 +2302,10 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
     coberto_ate = 0
     repetidas: list = []
     pulados_a_pedido: list = []
+    contidos_pulados: list = []
+    # As faixas REAIS do que esta em disco, medidas no proprio arquivo. Sem
+    # elas o "ja veio" seria so a pagina inicial, que foi o defeito do 7.5.
+    faixas_em_disco: list = []
 
     a_pular = {int(p) for p in (pular or ()) if str(p).isdigit()
                or isinstance(p, int)}
@@ -2273,8 +2328,9 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
             pulados.append(inicio)
             print(f"    {ordem}/{len(paginas)} pagina {inicio}: ja estava em "
                   "disco, pulado.")
-            coberto_ate = max(coberto_ate,
-                              _ate_onde_vai(pronto, inicio, coberto_ate))
+            alcance = _ate_onde_vai(pronto, inicio, coberto_ate)
+            coberto_ate = max(coberto_ate, alcance)
+            faixas_em_disco.append((inicio, max(alcance, inicio)))
             continue
 
         # PECA QUE CAI DENTRO DA ANTERIOR, e por que ela e baixada assim mesmo.
@@ -2295,9 +2351,45 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
         # com ela e o advogado.
         if inicio <= coberto_ate:
             repetidas.append(inicio)
-            print(f"    {ordem}/{len(paginas)} pagina {inicio}: cai dentro do "
-                  f"que ja veio (coberto ate {coberto_ate}). Baixando assim "
-                  "mesmo: a conteneza e inferida da faixa, nao do conteudo.")
+            # OPCAO DO ADVOGADO, NUNCA O PADRAO (`--documentos
+            # um-a-um-sem-contidos`), autorizada em 30/10/2026.
+            #
+            # E so pula quando a FAIXA INTEIRA estimada da peca ja esta em
+            # disco. Ate 30/10 bastava o inicio cair dentro, e por isso uma
+            # peca de 189 folhas foi pulada por causa das 11 primeiras, e a
+            # "pagina 2" que reaparece no fim do indice foi pulada sem nunca
+            # ter vindo. Ver `faixa_toda_coberta` e
+            # `proximo_inicio_do_indice`.
+            #
+            # A conteneza continua INFERIDA da faixa: ninguem leu o conteudo
+            # dos dois arquivos para comparar. Por isso cada pulo e anotado e
+            # devolvido em `contidos_pulados`, para a conferencia posterior
+            # pelo `reindexar` ou pela leitura.
+            seguinte = proximo_inicio_do_indice(paginas, ordem)
+            ate_onde = (seguinte - 1) if seguinte else None
+            if pular_contidos and ate_onde is not None and faixa_toda_coberta(
+                    faixas_em_disco, inicio, ate_onde):
+                contidos_pulados.append(inicio)
+                print(f"    {ordem}/{len(paginas)} pagina {inicio}: a faixa "
+                      f"estimada ({inicio} a {ate_onde}) ja esta toda em "
+                      "disco. PULADO por opcao (sem-contidos); conferir na "
+                      "leitura.")
+                continue
+            if pular_contidos:
+                # DIZER POR QUE NAO PULOU vale tanto quanto pular. Foi este
+                # recado que faltou em 30/10: a corrida pulava e ninguem
+                # sabia de quanto era a peca descartada.
+                faixa = (f"ate {ate_onde}" if ate_onde is not None
+                         else "sem proximo inicio no indice, nao da para "
+                              "estimar")
+                print(f"    {ordem}/{len(paginas)} pagina {inicio}: comeca "
+                      f"dentro do que ja veio, mas a faixa estimada ({faixa}) "
+                      "nao esta toda em disco. Baixando.")
+            else:
+                print(f"    {ordem}/{len(paginas)} pagina {inicio}: cai dentro "
+                      f"do que ja veio (coberto ate {coberto_ate}). Baixando "
+                      "assim mesmo: a conteneza e inferida da faixa, nao do "
+                      "conteudo.")
 
         if janela_fechada(janela):
             print(f"    {ordem}/{len(paginas)} pagina {inicio}: reabrindo o "
@@ -2363,9 +2455,15 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
               "foram pulados a pedido e NAO estao na pasta: "
               + ", ".join(str(p) for p in pulados_a_pedido)
               + ". O `reindexar` vai apontar as paginas que faltam.")
+    if contidos_pulados:
+        print(f"    [CONTIDOS PULADOS] {len(contidos_pulados)} peca(s) nao "
+              "foram baixadas por terem a faixa estimada toda em disco "
+              "(opcao sem-contidos): "
+              + ", ".join(str(p) for p in contidos_pulados)
+              + ". Conferir na leitura que o conteudo esta no arquivo maior.")
     return {"arquivos": arquivos, "pulados": pulados, "falhas": falhas,
             "repetidas": repetidas, "pulados_a_pedido": pulados_a_pedido,
-            "janela": janela}
+            "contidos_pulados": contidos_pulados, "janela": janela}
 
 
 def baixar_integra(pagina: Any, guarda: Any, destino, chave: str,
