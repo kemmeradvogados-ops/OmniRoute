@@ -7266,6 +7266,63 @@ def _consultar_esaj(pagina, guarda, estado_local, identidade, *, numero,
     return 0
 
 
+def subir_a_escada(degraus, tentar, minutos_de) -> dict:
+    """Corre os degraus em ordem ate um deles entregar. Devolve o relato.
+
+    PEDIDO DO ADVOGADO EM 08/10/2026, REFEITO EM 04/11/2026: "a integra
+    primeiro, e os lotes por conta propria quando ela nao vem".
+
+    O pedido de outubro foi recusado por medicao: em 20/10 a integra e o lote
+    de 300 nao entregaram nada em 900s cada, e o padrao passou a ir direto ao
+    documento a documento. O que mudou agora e o ORCAMENTO DE TEMPO: com 5
+    minutos na integra e 3 em cada lote, a escada inteira custa no maximo 11
+    minutos antes de chegar ao caminho que entrega, contra meia hora de
+    espera cega em outubro. E outra conta, e e ela que torna o pedido viavel.
+
+    O QUE JA VEIO NAO SE PERDE AO DESCER, regra do operador. Os arquivos de
+    todos os degraus sao somados, e nao substituidos: um lote que entregou
+    oito de dez blocos mantem os oito, e o degrau seguinte so busca o que
+    falta, porque `ja_baixado` pula o que esta em disco.
+
+    O ORCAMENTO E O UNICO SINAL DE FALHA que existe nos dois primeiros
+    degraus, e isso precisa ficar dito porque e desconfortavel: medido em
+    20/10, o portal nao entrega a integra e TAMBEM NAO RECUSA; o indicador de
+    geracao nunca chega a aparecer. Daqui, portal lento e portal quebrado sao
+    a mesma coisa. Descer de degrau e decisao do relogio, nao do portal.
+
+    Erro num degrau NAO derruba a escada: ele e anotado e o degrau seguinte
+    corre. Parar na primeira queda deixaria de tentar justamente o caminho
+    que funciona, que e sempre o ultimo.
+    """
+    arquivos: list = []
+    relato: list = []
+    for degrau in degraus:
+        minutos = minutos_de(degrau)
+        teto = f"{minutos} min" if minutos else "sem teto"
+        print(f"\n  [DEGRAU] {degrau} ({teto}).")
+        try:
+            veio = list(tentar(degrau, minutos) or [])
+        except Exception as exc:
+            primeira = str(exc).strip().splitlines()[:1]
+            detalhe = primeira[0][:160] if primeira else "sem mensagem"
+            relato.append({"degrau": degrau, "arquivos": 0,
+                           "erro": f"{type(exc).__name__}: {detalhe}"})
+            print(f"  [DEGRAU FALHOU] {degrau}: {type(exc).__name__}: "
+                  f"{detalhe}")
+            continue
+        arquivos.extend(veio)
+        relato.append({"degrau": degrau, "arquivos": len(veio), "erro": None})
+        if veio:
+            print(f"  [DEGRAU ENTREGOU] {degrau}: {len(veio)} arquivo(s). "
+                  "A escada para aqui.")
+            return {"arquivos": arquivos, "relato": relato,
+                    "degrau_que_entregou": degrau}
+        print(f"  [DEGRAU VAZIO] {degrau} nao entregou nada dentro do "
+              "orcamento. Descendo.")
+    return {"arquivos": arquivos, "relato": relato,
+            "degrau_que_entregou": None}
+
+
 def _reabrir_a_entrada_do_portal(pagina, guarda, url: str, segundos: int):
     """Volta ao endereco de entrada, SEM digitar credencial nenhuma.
 
@@ -7560,6 +7617,62 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
             arquivos = baixar_em_lotes(
                 janela, guarda, pasta, numero.apenas_digitos,
                 PAGINAS_POR_LOTE, prazo_do_arquivo, apenas=int(alvo))
+        elif escolha in ("cascata", "escada"):
+            # A ESCADA QUE O ADVOGADO PEDIU EM 08/10/2026 E DE NOVO EM
+            # 04/11/2026, agora com orcamento de tempo. Ver `subir_a_escada`.
+            #
+            # OPCAO, NUNCA O PADRAO. O padrao vai direto ao documento a
+            # documento desde 20/10/2026, por medicao, e nao foi tocado: num
+            # processo pequeno a escada gasta ate 11 minutos antes de chegar
+            # onde se sabe que entrega, e num lote de catorze isso e mais de
+            # duas horas que hoje ninguem paga.
+            from .dcp import (DEGRAU_INTEGRA, DEGRAU_UM_A_UM,
+                              PAGINAS_DO_DEGRAU,
+                              TETO_DE_DOCUMENTOS_UM_A_UM, _paginas_do_indice,
+                              baixar_em_lotes, baixar_integra,
+                              baixar_um_a_um, degraus_da_cascata,
+                              minutos_do_degrau, porte_do_processo,
+                              recado_do_porte)
+
+            paginas_do_indice = _paginas_do_indice(janela, segundos)
+            for linha in recado_do_porte(paginas_do_indice):
+                print(f"  {linha}")
+            porte = porte_do_processo(paginas_do_indice)
+            degraus = degraus_da_cascata(porte)
+            print(f"  Escada para processo {porte}: "
+                  + " -> ".join(degraus) + ".")
+
+            def _reabrir_na_escada():
+                from .dcp import aba_do_portal_viva
+
+                return abrir_visualizador(aba_do_portal_viva(pagina),
+                                          guarda, segundos, motivo)
+
+            def _tentar(degrau, minutos):
+                prazo = minutos * 60 if minutos else prazo_do_arquivo
+                if degrau == DEGRAU_INTEGRA:
+                    return [baixar_integra(janela, guarda, pasta,
+                                           numero.apenas_digitos, prazo)]
+                if degrau in PAGINAS_DO_DEGRAU:
+                    return baixar_em_lotes(
+                        janela, guarda, pasta, numero.apenas_digitos,
+                        PAGINAS_DO_DEGRAU[degrau], prazo)
+                resposta = baixar_um_a_um(
+                    janela, guarda, pasta, numero.apenas_digitos,
+                    _reabrir_na_escada, prazo_do_arquivo,
+                    teto=TETO_DE_DOCUMENTOS_UM_A_UM, pular=paginas_a_pular)
+                return resposta["arquivos"]
+
+            fim = subir_a_escada(degraus, _tentar, minutos_do_degrau)
+            arquivos = fim["arquivos"]
+            if fim["degrau_que_entregou"] is None:
+                print("  [NENHUM DEGRAU ENTREGOU] A escada foi ate o fim e "
+                      "nada veio. O que ja estava em disco continua la.")
+            elif fim["degrau_que_entregou"] != DEGRAU_UM_A_UM:
+                print(f"  [ANOTE] O degrau '{fim['degrau_que_entregou']}' "
+                      "entregou. Em 20/10/2026 ele nao entregava: se isto se "
+                      "repetir, o portal mudou e o padrao merece ser revisto.")
+
         elif escolha.startswith("lotes"):
             _, _, quanto = escolha.partition(":")
             tamanho_do_lote = (int(quanto) if quanto.strip().isdigit()

@@ -10026,3 +10026,111 @@ def test_navegador_sem_aba_viva_le_as_abas_e_nao_o_nome_do_erro():
     vazio = _NavegadorDoLote()
     vazio.context.pages = []
     assert navegador_sem_aba_viva(vazio) is True
+
+
+# ==========================================================================
+# A escada do Portal de Servicos
+#
+# Pedida pelo advogado em 08/10/2026 ("a integra primeiro, e os lotes por
+# conta propria quando ela nao vem") e de novo em 04/11/2026. O pedido de
+# outubro foi recusado por medicao: em 20/10 a integra e o lote de 300 nao
+# entregaram nada em 900s cada.
+#
+# O que mudou e o ORCAMENTO DE TEMPO: 5 minutos na integra e 3 em cada lote,
+# contra 900s de espera cega. A escada inteira custa no maximo 11 minutos
+# antes de chegar ao caminho que entrega, e e isso que torna o pedido viavel.
+# ==========================================================================
+
+
+def _minutos_de_teste(degrau):
+    return {"integra": 5, "lote-300": 3, "lote-100": 3}.get(degrau)
+
+
+def test_a_escada_para_no_primeiro_degrau_que_entrega():
+    from justica_mcp.portal import subir_a_escada
+
+    tentados = []
+
+    def _tentar(degrau, _minutos):
+        tentados.append(degrau)
+        return ["arquivo.pdf"] if degrau == "lote-300" else []
+
+    fim = subir_a_escada(("integra", "lote-300", "lote-100", "um-a-um"),
+                         _tentar, _minutos_de_teste)
+    assert fim["degrau_que_entregou"] == "lote-300"
+    assert tentados == ["integra", "lote-300"], (
+        "a escada nao pode continuar depois de alguem entregar")
+
+
+def test_o_que_ja_veio_nao_se_perde_ao_descer_de_degrau():
+    """REGRA DO OPERADOR, aprovada em 04/11/2026: um lote que entregou oito de
+    dez blocos mantem os oito."""
+    from justica_mcp.portal import subir_a_escada
+
+    def _tentar(degrau, _minutos):
+        if degrau == "lote-300":
+            return []            # nada veio neste
+        if degrau == "lote-100":
+            return ["a.pdf", "b.pdf"]
+        return []
+
+    fim = subir_a_escada(("lote-300", "lote-100", "um-a-um"),
+                         _tentar, _minutos_de_teste)
+    assert fim["arquivos"] == ["a.pdf", "b.pdf"]
+
+
+def test_degrau_que_quebra_nao_derruba_a_escada():
+    """Parar na primeira queda deixaria de tentar justamente o caminho que
+    funciona, que e sempre o ultimo."""
+    from justica_mcp.portal import subir_a_escada
+
+    def _tentar(degrau, _minutos):
+        if degrau != "um-a-um":
+            raise RuntimeError("o portal nao respondeu")
+        return ["c.pdf"]
+
+    fim = subir_a_escada(("integra", "lote-300", "um-a-um"),
+                         _tentar, _minutos_de_teste)
+    assert fim["degrau_que_entregou"] == "um-a-um"
+    assert fim["arquivos"] == ["c.pdf"]
+    quebrados = [r for r in fim["relato"] if r["erro"]]
+    assert len(quebrados) == 2
+    assert "o portal nao respondeu" in quebrados[0]["erro"]
+
+
+def test_o_orcamento_chega_a_quem_tenta():
+    """O orcamento e o UNICO sinal de falha nos dois primeiros degraus: o
+    portal nao entrega a integra e tambem NAO RECUSA."""
+    from justica_mcp.portal import subir_a_escada
+
+    recebidos = {}
+
+    def _tentar(degrau, minutos):
+        recebidos[degrau] = minutos
+        return [] if degrau != "um-a-um" else ["d.pdf"]
+
+    subir_a_escada(("integra", "lote-300", "um-a-um"), _tentar,
+                   _minutos_de_teste)
+    assert recebidos == {"integra": 5, "lote-300": 3, "um-a-um": None}
+
+
+def test_escada_sem_nenhum_degrau_entregando_nao_mente():
+    from justica_mcp.portal import subir_a_escada
+
+    fim = subir_a_escada(("integra", "um-a-um"), lambda *_a: [],
+                         _minutos_de_teste)
+    assert fim["degrau_que_entregou"] is None
+    assert fim["arquivos"] == []
+
+
+def test_a_cascata_e_opcao_e_o_padrao_nao_foi_tocado():
+    """O padrao vai direto ao documento a documento desde 20/10/2026, por
+    medicao. A escada nao pode te-lo substituido."""
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._consultar_dcp)
+    assert 'escolha in ("cascata", "escada")' in fonte
+    # O padrao continua anunciando um download por documento.
+    assert "Padrao: um download por documento" in fonte

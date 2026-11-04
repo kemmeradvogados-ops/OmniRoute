@@ -2213,6 +2213,46 @@ def minutos_do_degrau(degrau: str) -> Optional[int]:
     return None
 
 
+def recado_do_porte(paginas: list) -> list:
+    """O que dizer ao operador sobre o tamanho do processo, em uma ou duas
+    linhas.
+
+    Pedido dele em 04/11/2026. Ate aqui o padrao ia para o documento a
+    documento em silencio, e quem lia o relato nao tinha como saber se aquilo
+    era decisao tomada ou acaso.
+
+    A estimativa e NOMEADA COMO ESTIMATIVA. A maior pagina inicial do indice e
+    um piso do total de folhas, nunca o total: o ultimo documento ainda tem o
+    tamanho dele, e ninguem o conhece antes de baixar. Dizer "o processo tem
+    980 folhas" seria afirmar um numero que este programa nao mediu.
+    """
+    maior = max([int(p) for p in (paginas or []) if str(p).isdigit()
+                 or isinstance(p, int)] or [0])
+    porte = porte_do_processo(paginas)
+    linhas = [
+        f"[PORTE] {len(paginas)} documento(s) no indice; o ultimo comeca na "
+        f"folha {maior}. Processo {porte.upper()} (estimativa por baixo: o "
+        "ultimo documento ainda tem o tamanho dele)."
+    ]
+    if porte == "grande":
+        linhas.append(
+            "Processo grande vai direto ao download por documento, que e o "
+            "unico caminho visto entregar neste portal (medido em "
+            "20/10/2026). A integra e o lote nem sao tentados: alem de nao "
+            "entregarem, sao o que derrubou o navegador inteiro em 30/10.")
+    elif porte == "medio":
+        linhas.append(
+            "Processo medio: o download por documento continua sendo o "
+            "padrao. Para tentar o lote antes dele, com orcamento de tempo, "
+            "use --documentos cascata.")
+    else:
+        linhas.append(
+            "Processo pequeno: para tentar a integra e os lotes antes do "
+            "documento a documento, com orcamento de tempo, use --documentos "
+            "cascata.")
+    return linhas
+
+
 def faixa_toda_coberta(faixas: list, de: int, ate: int) -> bool:
     """Todas as paginas de `de` ate `ate` ja estao em arquivo gravado?
 
@@ -2382,6 +2422,16 @@ def baixar_um_a_um(janela: Any, guarda: Any, destino: Any, chave: str,
             "Nada foi baixado."
             + "\n    A FORMA DA TELA, para achar onde o indice esta:\n    "
             + "\n    ".join(relatar_a_forma_do_visualizador(janela)))
+
+    # O PORTE SAI EM VOZ ALTA, pedido do operador em 04/11/2026: "tem que ter
+    # um atalho que o sistema verifica que o processo e grande e sugira
+    # tambem". Aqui nao custa nada: o indice acabou de ser lido.
+    #
+    # Dizer o porte e dizer POR QUE este caminho foi escolhido. Ate aqui o
+    # padrao ia para o documento a documento em silencio, e quem lia o relato
+    # nao tinha como saber se aquilo era decisao ou acaso.
+    for linha in recado_do_porte(paginas):
+        print(f"    {linha}")
 
     if len(paginas) > teto:
         raise DownloadIndisponivel(

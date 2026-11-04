@@ -9160,13 +9160,35 @@ def test_a_lista_de_pular_aceita_virgula_e_recusa_o_resto():
 
 
 def test_pular_chega_aos_dois_caminhos_do_percurso():
-    """Guarda de fonte: o padrao e o `um-a-um:N` tem de aceitar a mesma opcao,
-    senao o operador descobre na terceira corrida que ela so vale num deles."""
+    """TODO caminho que corre o percurso aceita `--pular`.
+
+    Senao o operador descobre na terceira corrida que a opcao so vale num
+    deles, e repete o comando achando que pulou o documento que derruba o
+    navegador.
+
+    Ate 04/11/2026 este teste CONTAVA duas ocorrencias de
+    `pular=paginas_a_pular`, que era como se dizia "nos dois caminhos" quando
+    havia dois. A escada trouxe um terceiro, que tambem respeita a opcao, e a
+    contagem acusou algo que estava certo. Contar ocorrencias e guardar o
+    numero de caminhos; a regra e que NENHUM fique de fora. Agora o teste
+    acha as chamadas na arvore e exige a opcao em cada uma, entao caminho
+    novo ja nasce coberto.
+    """
+    import ast
     import inspect
+    import textwrap
 
     from justica_mcp import portal
 
-    assert fonte_do_portal("dcp").count("pular=paginas_a_pular") == 2
+    arvore = ast.parse(textwrap.dedent(inspect.getsource(portal._consultar_dcp)))
+    chamadas = [n for n in ast.walk(arvore)
+                if isinstance(n, ast.Call)
+                and ast.unparse(n.func).split(".")[-1].endswith("um_a_um")]
+    assert chamadas, "o percurso documento a documento sumiu do caminho do DCP"
+    sem_pular = [ast.unparse(c)[:90] for c in chamadas
+                 if "pular" not in {p.arg for p in c.keywords}]
+    assert not sem_pular, (
+        f"{len(sem_pular)} caminho(s) do percurso ignoram --pular: {sem_pular}")
 
 
 # --------------------------------------------------------------------------
