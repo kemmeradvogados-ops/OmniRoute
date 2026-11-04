@@ -11327,3 +11327,88 @@ def test_a_opcao_chega_pela_linha_de_comando():
     fonte = inspect.getsource(portal._consultar_dcp)
     assert "um-a-um-sem-contidos" in fonte
     assert "pular_contidos=sem_contidos" in fonte
+
+
+# ==========================================================================
+# Cascata de download do Portal de Servicos
+#
+# Pedida pelo advogado em 04/11/2026: integral, depois lote de 300, depois
+# lote de 100, depois documento a documento.
+#
+# A ordem e dele. O degrau de ENTRADA e escolhido pelo tamanho por causa de
+# duas medicoes: em 20/10/2026 o portal ofereceu a integral e o lote de 300 e
+# nao entregou nenhum dos dois em processo grande; e a secao 7.2 da auditoria
+# registrou o NAVEGADOR INTEIRO caindo ao gerar PDF grande. Numa cascata cega,
+# o processo grande comeca pelo degrau com mais chance de matar o navegador, e
+# depois da queda nenhum degrau seguinte roda.
+# ==========================================================================
+
+
+def test_o_porte_sai_do_indice_antes_de_baixar_qualquer_coisa():
+    from justica_mcp.dcp import porte_do_processo
+
+    assert porte_do_processo([1, 50, 120]) == "pequeno"
+    assert porte_do_processo([1, 120, 199]) == "pequeno"
+    assert porte_do_processo([1, 200]) == "medio"
+    assert porte_do_processo([1, 300, 640]) == "medio"
+    assert porte_do_processo([1, 400, 800]) == "grande"
+    assert porte_do_processo([1, 400, 980]) == "grande"
+    # Indice vazio nao e razao para comecar pelo caminho caro.
+    assert porte_do_processo([]) == "pequeno"
+
+
+def test_os_cortes_erram_para_menos_de_proposito():
+    """O operador definiu 1000 e 250 FOLHAS, e o indice so da a maior pagina
+    inicial, que e um piso do total. Os cortes ficam 20% abaixo para que, na
+    duvida, o processo seja tratado como MAIOR e comece num degrau seguro."""
+    from justica_mcp.dcp import (PAGINA_INICIAL_DE_PROCESSO_GRANDE,
+                                 PAGINA_INICIAL_DE_PROCESSO_MEDIO)
+
+    assert PAGINA_INICIAL_DE_PROCESSO_GRANDE < 1000
+    assert PAGINA_INICIAL_DE_PROCESSO_MEDIO < 250
+
+
+def test_a_cascata_sempre_termina_no_documento_a_documento():
+    """E o unico degrau medido entregando. A cascata nao pode terminar sem ter
+    tentado o caminho que funciona."""
+    from justica_mcp.dcp import DEGRAU_UM_A_UM, degraus_da_cascata
+
+    for porte in ("pequeno", "medio", "grande"):
+        degraus = degraus_da_cascata(porte)
+        assert degraus[-1] == DEGRAU_UM_A_UM, porte
+        assert len(degraus) == len(set(degraus)), "degrau repetido"
+
+
+def test_processo_grande_nao_tenta_a_integra():
+    """O degrau da integral e o que gera o PDF maior, e e ele que derrubou o
+    navegador inteiro em 30/10/2026, tres vezes."""
+    from justica_mcp.dcp import DEGRAU_INTEGRA, degraus_da_cascata
+
+    assert DEGRAU_INTEGRA not in degraus_da_cascata("grande")
+    assert DEGRAU_INTEGRA not in degraus_da_cascata("medio")
+    assert DEGRAU_INTEGRA in degraus_da_cascata("pequeno")
+
+
+def test_processo_grande_vai_direto_ao_que_funciona():
+    from justica_mcp.dcp import DEGRAU_UM_A_UM, degraus_da_cascata
+
+    assert degraus_da_cascata("grande") == (DEGRAU_UM_A_UM,)
+
+
+def test_so_os_dois_primeiros_degraus_tem_teto_de_tempo():
+    """O orcamento e o UNICO sinal de falha que existe na integral e no lote:
+    medido em 20/10/2026, o portal nao entrega e tambem NAO RECUSA, e o
+    indicador de geracao nunca aparece.
+
+    O documento a documento nao tem teto: cada documento ja tem prazo seu, o
+    progresso e visivel arquivo a arquivo, e e o degrau que entregou. Por-lhe
+    um teto seria desistir do unico caminho que funciona.
+    """
+    from justica_mcp.dcp import (DEGRAU_INTEGRA, DEGRAU_LOTE_100,
+                                 DEGRAU_LOTE_300, DEGRAU_UM_A_UM,
+                                 minutos_do_degrau)
+
+    assert minutos_do_degrau(DEGRAU_INTEGRA) == 5
+    assert minutos_do_degrau(DEGRAU_LOTE_300) == 3
+    assert minutos_do_degrau(DEGRAU_LOTE_100) == 3
+    assert minutos_do_degrau(DEGRAU_UM_A_UM) is None

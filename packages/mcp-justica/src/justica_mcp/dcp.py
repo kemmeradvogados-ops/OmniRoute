@@ -2111,6 +2111,108 @@ def baixar_em_lotes(pagina: Any, guarda: Any, destino: Any, chave: str,
 # 08/10/2026, e sem pular o que ja esta em disco ela custaria tudo de novo.
 
 
+# ---------------------------------------------------------------------------
+# CASCATA DE DOWNLOAD DO PORTAL DE SERVICOS
+#
+# Pedida pelo advogado em 04/11/2026: tentar a integral; nao dando, lote de
+# 300; nao dando, lote de 100; nao dando, documento a documento.
+#
+# A ordem esta certa, do mais barato em downloads para o mais caro. O que ela
+# nao pode e ser cega, por causa de duas medicoes:
+#
+# 1. Em 20/10/2026 o portal OFERECEU a integral e o lote de 300 e NAO
+#    entregou nenhum dos dois em processo grande. O que se viu entregar foi
+#    um download por documento.
+# 2. A secao 7.2 da auditoria de 29/10 a 01/11 registrou o NAVEGADOR INTEIRO
+#    caindo ao gerar PDF grande, com relatorios em `Crashpad` em tres
+#    horarios de 30/10. O degrau da integral e justamente o que gera o PDF
+#    maior.
+#
+# Juntas, as duas dizem que numa cascata cega o processo grande comeca pelo
+# degrau com mais chance de matar o navegador, e depois da queda NENHUM
+# degrau seguinte roda, porque nao sobra aba viva. A cascata inteira morre no
+# primeiro passo.
+#
+# Por isso o degrau de ENTRADA e escolhido pelo tamanho, que o indice ja diz
+# antes de qualquer download.
+#
+# OS CORTES SAO ESTIMATIVA, E ERRAM DE PROPOSITO PARA MENOS.
+#
+# O operador definiu, em folhas: mais de 1000 e grande, mais de 250 e medio.
+# Mas folha so se conhece DEPOIS de baixar. Antes existe o indice, que da a
+# pagina inicial de cada documento, e a maior delas e um piso do total: um
+# processo cujo ultimo documento comeca na folha 980 tem no minimo 980.
+#
+# Entao os cortes aqui sao 20% abaixo dos dele, por escolha conferida com ele
+# em 04/11/2026. [Inferencia] A margem cobre um ultimo documento da ordem dos
+# que apareceram nos lotes de outubro, de 131 e 189 folhas. Nao ha estatistica
+# do tamanho do ultimo documento: o numero e defensavel, nao medido. O efeito
+# querido e que, na duvida, o processo seja tratado como MAIOR do que parece e
+# comece num degrau mais seguro.
+PAGINA_INICIAL_DE_PROCESSO_GRANDE = 800
+PAGINA_INICIAL_DE_PROCESSO_MEDIO = 200
+
+# Quanto esperar em cada degrau antes de descer, conferido com o operador em
+# 04/11/2026.
+#
+# O ORCAMENTO E O UNICO SINAL DE FALHA QUE EXISTE nos dois primeiros degraus,
+# e isso precisa ficar dito: medido em 20/10/2026, o portal nao entrega a
+# integral e TAMBEM NAO RECUSA. O indicador de geracao nunca chega a aparecer.
+# Nao ha evento do portal dizendo "falhou", entao descer de degrau so pode ser
+# decidido pelo relogio.
+#
+# O documento a documento nao tem teto proprio: cada documento ja tem prazo
+# seu, o progresso e visivel arquivo a arquivo, e e o degrau que em campo
+# entregou. Poe-lhe um teto seria desistir do unico caminho que funciona.
+MINUTOS_DA_INTEGRA = 5
+MINUTOS_DO_LOTE = 3
+
+DEGRAU_INTEGRA = "integra"
+DEGRAU_LOTE_300 = "lote-300"
+DEGRAU_LOTE_100 = "lote-100"
+DEGRAU_UM_A_UM = "um-a-um"
+
+PAGINAS_DO_DEGRAU = {DEGRAU_LOTE_300: 300, DEGRAU_LOTE_100: 100}
+
+
+def porte_do_processo(paginas: list) -> str:
+    """"pequeno", "medio" ou "grande", pelo indice e antes de baixar nada.
+
+    Le a MAIOR pagina inicial do indice, que e um piso do total de folhas.
+    Indice vazio da "pequeno": sem nada para medir, nao ha razao para comecar
+    pelo caminho caro.
+    """
+    maior = max([int(p) for p in (paginas or []) if str(p).isdigit()
+                 or isinstance(p, int)] or [0])
+    if maior >= PAGINA_INICIAL_DE_PROCESSO_GRANDE:
+        return "grande"
+    if maior >= PAGINA_INICIAL_DE_PROCESSO_MEDIO:
+        return "medio"
+    return "pequeno"
+
+
+def degraus_da_cascata(porte: str) -> tuple:
+    """Os degraus a tentar, em ordem, para este porte.
+
+    O ultimo e SEMPRE o documento a documento: e o unico medido entregando, e
+    a cascata nao pode terminar sem ter tentado o caminho que funciona.
+    """
+    if porte == "grande":
+        return (DEGRAU_UM_A_UM,)
+    if porte == "medio":
+        return (DEGRAU_LOTE_300, DEGRAU_LOTE_100, DEGRAU_UM_A_UM)
+    return (DEGRAU_INTEGRA, DEGRAU_LOTE_300, DEGRAU_LOTE_100, DEGRAU_UM_A_UM)
+
+
+def minutos_do_degrau(degrau: str) -> Optional[int]:
+    """O orcamento de tempo do degrau, ou `None` quando nao ha teto."""
+    if degrau == DEGRAU_INTEGRA:
+        return MINUTOS_DA_INTEGRA
+    if degrau in PAGINAS_DO_DEGRAU:
+        return MINUTOS_DO_LOTE
+    return None
+
+
 def faixa_toda_coberta(faixas: list, de: int, ate: int) -> bool:
     """Todas as paginas de `de` ate `ate` ja estao em arquivo gravado?
 
