@@ -99,3 +99,78 @@ def test_sistema_sem_segundo_grau_devolve_nada_e_nao_o_primeiro(monkeypatch):
     monkeypatch.delenv("JUSTICA_PORTAL_TJRJ_PJE_2G_URL", raising=False)
     monkeypatch.setenv("JUSTICA_PORTAL_TJRJ_PJE_URL", "https://um/")
     assert config_portal("TJRJ", "pje").url_do_grau(2) is None
+
+
+# ==========================================================================
+# O .env.example nao pode ensinar chave que o programa nunca le
+#
+# Achado em 04/11/2026, conferindo o item 14.1 da auditoria com o operador.
+# O arquivo sugeria, para a primeira instancia da Justica Federal da 2a
+# Regiao:
+#
+#   JUSTICA_PORTAL_JFRJ_EPROC_URL=https://eproc.jfrj.jus.br/eproc/index.php
+#
+# `JFRJ` nao e tribunal reconhecido: o numero com segmento 4 e tribunal 02
+# resolve para TRF2, e e `JUSTICA_PORTAL_TRF2_EPROC_URL` que o programa
+# procura. Quem seguisse o exemplo ficaria com a primeira instancia SEM
+# endereco, usando o do Tribunal para consultar processo da Secao
+# Judiciaria, que e o erro que o proprio comentario do arquivo diz ter
+# acontecido em 23/10/2026.
+#
+# Exemplo errado em arquivo de exemplo e pior que exemplo ausente: ele e
+# copiado com confianca.
+# ==========================================================================
+
+
+def _exemplos_de_chave(texto: str) -> list:
+    """As linhas que ENSINAM uma chave, e nao as que falam sobre ela.
+
+    Exemplo e linha com `=`. A prosa que conta o historico do defeito cita o
+    nome errado de proposito, e confundir as duas faria este guarda acusar o
+    comentario que o explica, que foi o que aconteceu ao escreve-lo.
+    """
+    import re
+
+    achados = []
+    for linha in texto.splitlines():
+        limpa = linha.lstrip("# ").strip()
+        m = re.match(r"^JUSTICA_PORTAL_([A-Z0-9]+)_([A-Z0-9]+?)(_2G)?_(URL|PERFIL|PROCESSO_TESTE|PROCESSO_TESTE_2G)=", limpa)
+        if m:
+            achados.append((m.group(1), limpa))
+    return achados
+
+
+def test_o_exemplo_so_ensina_tribunal_que_o_programa_reconhece():
+    from pathlib import Path
+
+    from justica_mcp.core.tribunais import TRIBUNAIS
+
+    raiz = Path(__file__).resolve().parent.parent
+    texto = (raiz / ".env.example").read_text(encoding="utf-8")
+
+    conhecidos = {t.codigo.upper() for t in TRIBUNAIS.values()}
+    assert conhecidos, "a tabela de tribunais ficou vazia"
+
+    intrusos = sorted({codigo for codigo, _ in _exemplos_de_chave(texto)
+                       if codigo not in conhecidos})
+    assert not intrusos, (
+        f"o .env.example ensina chave para tribunal que o programa nao "
+        f"reconhece: {intrusos}. Quem copiar fica sem endereco e nao "
+        "descobre por que: a chave simplesmente nunca e lida.")
+
+
+def test_o_segundo_grau_se_diz_pelo_sufixo_e_nao_trocando_o_tribunal():
+    """A chave de segundo grau e `<TRIBUNAL>_<SISTEMA>_2G_URL`. Trocar o nome
+    do tribunal, como `JFRJ` no lugar de `TRF2`, produz chave que ninguem le."""
+    from pathlib import Path
+
+    raiz = Path(__file__).resolve().parent.parent
+    texto = (raiz / ".env.example").read_text(encoding="utf-8")
+    exemplos = [linha for _, linha in _exemplos_de_chave(texto)]
+
+    assert any(l.startswith("JUSTICA_PORTAL_TRF2_EPROC_URL=") and "jfrj" in l
+               for l in exemplos), (
+        "o exemplo precisa mostrar a Secao Judiciaria sob o codigo TRF2")
+    assert any(l.startswith("JUSTICA_PORTAL_TRF2_EPROC_2G_URL=") and "trf2" in l
+               for l in exemplos), (
+        "e o Tribunal sob o sufixo _2G")
