@@ -11584,3 +11584,77 @@ def test_a_recusa_da_busca_sobrevive_quando_o_perfil_tardio_tambem_falha():
 
     fonte = inspect.getsource(portal._consultar_dcp)
     assert "O QUE A TELA DIZIA ANTES DE O PERFIL SER ESCOLHIDO" in fonte
+
+
+# ==========================================================================
+# Item com caixa e SEM numero legivel tambem fica de fora
+#
+# Medido na corrida do operador em 04/11/2026:
+#
+#   Indice lido pela caixa de marcacao: 343 de 350 caixa(s) com pagina na
+#   linha (7 sem numero, 0 sem linha).
+#   Indice: 343 item(ns), todos com caixa de marcacao.
+#
+# Sete documentos ficaram de fora, e a palavra "todos" se lia como "nada
+# ficou de fora". O `reindexar` da mesma pasta apontava 108 paginas faltando
+# dentro do intervalo coberto.
+#
+# `indice_com_paginas` promete na propria docstring que "quem chama diz
+# quantos ficaram". A promessa era cumprida pela metade: dizia-se quem nao
+# tinha caixa, nao quem nao tinha numero.
+# ==========================================================================
+
+
+class _IndiceComItemSemNumero:
+    """Tela cujo leitor acha 350 caixas e so 343 com numero."""
+
+    def __init__(self, sem_numero=7):
+        self.sem_numero = sem_numero
+
+
+def _preparar_indice(monkeypatch, sem_numero):
+    from justica_mcp import dcp
+
+    monkeypatch.setattr(dcp, "esperar_o_indice",
+                        lambda *_a, **_k: [(n, object(), object())
+                                           for n in range(1, 344)])
+    monkeypatch.setattr(dcp, "contagem_do_leitor", lambda *_a, **_k: {
+        "marcadas": 343, "caixas": 343 + sem_numero,
+        "semNumero": sem_numero, "semLinha": 0})
+
+
+def test_item_sem_numero_legivel_e_dito_em_voz_alta(monkeypatch, capsys):
+    """O NUCLEO: documento que some em silencio e o defeito que
+    `indice_com_paginas` existe para nao ter."""
+    from justica_mcp import dcp
+
+    _preparar_indice(monkeypatch, sem_numero=7)
+    dcp._paginas_do_indice(object(), 5)
+    saida = capsys.readouterr().out
+
+    assert "[ATENCAO]" in saida
+    assert "7 item(ns)" in saida
+    # Sem caixa alta na comparacao: o que vale e o aviso existir, nao como
+    # a enfase foi escrita.
+    assert "numero de pagina legivel" in saida.lower()
+    assert "primeiros suspeitos" in saida, (
+        "o aviso precisa ligar os itens sem numero as paginas que o "
+        "reindexar aponta faltando")
+
+
+def test_a_palavra_todos_so_sai_quando_for_todos(monkeypatch, capsys):
+    from justica_mcp import dcp
+
+    _preparar_indice(monkeypatch, sem_numero=7)
+    dcp._paginas_do_indice(object(), 5)
+    com_sobra = capsys.readouterr().out
+    assert "todos com caixa de marcacao e numero" not in com_sobra, (
+        "dizer 'todos' com sete de fora e o que escondeu os documentos"
+    )
+    assert "NAO serao baixados" in com_sobra
+
+    _preparar_indice(monkeypatch, sem_numero=0)
+    dcp._paginas_do_indice(object(), 5)
+    sem_sobra = capsys.readouterr().out
+    assert "todos com caixa de marcacao e numero" in sem_sobra
+    assert "[ATENCAO]" not in sem_sobra

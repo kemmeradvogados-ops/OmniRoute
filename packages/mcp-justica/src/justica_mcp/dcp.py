@@ -2353,6 +2353,27 @@ def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
                 print(f"    {linha}")
             for linha in relatar_as_linhas(censo_das_linhas(pagina)):
                 print(f"    {linha}")
+    # ITEM COM CAIXA E SEM NUMERO LEGIVEL TAMBEM FICA DE FORA, e ate
+    # 04/11/2026 ele sumia numa contagem lateral.
+    #
+    # Medido na corrida do operador nesta data: "343 de 350 caixa(s) com
+    # pagina na linha (7 sem numero)", e a linha seguinte dizia "343 item(ns),
+    # todos com caixa de marcacao", que se le como "nada ficou de fora". Sete
+    # documentos ficaram, e o `reindexar` da mesma pasta apontava 108 paginas
+    # faltando dentro do intervalo coberto.
+    #
+    # `indice_com_paginas` promete na propria docstring que "quem chama diz
+    # quantos ficaram". A promessa era cumprida pela metade: dizia-se quem nao
+    # tinha caixa, nao quem nao tinha numero. Documento que some em silencio e
+    # o defeito que aquela funcao existe para nao ter.
+    if relatar and conta.get("semNumero"):
+        print(f"    [ATENCAO] {conta['semNumero']} item(ns) do indice TEM "
+              "caixa de marcacao e NAO tem numero de pagina legivel na linha.")
+        print("    Eles nao entram no percurso, porque o numero e o que nomeia "
+              "o arquivo na pasta.")
+        print("    Se o `reindexar` apontar paginas faltando dentro do "
+              "intervalo coberto, estes sao os primeiros suspeitos.")
+
     if relatar and sem_marca:
         print(f"    [ATENCAO] O indice tem {len(indice)} item(ns) com pagina "
               f"legivel, e {len(sem_marca)} deles NAO tem caixa de marcacao: "
@@ -2362,8 +2383,15 @@ def _paginas_do_indice(pagina: Any, segundos_do_indice: int,
               + (f" e mais {len(sem_marca) - 20}." if len(sem_marca) > 20
                  else "."))
     elif relatar:
-        print(f"    Indice: {len(indice)} item(ns), todos com caixa de "
-              "marcacao.")
+        # "TODOS" SO QUANDO FOR TODOS. A palavra se lia como "nada ficou de
+        # fora" mesmo quando a contagem acima dizia que sete ficaram.
+        if conta.get("semNumero"):
+            print(f"    Indice: {len(indice)} item(ns) com caixa E numero. "
+                  f"Fora deles, {conta['semNumero']} item(ns) sem numero "
+                  "legivel, que NAO serao baixados.")
+        else:
+            print(f"    Indice: {len(indice)} item(ns), todos com caixa de "
+                  "marcacao e numero.")
     return com_marca
 
 
