@@ -7617,7 +7617,9 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
             arquivos = baixar_em_lotes(
                 janela, guarda, pasta, numero.apenas_digitos,
                 PAGINAS_POR_LOTE, prazo_do_arquivo, apenas=int(alvo))
-        elif escolha in ("cascata", "escada"):
+        elif (escolha in ("cascata", "escada")
+              or escolha.startswith("cascata:")
+              or escolha.startswith("escada:")):
             # A ESCADA QUE O ADVOGADO PEDIU EM 08/10/2026 E DE NOVO EM
             # 04/11/2026, agora com orcamento de tempo. Ver `subir_a_escada`.
             #
@@ -7634,6 +7636,25 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
                               minutos_do_degrau, porte_do_processo,
                               recado_do_porte)
 
+            # O TETO DO ULTIMO DEGRAU PRECISA CABER NO PROCESSO.
+            #
+            # Defeito achado em 04/11/2026, antes de chegar ao operador: num
+            # processo grande a escada manda para o documento a documento, e
+            # ela chamava com o teto padrao de 200. O acervo dele tem 338
+            # documentos, entao o degrau recusaria por TETO, a escada contaria
+            # como degrau falhado e, nao havendo degrau seguinte, diria
+            # "nenhum degrau entregou". A recusa seria NOSSA e pareceria do
+            # portal, que e a pior forma de errar: manda procurar defeito onde
+            # nao ha.
+            teto_da_escada = TETO_DE_DOCUMENTOS_UM_A_UM
+            if ":" in escolha:
+                pedido = escolha.split(":", 1)[1].strip()
+                if not pedido.isdigit() or int(pedido) < 1:
+                    print(f"  [PAROU] {pedido!r} nao e um numero de "
+                          "documentos. Use 'cascata:400'.")
+                    return 1
+                teto_da_escada = int(pedido)
+
             paginas_do_indice = _paginas_do_indice(janela, segundos)
             for linha in recado_do_porte(paginas_do_indice):
                 print(f"  {linha}")
@@ -7641,6 +7662,21 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
             degraus = degraus_da_cascata(porte)
             print(f"  Escada para processo {porte}: "
                   + " -> ".join(degraus) + ".")
+            # DITO ANTES DE COMECAR, e nao depois de gastar os degraus: saber
+            # no fim que o ultimo degrau nunca teve como rodar seria descobrir
+            # tarde o que ja se sabia no inicio.
+            if (DEGRAU_UM_A_UM in degraus
+                    and len(paginas_do_indice) > teto_da_escada):
+                print(f"  [PAROU] O indice tem {len(paginas_do_indice)} "
+                      f"documento(s), acima do teto de {teto_da_escada} do "
+                      "ultimo degrau da escada.")
+                print("  Sem o ultimo degrau a escada nao tem como terminar, "
+                      "e ele e o unico caminho")
+                print("  visto entregar neste portal. Repita com "
+                      f"--documentos cascata:{len(paginas_do_indice)}.")
+                print("  Nada foi baixado, e a sessao continua aberta: "
+                      "repetir nao gasta autenticacao nova.")
+                return 1
 
             def _reabrir_na_escada():
                 from .dcp import aba_do_portal_viva
@@ -7660,7 +7696,7 @@ def _consultar_dcp(pagina, guarda, estado_local, identidade, *, numero,
                 resposta = baixar_um_a_um(
                     janela, guarda, pasta, numero.apenas_digitos,
                     _reabrir_na_escada, prazo_do_arquivo,
-                    teto=TETO_DE_DOCUMENTOS_UM_A_UM, pular=paginas_a_pular)
+                    teto=teto_da_escada, pular=paginas_a_pular)
                 return resposta["arquivos"]
 
             fim = subir_a_escada(degraus, _tentar, minutos_do_degrau)

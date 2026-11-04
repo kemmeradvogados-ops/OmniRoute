@@ -11434,3 +11434,45 @@ def test_so_os_dois_primeiros_degraus_tem_teto_de_tempo():
     assert minutos_do_degrau(DEGRAU_LOTE_300) == 3
     assert minutos_do_degrau(DEGRAU_LOTE_100) == 3
     assert minutos_do_degrau(DEGRAU_UM_A_UM) is None
+
+
+def test_a_escada_recusa_antes_de_comecar_quando_o_teto_nao_cabe():
+    """Defeito achado em 04/11/2026, antes de chegar ao operador.
+
+    Num processo grande a escada manda para o documento a documento, e ela
+    chamava com o teto padrao de 200. O acervo do advogado tem 338 documentos
+    nesse processo: o degrau recusaria por TETO, a escada contaria como degrau
+    falhado e, nao havendo degrau seguinte, diria "nenhum degrau entregou".
+
+    A recusa seria NOSSA e pareceria do portal, que e a pior forma de errar:
+    manda procurar defeito onde nao ha. E seria descoberta DEPOIS de os
+    degraus terem sido gastos.
+    """
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._consultar_dcp)
+    trecho = fonte.split('escolha in ("cascata", "escada")')[1].split(
+        'elif escolha.startswith("lotes")')[0]
+
+    # O teto e configuravel, e nao mais fixo no padrao.
+    assert "teto=teto_da_escada" in trecho, (
+        "a escada precisa levar o teto que o operador pediu ao ultimo degrau")
+    assert "cascata:400" in trecho, "e precisa dizer como subi-lo"
+    # E a recusa vem ANTES de gastar degrau.
+    # Pelo CHAMADO, e nao pelo nome: ele aparece antes, dentro de um
+    # comentario, e cortar ali esconderia justamente o trecho conferido.
+    antes = trecho.split("fim = subir_a_escada(")[0]
+    assert "acima do teto" in antes, (
+        "saber no fim que o ultimo degrau nunca teve como rodar seria "
+        "descobrir tarde o que ja se sabia no inicio")
+
+
+def test_a_escada_aceita_o_teto_na_propria_opcao():
+    import inspect
+
+    from justica_mcp import portal
+
+    fonte = inspect.getsource(portal._consultar_dcp)
+    assert 'escolha.startswith("cascata:")' in fonte
