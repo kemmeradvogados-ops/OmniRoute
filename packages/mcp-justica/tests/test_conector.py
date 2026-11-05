@@ -518,3 +518,68 @@ def test_o_lancador_le_por_linha_e_guarda_o_resto():
         "a leitura por linha substituiu o `pipe`: deixar os dois faria cada "
         "mensagem chegar duas vezes ao servidor"
     )
+
+
+# --------------------------------------------------------------------------
+# O Node, que inicia o conector
+#
+# Em 05/11/2026 uma maquina da equipe ficou uma tarde com o conector listado,
+# ativo e com as vinte ferramentas, sem nunca subir: faltava Node, e nada no
+# instalador nem no manual mencionava isso. O manifesto declara
+# `command: node`, entao a dependencia sempre existiu; o que faltava era
+# alguem dizer.
+#
+# As guardas abaixo protegem a REGRA, e nao a frase do dia: a numeracao dos
+# passos e conferida por sequencia, e o texto do manual por comparacao com
+# espacos normalizados, para que uma quebra de linha nova nao derrube o teste
+# sem que nada de fato tenha mudado.
+# --------------------------------------------------------------------------
+
+
+def _sem_quebras(texto: str) -> str:
+    import re
+
+    return re.sub(r"\s+", " ", texto)
+
+
+def test_os_passos_do_instalador_sao_sequenciais():
+    """Renumerar passos a mao pula ou repete numero, e ninguem percebe lendo."""
+    import re
+
+    numeros = [int(n) for n in re.findall(
+        r"^Passo (\d+) ", _INSTALADOR.read_text(encoding="utf-8"), re.M)]
+    assert numeros, "o instalador precisa ter passos numerados"
+    assert numeros == list(range(1, len(numeros) + 1)), numeros
+
+
+def test_o_instalador_confere_o_node_e_nao_para_por_falta_dele():
+    """Faltar Node nao pode abortar: o lado do Python fica valido do mesmo
+    jeito, e abortar deixaria a maquina pior do que antes."""
+    import re
+
+    texto = _INSTALADOR.read_text(encoding="utf-8")
+    assert "Get-Command node" in texto, "o instalador precisa conferir o Node"
+
+    inicio = texto.index('Passo 1 "')
+    fim = texto.index('Passo 2 "')
+    trecho = texto[inicio:fim]
+    assert "Get-Command node" in trecho, "a conferencia precisa ser o passo 1"
+    assert "Parar" not in trecho, "falta de Node nao pode abortar a instalacao"
+
+    # E o aviso do fim precisa ensinar a resolver, nao so constatar.
+    assert "winget install OpenJS.NodeJS.LTS" in texto
+
+
+def test_o_manual_diz_que_o_node_e_requisito_e_como_resolver():
+    texto = _sem_quebras(_MANUAL.read_text(encoding="utf-8"))
+    assert "Node, versão 18 ou mais nova" in texto
+    assert "winget install OpenJS.NodeJS.LTS" in texto
+    assert "encerre a sessão do Windows e entre de novo" in texto
+
+
+def test_o_manual_diz_que_ha_dois_interruptores():
+    """A causa real da primeira instalacao da banca: conector ativo nas
+    Configuracoes e desligado NA CONVERSA."""
+    texto = _sem_quebras(_MANUAL.read_text(encoding="utf-8"))
+    assert "Há dois interruptores" in texto
+    assert "campo de extensões ao lado da caixa de mensagem" in texto

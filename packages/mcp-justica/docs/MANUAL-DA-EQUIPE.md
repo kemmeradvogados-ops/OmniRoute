@@ -13,11 +13,29 @@ nada em sistema de tribunal. Nada do que ele lê sai da sua máquina.
 - Windows, com o **aplicativo do Claude para computador** instalado. O
   conector não funciona pelo navegador: ele roda um programa na sua máquina, e
   o navegador não tem como fazer isso.
+- **Node, versão 18 ou mais nova.** O manifesto do conector declara que ele é
+  iniciado pelo comando `node`. Sem Node, o conector aparece na lista do
+  Claude, com as vinte ferramentas que o manifesto promete, e **nunca sobe**.
 - Acesso à pasta do projeto no Google Drive, que o responsável indica.
 - Cerca de vinte minutos, quase todos de espera do instalador.
 
 Você **não** precisa saber programar, e não precisa instalar Python antes: o
-instalador avisa se faltar e diz onde buscar.
+instalador procura um, avisa se faltar e diz onde buscar. Com o Node é
+diferente, porque ele não passa por ali. Instale assim:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+Depois de instalar o Node, **encerre a sessão do Windows e entre de novo**, ou
+reinicie a máquina. Fechar e reabrir o Claude não basta: ele herda o ambiente
+de quando a sessão do Windows começou, e continuaria sem achar o Node mesmo
+com ele instalado. Para conferir, abra um PowerShell **novo** e rode `node
+--version`; janela que já estava aberta não enxerga o caminho novo.
+
+O instalador confere o Node no passo 1 e avisa se faltar, mas não interrompe:
+o lado do Python fica válido do mesmo jeito, e quem instalar o Node depois não
+precisa rodar o instalador de novo.
 
 ---
 
@@ -355,6 +373,33 @@ aceite é ato do advogado, nunca do programa.
 ---
 
 ## 8. Quando alguma coisa não funciona
+
+**O Claude diz que não tem as ferramentas. Comece por aqui.** Há dois
+interruptores, e não um. O primeiro fica em Configurações → Extensões e liga o
+conector na máquina. O segundo fica **na própria conversa**, no campo de
+extensões ao lado da caixa de mensagem, e liga o conector naquele diálogo. Um
+conector instalado e ativo nas Configurações pode estar desligado na conversa,
+e o Claude então responde, com toda a sinceridade, que não encontrou a
+ferramenta. Na primeira instalação da banca foi exatamente isso, depois de uma
+tarde de investigação.
+
+**Se o interruptor da conversa já estava ligado, confira o Node.** Abra um
+PowerShell **novo** e rode `node --version`. Se o comando não for reconhecido,
+volte à seção 1: sem Node o conector não sobe, e depois de instalar é preciso
+encerrar a sessão do Windows.
+
+**O número de ferramentas na página de Extensões não prova que o conector
+subiu.** Esse número vem do manifesto, que é um arquivo de texto dentro do
+pacote. Ver vinte ali confirma que o pacote certo foi instalado, e nada além.
+
+**Leia o nome na notificação de falha.** O aplicativo avisa quando qualquer
+conector não inicia, e o aviso traz o nome dele. Falha de outro conector não
+diz nada sobre este.
+
+**Procurando os registros.** Instalado pela Loja, o aplicativo grava em pasta
+redirecionada, e não em `AppData\Roaming`. Procure por arquivos `mcp*.log`
+dentro de `AppData\Local\Packages`. O recado deste conector começa sempre com
+`[conector justica]`.
 
 **O conector não aparece na lista do Claude.** Confira se você usa o
 aplicativo para computador e não o navegador. Depois, Configurações →
