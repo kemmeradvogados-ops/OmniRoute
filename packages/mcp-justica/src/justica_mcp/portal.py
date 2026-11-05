@@ -4114,11 +4114,26 @@ def _ler_a_tela_do_dcp(pagina, guarda, numero, identidade, estado_local,
     # A movimentacao do Portal de Servicos nao traz numero de evento, so data e
     # descricao, como no e-SAJ. A data faz as vezes de codigo: comparar por
     # (data, descricao) e o que a tela permite.
-    estado_local.gravar_snapshot(
-        numero.apenas_digitos,
-        [{"data_hora": m["data"], "codigo": m["data"], "nome": m["descricao"]}
-         for m in dados["movimentacoes"]],
-    )
+    #
+    # SEM HISTORICO NAO SE GRAVA SNAPSHOT, e esta linha vale mais do que
+    # parece. A tela do processo mostra UM movimento, o ultimo; o historico
+    # inteiro esta atras do botao "Todos Os Movimentos". Com
+    # `--sem-movimentacoes`, `dados["movimentacoes"]` fica com o que estava na
+    # tela, e gravar isso por cima do snapshot anterior trocaria uma base de
+    # comparacao completa por uma de um item so. A proxima consulta inteira
+    # devolveria o historico inteiro como NOVIDADE, e ninguem teria como
+    # desconfiar: o relatorio estaria correto em relacao ao que ficou gravado.
+    #
+    # Preservar o snapshot antigo e o comportamento certo: ele descreve a
+    # ultima vez em que o historico foi REALMENTE lido, que e exatamente com o
+    # que a proxima leitura precisa ser comparada.
+    if com_movimentacoes:
+        estado_local.gravar_snapshot(
+            numero.apenas_digitos,
+            [{"data_hora": m["data"], "codigo": m["data"], "nome": m["descricao"]}
+             for m in dados["movimentacoes"]],
+        )
+    dados["leitura"]["snapshot_atualizado"] = bool(com_movimentacoes)
     estado_local.registrar(
         acao="leitura_da_tela_do_processo", tribunal=identidade.tribunal,
         sistema=identidade.sistema, numero=numero.formatado,

@@ -265,9 +265,50 @@ class BaixarAutosInput(NumeroInput):
     )
     documentos: str = Field(
         default="integra",
-        description=("'integra' (padrao) para os autos num arquivo so; 'auto' "
-                     "para um download por documento; 'um-a-um' para processo "
-                     "grande do Portal de Servicos do Rio de Janeiro."),
+        description=("QUANTO baixar. O processo inteiro: 'integra' (padrao, "
+                     "um arquivo so), 'auto' (um download por documento), "
+                     "'um-a-um' ou 'um-a-um:N' (um download por documento, "
+                     "reabrindo o Visualizador a cada um e pulando o que ja "
+                     "estiver em disco; N sobe o teto de 200 documentos do "
+                     "percurso), 'cascata' (tenta a integra e, falhando, vai "
+                     "descendo para lotes menores conforme o porte) e "
+                     "'um-a-um-sem-contidos' ou 'um-a-um-sem-contidos:N', "
+                     "que pula a faixa de paginas ja coberta por arquivos "
+                     "em disco e serve para RETOMAR um percurso "
+                     "interrompido. "
+                     "SO UMA PARTE, que e o que serve para analisar um trecho "
+                     "sem baixar os autos todos: 'peca:N' baixa SO o documento "
+                     "que comeca na pagina N, aquele numero que aparece ao "
+                     "lado do nome no indice; 'ultimos:N' baixa so os N "
+                     "documentos mais recentes; 'lotes' ou 'lotes:N' baixa "
+                     "tudo de N em N paginas, 300 por padrao; 'lote:K' baixa "
+                     "SO o K-esimo desses lotes, util para repetir um que "
+                     "falhou. E 'nenhum' nao baixa nada. "
+                     "Prefira a parte ao todo quando o advogado pediu uma peca "
+                     "ou um trecho: baixar os autos inteiros de um processo "
+                     "grande leva de minutos a horas."),
+    )
+    pular: Optional[str] = Field(
+        default=None,
+        description=("Paginas iniciais de documento que o percurso deve PULAR, "
+                     "separadas por virgula. Serve para passar adiante de um "
+                     "documento que derruba o navegador: ele nao entra na "
+                     "pasta, e justica_cobertura_do_processo aponta depois as "
+                     "paginas que faltaram."),
+    )
+    ler_andamentos: bool = Field(
+        default=False,
+        description=("Falso (padrao) NAO le o historico de movimentacoes antes "
+                     "de abrir o Visualizador. No Portal de Servicos do Rio de "
+                     "Janeiro ler o historico abre a lista e percorre todas as "
+                     "paginas dela, o que em processo grande e dezenas de "
+                     "telas, e quem quer uma copia nao precisa pagar isso. A "
+                     "capa e as partes continuam sendo lidas. Pulando, a base "
+                     "de comparacao de novidades fica PRESERVADA, e nao "
+                     "sobrescrita por uma leitura parcial. Marque verdadeiro "
+                     "so quando o advogado quiser tambem o historico na mesma "
+                     "autenticacao; para historico sozinho, a ferramenta certa "
+                     "e justica_consultar_processo_autenticado."),
     )
     aceito_o_termo: bool = Field(
         default=False,
@@ -1436,6 +1477,10 @@ def registrar(mcp: Any) -> None:
             argumentos.append("--aceito-o-termo")
         if not params.guardar:
             argumentos.append("--sem-guardar")
+        if not params.ler_andamentos:
+            argumentos.append("--sem-movimentacoes")
+        if params.pular:
+            argumentos += ["--pular", params.pular]
         for outro in outros:
             argumentos += ["--processo", outro.formatado]
         if params.segundos_download:

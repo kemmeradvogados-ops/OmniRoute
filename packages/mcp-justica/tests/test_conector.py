@@ -583,3 +583,149 @@ def test_o_manual_diz_que_ha_dois_interruptores():
     texto = _sem_quebras(_MANUAL.read_text(encoding="utf-8"))
     assert "Há dois interruptores" in texto
     assert "campo de extensões ao lado da caixa de mensagem" in texto
+
+
+# --------------------------------------------------------------------------
+# Baixar SO UMA PARTE, e nao olhar o historico para isso
+#
+# Em 05/11/2026 o advogado observou duas coisas no Portal de Servicos: que
+# nao ha necessidade de ler todos os andamentos antes de abrir o
+# Visualizador quando o pedido e uma copia, e que faltava poder baixar so
+# parte dos documentos.
+#
+# A segunda ja existia na linha de comando desde antes, com `peca:N`,
+# `lote:K`, `lotes[:N]` e `ultimos:N`. O que nao existia era a FERRAMENTA
+# saber disso: a descricao do campo citava tres valores de dez, e o valor e
+# repassado tal e qual para o comando. O Claude nunca escolheria uma opcao
+# que ninguem lhe contou que existe.
+# --------------------------------------------------------------------------
+
+
+def _selecoes_que_o_percurso_entende() -> set:
+    """Os valores de `--documentos` que o codigo do DCP de fato reconhece.
+
+    Lido da arvore sintatica, e nao do texto: comparacao com `escolha`, por
+    igualdade ou por `startswith`. Assim, opcao nova criada no codigo aparece
+    aqui sozinha, e o teste cobra que ela seja documentada.
+    """
+    import ast
+
+    from justica_mcp import portal
+
+    arvore = ast.parse(_Caminho(portal.__file__).read_text(encoding="utf-8"))
+    achados = set()
+    for no in ast.walk(arvore):
+        if (isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+                and no.func.attr == "startswith"
+                and isinstance(no.func.value, ast.Name)
+                and no.func.value.id == "escolha"
+                and no.args and isinstance(no.args[0], ast.Constant)):
+            achados.add(str(no.args[0].value).rstrip(":"))
+        if (isinstance(no, ast.Compare) and isinstance(no.left, ast.Name)
+                and no.left.id == "escolha"):
+            for comparado in no.comparators:
+                alvos = (comparado.elts if isinstance(comparado, ast.Tuple)
+                         else [comparado])
+                for item in alvos:
+                    if isinstance(item, ast.Constant):
+                        achados.add(str(item.value).rstrip(":"))
+    return achados
+
+
+# Tolerancias de digitacao e nome antigo, que existem para quem escreve o
+# valor a mao e NAO precisam entrar na descricao da ferramenta: documentar
+# sinonimo so aumenta a chance de o modelo escolher o apelido em vez do nome.
+_APELIDOS = {"cada", "um a um", "umaum", "escada"}
+
+
+def test_toda_selecao_que_o_codigo_entende_esta_descrita_na_ferramenta():
+    from justica_mcp.tools import BaixarAutosInput
+
+    descricao = BaixarAutosInput.model_fields["documentos"].description
+
+    # Procurar a palavra solta NAO serve: `peca` tambem aparece na frase
+    # "quando o advogado pediu uma peca", e a guarda passaria com a opcao
+    # `peca:N` apagada da lista. O que precisa estar la e a opcao CITADA como
+    # opcao, entre aspas simples, com ou sem o sufixo de argumento.
+    faltando = sorted(
+        s for s in _selecoes_que_o_percurso_entende() - _APELIDOS
+        if f"'{s}'" not in descricao and f"'{s}:" not in descricao
+    )
+    assert not faltando, (
+        f"o campo `documentos` nao cita: {faltando}. O valor e repassado tal "
+        "e qual para o comando, entao opcao nao descrita existe e nunca e "
+        "escolhida."
+    )
+
+
+def test_o_download_nao_le_o_historico_por_padrao():
+    from justica_mcp.tools import BaixarAutosInput
+
+    campo = BaixarAutosInput.model_fields["ler_andamentos"]
+    assert campo.default is False, (
+        "ler o historico antes de abrir o Visualizador percorre todas as "
+        "paginas dele, e quem pede copia nao precisa disso"
+    )
+    assert "pular" in BaixarAutosInput.model_fields
+
+
+def test_o_download_passa_sem_movimentacoes_quando_nao_quer_historico():
+    """Guarda estrutural: o campo existir nao basta, ele tem de chegar ao
+    comando. Lido da arvore, e nao do texto."""
+    import ast
+
+    from justica_mcp import tools
+
+    arvore = ast.parse(_Caminho(tools.__file__).read_text(encoding="utf-8"))
+    achou = False
+    for no in ast.walk(arvore):
+        if not isinstance(no, ast.If):
+            continue
+        teste = no.test
+        if not (isinstance(teste, ast.UnaryOp) and isinstance(teste.op, ast.Not)):
+            continue
+        alvo = teste.operand
+        if not (isinstance(alvo, ast.Attribute) and alvo.attr == "ler_andamentos"):
+            continue
+        if "--sem-movimentacoes" in ast.dump(no):
+            achou = True
+    assert achou, (
+        "sem isto o campo `ler_andamentos` seria decorativo: o comando "
+        "continuaria lendo o historico inteiro"
+    )
+
+
+def test_pular_o_historico_nao_estraga_a_base_de_comparacao():
+    """A tela do processo mostra UM movimento; o historico esta atras do
+    botao. Gravar esse unico item por cima do snapshot trocaria uma base
+    completa por uma de um item so, e a proxima leitura inteira devolveria o
+    historico todo como novidade."""
+    import ast
+
+    from justica_mcp import portal
+
+    arvore = ast.parse(_Caminho(portal.__file__).read_text(encoding="utf-8"))
+    funcao = next(
+        (n for n in ast.walk(arvore)
+         if isinstance(n, ast.FunctionDef) and n.name == "_ler_a_tela_do_dcp"),
+        None,
+    )
+    assert funcao is not None, "a funcao de leitura da tela do DCP sumiu"
+
+    protegidas = 0
+    soltas = 0
+    for no in ast.walk(funcao):
+        if isinstance(no, ast.If):
+            dentro = ast.dump(ast.Module(body=no.body, type_ignores=[]))
+            if "gravar_snapshot" in dentro:
+                guarda = ast.dump(no.test)
+                assert "com_movimentacoes" in guarda, (
+                    f"gravar_snapshot guardado pela condicao errada: {guarda}")
+                protegidas += 1
+    for no in ast.walk(funcao):
+        if (isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+                and no.func.attr == "gravar_snapshot"):
+            soltas += 1
+    assert soltas >= 1, "a leitura precisa continuar alimentando a comparacao"
+    assert protegidas >= 1, (
+        "gravar_snapshot precisa estar dentro de `if com_movimentacoes`")
