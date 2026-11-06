@@ -625,3 +625,85 @@ def test_a_marca_fica_ao_lado_do_relato(tmp_path, monkeypatch):
     t.arquivo_de_relato = str(relato)
     relato.with_suffix(".codigo").write_text("0", encoding="utf-8")
     assert trabalhos.Mural._codigo_marcado(t) == 0
+
+
+# --------------------------------------------------------------------------
+# Pedido duplicado vindo de OUTRA instancia do servidor
+#
+# 06/11/2026: a auditoria de um processo real mostrou um download que entrou
+# as 14h34 e gravou cinco arquivos, e mais tres pedidos as 14h37, 14h38 e
+# 14h44 que NAO foram recusados. O aplicativo mantem mais de um servidor no
+# ar, um para conversa comum e outro para sessao de codigo e Cowork, e cada
+# um tem o proprio mural em memoria.
+#
+# A leitura de disco da construcao nao resolve isso: ela e uma foto, e serve
+# a quem sobe depois, nao a quem ja estava no ar.
+# --------------------------------------------------------------------------
+
+
+def _mural_com_disco(tmp_path, monkeypatch, vivo=True):
+    from justica_mcp import trabalhos
+
+    monkeypatch.setattr(trabalhos, "diretorio_dos_trabalhos", lambda: tmp_path)
+    monkeypatch.setattr(trabalhos, "processo_vivo", lambda pid, desde: vivo)
+    return trabalhos
+
+
+class _FilhoFingido:
+    stdout = None
+    pid = 4242
+
+    def wait(self):
+        return 0
+
+
+def test_pedido_duplicado_de_outra_instancia_e_recusado(tmp_path, monkeypatch):
+    trabalhos = _mural_com_disco(tmp_path, monkeypatch, vivo=True)
+
+    # A instancia que JA ESTAVA NO AR quando a outra comecou o download.
+    ja_estava = trabalhos.Mural()
+    assert ja_estava.em_curso_para("123") is None
+
+    # A outra instancia dispara o download.
+    outra = trabalhos.Mural()
+    emitido = outra.comecar("baixar", "123", [],
+                            _abrir=lambda *a, **kw: _FilhoFingido())
+
+    achado = ja_estava.em_curso_para("123")
+    assert achado is not None, (
+        "a instancia que ja estava no ar nao viu o download da outra, e "
+        "aceitaria um segundo pedido: duas autenticacoes na mesma credencial "
+        "do escritorio")
+    assert achado.identificador == emitido.identificador
+
+
+def test_trabalho_morto_nao_prende_a_trava(tmp_path, monkeypatch):
+    """Sem esta parte, trocariamos o pedido duplicado por um bloqueio eterno:
+    servidor morto no meio deixa o trabalho anotado como EM_CURSO para
+    sempre."""
+    trabalhos = _mural_com_disco(tmp_path, monkeypatch, vivo=True)
+    outra = trabalhos.Mural()
+    outra.comecar("baixar", "123", [], _abrir=lambda *a, **kw: _FilhoFingido())
+
+    monkeypatch.setattr(trabalhos, "processo_vivo", lambda pid, desde: False)
+    ja_estava = trabalhos.Mural()
+    assert ja_estava.em_curso_para("123") is None
+
+
+def test_o_disco_e_consultado_a_cada_chamada_e_nao_so_ao_nascer(tmp_path,
+                                                                monkeypatch):
+    """O nucleo: o mural ja nasce lendo o disco, e era isso que mascarava o
+    defeito nos testes. A diferenca esta em CONSULTAR DE NOVO depois."""
+    trabalhos = _mural_com_disco(tmp_path, monkeypatch, vivo=True)
+    ja_estava = trabalhos.Mural()
+
+    chamadas = []
+    original = trabalhos.trabalhos_gravados
+
+    def _contando(*args, **kw):
+        chamadas.append(1)
+        return original(*args, **kw)
+
+    monkeypatch.setattr(trabalhos, "trabalhos_gravados", _contando)
+    ja_estava.em_curso_para("456")
+    assert chamadas, "em_curso_para nao foi ao disco"

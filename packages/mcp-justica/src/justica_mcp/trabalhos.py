@@ -318,12 +318,60 @@ class Mural:
         Serve para RECUSAR um segundo pedido igual. Dois downloads do mesmo
         processo ao mesmo tempo gastam duas tentativas de autenticacao, abrem
         dois navegadores e escrevem na mesma pasta.
+
+        O DISCO E CONSULTADO A CADA CHAMADA, e nao so ao nascer.
+
+        `_reconhecer_o_que_ficou` le o disco uma vez, na construcao. Isso
+        basta para um servidor que SOBE depois, e nao basta para um que ja
+        estava no ar: a foto dele envelhece no instante seguinte. E ha mais de
+        um servidor no ar. O aplicativo atende conversa comum por uma
+        instancia e sessao de codigo e Cowork por outra, de um conjunto
+        proprio; o registro do aplicativo chama isso de `shared-pool`.
+        Memoria separada, murais separados, e nenhum enxerga o trabalho do
+        outro.
+
+        Medido em 06/11/2026, na auditoria de um processo real: as 14h34 um
+        pedido entrou e gravou cinco arquivos; as 14h37, 14h38 e 14h44 vieram
+        outros tres, que NAO foram recusados, autenticaram de novo e
+        colidiram com o navegador ja aberto. A credencial do tribunal e uma so
+        para o escritorio inteiro, entao cada pedido desses queima uma
+        tentativa que todos dividem.
+
+        Processo que nao responde mais nao bloqueia: trabalho morto deixaria a
+        trava presa para sempre, que e trocar um defeito por outro.
         """
         with self._trava:
             for identificador in reversed(self._ordem):
                 trabalho = self._trabalhos[identificador]
                 if trabalho.numero == numero and trabalho.estado == EM_CURSO:
                     return trabalho
+            # Copiada DENTRO da trava e usada fora: ler disco segurando a
+            # trava prenderia qualquer outra consulta pelo tempo da leitura.
+            conhecidos = set(self._ordem)
+        return self._em_curso_no_disco(numero, conhecidos)
+
+    @staticmethod
+    def _em_curso_no_disco(numero: str, conhecidos: set) -> Optional[Trabalho]:
+        """Trabalho de OUTRA instancia, anotado em disco e ainda vivo.
+
+        O que esta na memoria desta instancia ja foi conferido por quem
+        chamou, e a memoria dela e mais atual: ela acompanha o proprio filho e
+        anota o desfecho. Por isso os conhecidos sao pulados.
+        """
+        try:
+            anotados = trabalhos_gravados()
+        except OSError:
+            return None
+        for dados in anotados:
+            trabalho = Trabalho.da_anotacao(dados)
+            if (not trabalho.identificador
+                    or trabalho.identificador in conhecidos
+                    or trabalho.numero != numero
+                    or trabalho.estado != EM_CURSO):
+                continue
+            if not processo_vivo(trabalho.pid, trabalho.comecou_em):
+                continue
+            return trabalho
         return None
 
     def listar(self, limite: int = 10) -> list:
