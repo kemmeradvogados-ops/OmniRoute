@@ -35,6 +35,12 @@ TETO_DE_CARACTERES = 200_000
 # mesma diferenca de sempre, e ela vale decisao.
 MINIMO_POR_FOLHA = 20
 
+# Quantas folhas NOVAS o reconhecimento optico le numa chamada so. Cada uma
+# leva de 2 a 8 segundos; sem teto, uma peca digitalizada de 130 folhas
+# prenderia a ferramenta por mais de dez minutos e estouraria o tempo de quem
+# chamou. Folha ja reconhecida vem do cache e nao conta.
+TETO_DE_OCR_POR_CHAMADA = 12
+
 def peca_do_nome(nome: str) -> Optional[int]:
     """A pagina inicial que o nome do arquivo carrega, se carregar.
 
@@ -112,12 +118,21 @@ def achar_a_peca(pasta: Path, peca: int) -> Optional[Path]:
 
 
 def texto_das_folhas(arquivo: Path, de: int, ate: Optional[int],
-                     teto: int = TETO_DE_CARACTERES) -> dict:
+                     teto: int = TETO_DE_CARACTERES,
+                     ocr: bool = True,
+                     teto_ocr: int = TETO_DE_OCR_POR_CHAMADA) -> dict:
     """O texto das folhas pedidas, e o que nao deu para ler.
 
     Folha que levanta na extracao nao derruba a leitura inteira: ela entra em
     `folhas_ilegiveis` e as outras continuam. Peca grande com uma folha
     corrompida ainda vale muito mais que recusa.
+
+    Folha SEM camada de texto (imagem digitalizada) passa pelo reconhecimento
+    optico em portugues quando `ocr` e verdadeiro e o reconhecimento esta
+    disponivel nesta maquina (ver `ocr.disponibilidade`). Ela volta marcada no
+    proprio texto, com a confianca, e as de confianca baixa voltam tambem em
+    `folhas_para_conferir`. Sem reconhecimento, tudo segue como antes da
+    versao 0.10.0: a folha entra em `folhas_sem_texto`, com o aviso.
     """
     try:
         from pypdf import PdfReader
@@ -136,28 +151,92 @@ def texto_das_folhas(arquivo: Path, de: int, ate: Optional[int],
         return {"erro": f"A peca tem {total} folha(s) e a leitura foi pedida a "
                         f"partir da folha {inicio}."}
 
+    from . import ocr as reconhecimento
+
     partes: list = []
     sem_texto: list = []
     ilegiveis: list = []
+    por_ocr: list = []
+    para_conferir: list = []
+    motivo_sem_ocr: Optional[str] = None
+    novos_por_ocr = 0
     caracteres = 0
     cortou_em: Optional[int] = None
-    for numero in range(inicio, fim + 1):
-        try:
-            bruto = leitor.pages[numero - 1].extract_text() or ""
-        except Exception:
-            ilegiveis.append(numero)
-            continue
-        limpo = bruto.strip()
-        if len(limpo) < MINIMO_POR_FOLHA:
-            sem_texto.append(numero)
-            continue
-        if caracteres + len(limpo) > teto:
-            cortou_em = numero
-            break
-        partes.append(f"--- folha {numero} ---\n{limpo}")
-        caracteres += len(limpo)
+    corte_por_ocr = False
+    medidor = None
+    try:
+        for numero in range(inicio, fim + 1):
+            try:
+                bruto = leitor.pages[numero - 1].extract_text() or ""
+            except Exception:
+                ilegiveis.append(numero)
+                continue
+            limpo = bruto.strip()
+            cabecalho = f"--- folha {numero} ---"
 
-    lidas = fim - inicio + 1 - len(sem_texto) - len(ilegiveis)
+            # 1. Folha escaneada com o carimbo do sistema por cima? O texto que
+            # existe nela e so o carimbo; o conteudo esta na imagem.
+            carimbo = ""
+            if (ocr and motivo_sem_ocr is None
+                    and MINIMO_POR_FOLHA <= len(limpo)
+                    < reconhecimento.TEXTO_MAXIMO_DE_CARIMBO):
+                if medidor is None and reconhecimento.disponibilidade().pronto:
+                    medidor = reconhecimento.MedidorDeImagem(arquivo)
+                if medidor is not None and medidor.parece_escaneada(
+                        numero, len(limpo)):
+                    carimbo, limpo = limpo, ""
+
+            # 2. Sem texto proprio: reconhecimento optico em portugues.
+            if len(limpo) < MINIMO_POR_FOLHA:
+                lido = None
+                if ocr and motivo_sem_ocr is None:
+                    if reconhecimento.do_cache(arquivo, numero) is None:
+                        estado = reconhecimento.disponibilidade()
+                        if not estado.pronto:
+                            motivo_sem_ocr = estado.motivo
+                        elif novos_por_ocr >= teto_ocr:
+                            cortou_em = numero
+                            corte_por_ocr = True
+                            break
+                    if motivo_sem_ocr is None:
+                        lido = reconhecimento.reconhecer(arquivo, numero)
+                        if "erro" in lido:
+                            lido = None
+                        elif not lido.get("do_cache"):
+                            novos_por_ocr += 1
+                texto_ocr = ((lido or {}).get("texto") or "").strip()
+                if len(texto_ocr) >= MINIMO_POR_FOLHA:
+                    confianca = lido.get("confianca", 0.0)
+                    por_ocr.append({"folha": numero, "confianca": confianca})
+                    marca = ("lida por reconhecimento optico, confianca "
+                             f"{confianca}%")
+                    if confianca < reconhecimento.LIMIAR_DE_CONFERENCIA:
+                        para_conferir.append(numero)
+                        marca += ", CONFERIR NO ORIGINAL"
+                    cabecalho = f"--- folha {numero} ({marca}) ---"
+                    limpo = texto_ocr
+                elif carimbo:
+                    # O reconhecimento nao achou nada na imagem. Volta o
+                    # carimbo, marcado, para a folha nao sumir da leitura.
+                    para_conferir.append(numero)
+                    cabecalho = (f"--- folha {numero} (folha digitalizada: so "
+                                 "o carimbo do sistema foi lido; o conteudo da "
+                                 "imagem NAO foi reconhecido, CONFERIR NO "
+                                 "ORIGINAL) ---")
+                    limpo = carimbo
+                else:
+                    sem_texto.append(numero)
+                    continue
+
+            if caracteres + len(limpo) > teto:
+                cortou_em = numero
+                break
+            partes.append(f"{cabecalho}\n{limpo}")
+            caracteres += len(limpo)
+    finally:
+        if medidor is not None:
+            medidor.fechar()
+
     resposta: dict = {
         "folhas_na_peca": total,
         "de": inicio,
@@ -167,32 +246,68 @@ def texto_das_folhas(arquivo: Path, de: int, ate: Optional[int],
         "folhas_com_texto": len(partes),
         "folhas_sem_texto": sem_texto,
         "folhas_ilegiveis": ilegiveis,
+        "folhas_por_ocr": por_ocr,
+        "folhas_para_conferir": para_conferir,
         "cortado": cortou_em is not None,
     }
-    if cortou_em is not None:
-        resposta["aviso"] = (
+    if motivo_sem_ocr:
+        resposta["ocr_indisponivel"] = motivo_sem_ocr
+
+    avisos: list = []
+    if cortou_em is not None and corte_por_ocr:
+        avisos.append(
+            f"A leitura PAROU na folha {cortou_em}: o reconhecimento optico de "
+            f"folhas digitalizadas e demorado, e esta chamada ja reconheceu "
+            f"{novos_por_ocr} folha(s) novas, o teto por chamada. Peca a "
+            f"continuacao com de={cortou_em}. As folhas ja reconhecidas ficam "
+            "guardadas e voltam na hora.")
+    elif cortou_em is not None:
+        avisos.append(
             f"O texto foi CORTADO na folha {cortou_em}: o teto de {teto} "
             f"caracteres por chamada foi atingido. Peca a continuacao com "
             f"de={cortou_em}.")
-    elif not partes and (sem_texto or ilegiveis):
+    if not partes and (sem_texto or ilegiveis) and cortou_em is None:
         # A diferenca que vale decisao: nao e que a peca nao diga nada.
-        resposta["aviso"] = (
+        avisos.append(
             f"Nenhuma das {fim - inicio + 1} folha(s) pedidas tem camada de "
             "texto. Isto NAO significa que a peca esteja em branco: significa "
-            "que ela e imagem digitalizada, e ler o conteudo dela exigiria "
-            "reconhecimento optico, que este programa nao faz.")
+            "que ela e imagem digitalizada, e ler o conteudo dela exige "
+            "reconhecimento optico" + _por_que_sem_ocr(ocr, motivo_sem_ocr))
     elif sem_texto:
-        resposta["aviso"] = (
+        avisos.append(
             f"{len(sem_texto)} folha(s) sem camada de texto (imagem "
             f"digitalizada): {sem_texto[:20]}. O que voltou e o texto das "
-            f"outras {len(partes)}.")
-    _ = lidas
+            f"outras {len(partes)}."
+            + (" Reconhecimento optico indisponivel: " + motivo_sem_ocr
+               if motivo_sem_ocr else
+               "" if not ocr else
+               " O reconhecimento optico foi tentado nelas e nao achou texto: "
+               "podem ser foto, assinatura, carimbo ou folha de fato em "
+               "branco. Confira no original antes de concluir."))
+    if para_conferir:
+        avisos.append(
+            f"{len(por_ocr)} folha(s) lidas por reconhecimento optico; "
+            f"{len(para_conferir)} com confianca abaixo de "
+            f"{reconhecimento.LIMIAR_DE_CONFERENCIA:.0f}%: {para_conferir[:20]}. "
+            "Datas, valores, CPF, CNPJ e numeros de processo dessas folhas "
+            "precisam ser conferidos no original antes de ir para uma peca.")
+    if avisos:
+        resposta["aviso"] = " ".join(avisos)
     return resposta
+
+
+def _por_que_sem_ocr(pedido: bool, motivo: Optional[str]) -> str:
+    if not pedido:
+        return ", que nao foi pedido nesta chamada (ocr=false)."
+    if motivo:
+        return f", indisponivel nesta maquina: {motivo}"
+    return (". O reconhecimento foi tentado e nao achou texto: podem ser foto, "
+            "assinatura, carimbo ou folha de fato em branco.")
 
 
 def ler_peca(numero_digitos: str, numero_formatado: str, peca: int,
              de: int = 1, ate: Optional[int] = None,
-             teto: int = TETO_DE_CARACTERES) -> dict:
+             teto: int = TETO_DE_CARACTERES, ocr: bool = True) -> dict:
     """O texto de UMA peca da pasta. Devolve conteudo do processo."""
     pasta = pasta_do_processo(numero_digitos, numero_formatado)
     if not pasta.is_dir():
@@ -207,7 +322,7 @@ def ler_peca(numero_digitos: str, numero_formatado: str, peca: int,
                 "pecas_na_pasta": disponiveis[:40],
                 "total_na_pasta": len(disponiveis)}
 
-    lido = texto_das_folhas(arquivo, de, ate, teto)
+    lido = texto_das_folhas(arquivo, de, ate, teto, ocr=ocr)
     if "erro" in lido:
         return {"erro": lido["erro"], "arquivo": arquivo.name}
     lido["peca"] = peca
@@ -273,7 +388,12 @@ def relatar_a_leitura(dados: dict, caminho: Any) -> list:
         linhas.append(
             f"{len(dados['folhas_sem_texto'])} folha(s) SEM camada de texto "
             f"(imagem digitalizada): {dados['folhas_sem_texto'][:20]}. Elas nao "
-            "estao em branco: este programa nao faz reconhecimento optico.")
+            "estao em branco.")
+    if dados.get("folhas_por_ocr"):
+        linhas.append(
+            f"{len(dados['folhas_por_ocr'])} folha(s) lidas por reconhecimento "
+            f"optico; para conferir no original: "
+            f"{dados.get('folhas_para_conferir', [])[:20]}.")
     if dados.get("folhas_ilegiveis"):
         linhas.append(
             f"{len(dados['folhas_ilegiveis'])} folha(s) levantaram erro na "

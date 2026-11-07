@@ -243,6 +243,35 @@ arquivos que já estão na pasta de cópias.
 É aqui que a análise acontece. Quem baixou os autos uma vez abriu o caminho
 para o escritório inteiro ler.
 
+#### Folhas digitalizadas (reconhecimento óptico, desde a versão 0.10.0)
+
+Folha que é imagem (processo físico digitalizado, aviso de recebimento,
+documento juntado pela parte) passa a ser lida por reconhecimento óptico em
+português. Ela volta marcada com a confiança da leitura, e as de confiança
+abaixo de 80% vêm listadas para **conferir no original**: o reconhecimento
+erra dígito de data, valor, CPF, CNPJ e número de processo justamente nelas.
+
+Cada folha nova leva alguns segundos, então a leitura de peça grande vem em
+partes ("peça a continuação a partir da folha N"). O que já foi reconhecido
+fica guardado nesta máquina e volta na hora.
+
+Para funcionar, a máquina precisa de duas coisas (uma vez só):
+
+1. O programa **Tesseract**, com o idioma **Portuguese** marcado na
+   instalação. No Windows, pelo instalador da Universidade de Mannheim
+   (página "Tesseract at UB Mannheim", no GitHub).
+2. O pacote `pypdfium2` no ambiente do conector. O instalador (`instalar.ps1`)
+   já o instala junto com o resto; só é preciso instalar à mão em quem
+   atualizou o código sem rodar o instalador. Nesse caso, no PowerShell,
+   dentro da pasta do projeto:
+
+   ```powershell
+   .venv\Scripts\pip install pypdfium2
+   ```
+
+Depois, feche e abra o Claude. Sem essas duas coisas, a leitura funciona
+como antes e diz, na própria resposta, o que falta.
+
 ### Com a sua credencial, com custo real
 
 - "Consulte esse processo no portal do tribunal."

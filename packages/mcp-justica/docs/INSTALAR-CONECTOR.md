@@ -275,7 +275,7 @@ autenticam, não têm teto por hora.
 | Ferramenta | O que faz |
 | --- | --- |
 | `justica_pecas_do_processo` | Lista as peças gravadas: nome, página inicial, folhas, bytes. Nenhum conteúdo. |
-| `justica_ler_peca` | O texto de uma peça. É a **única** ferramenta do servidor que devolve conteúdo dos autos. |
+| `justica_ler_peca` | O texto de uma peça. É a **única** ferramenta do servidor que devolve conteúdo dos autos. Desde a 0.10.0, lê por reconhecimento óptico em português as folhas digitalizadas, marcando a confiança; exige Tesseract com o idioma `por` e `pypdfium2` no ambiente (ver o manual da equipe). Sem eles, devolve o texto digital e avisa o que falta. |
 
 É por aqui que a análise processual acontece sem gastar autenticação.
 

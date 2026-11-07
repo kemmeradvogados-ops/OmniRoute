@@ -131,6 +131,11 @@ class LerPecaInput(NumeroInput):
                      "banca; 'leitura' para o que foi lido sem guardar, que "
                      "fica so nesta maquina."),
     )
+    ocr: bool = Field(default=True, description=(
+        "Ler por reconhecimento optico, em portugues, as folhas que sao imagem "
+        "digitalizada. Padrao: sim. Cada folha nova leva alguns segundos e ha "
+        "teto por chamada; folha ja reconhecida volta na hora. Use false para "
+        "uma leitura rapida so do texto digital."))
 
 
 class PublicacoesOabInput(BaseModel):
@@ -1127,9 +1132,20 @@ def registrar(mcp: Any) -> None:
         - `cortado: true` com `aviso`: o teto de caracteres foi atingido e o
           texto parou numa folha. Peca a continuacao com `de` na folha que o
           aviso indica.
-        - `folhas_sem_texto`: folhas que sao imagem digitalizada. Elas NAO
-          estao em branco: o programa e que nao faz reconhecimento optico. Nao
-          conclua que a peca nada diz nessas folhas.
+        - `folhas_por_ocr` e `folhas_para_conferir`: folhas digitalizadas
+          lidas por reconhecimento optico em portugues. Elas vem marcadas no
+          texto com a confianca. As de confianca abaixo de 80% estao em
+          `folhas_para_conferir`: o reconhecimento erra digito de data, valor,
+          CPF, CNPJ e numero de processo nelas, entao confira no original
+          antes de levar esses dados para uma peca.
+        - `cortado: true` com aviso de reconhecimento: o teto de folhas novas
+          por chamada foi atingido. Peca a continuacao com `de`; o que ja foi
+          reconhecido volta na hora.
+        - `folhas_sem_texto`: folhas em que nem a camada de texto nem o
+          reconhecimento optico trouxeram texto (ou o reconhecimento esta
+          indisponivel nesta maquina, e entao `ocr_indisponivel` diz por que).
+          Elas NAO estao em branco por isso. Nao conclua que a peca nada diz
+          nessas folhas.
         - `folhas_ilegiveis`: folhas que levantaram erro na extracao. As outras
           vieram assim mesmo.
         """
@@ -1139,14 +1155,16 @@ def registrar(mcp: Any) -> None:
             numero = parse_numero(params.numero)
             with _na_pasta(params.onde):
                 dados = ler_peca(numero.apenas_digitos, numero.formatado,
-                                 params.peca, de=params.de, ate=params.ate)
+                                 params.peca, de=params.de, ate=params.ate,
+                                 ocr=params.ocr)
             dados["onde"] = params.onde
             _estado.registrar(
                 acao="ler_peca", solicitante=params.solicitante, tribunal="",
                 numero=numero.formatado,
                 resultado=(dados.get("erro") or
                            f"peca {params.peca}, "
-                           f"{dados.get('caracteres', 0)} caractere(s)"))
+                           f"{dados.get('caracteres', 0)} caractere(s), "
+                           f"{len(dados.get('folhas_por_ocr') or [])} por OCR"))
             return _json(dados)
         except Exception as exc:
             return _falhar("ler_peca", exc, solicitante=params.solicitante,

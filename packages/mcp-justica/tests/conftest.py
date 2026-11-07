@@ -67,3 +67,20 @@ def _acervo_isolado(tmp_path_factory, monkeypatch):
         "JUSTICA_PASTA_COPIAS",
         str(tmp_path_factory.mktemp("acervo-de-teste")),
     )
+
+
+@pytest.fixture(autouse=True)
+def _reconhecimento_desligado(monkeypatch):
+    """O reconhecimento optico fica DESLIGADO nos testes, salvo onde o teste
+    o liga de proposito (`tests/test_ocr.py`).
+
+    Motivo duplo: os testes antigos de leitura montam folhas sem camada de
+    texto e conferem o aviso de "imagem digitalizada", que nao deve depender
+    de a maquina ter ou nao o Tesseract; e o reconhecimento guarda cache no
+    diretorio de estado, que nos testes nao deve ser o da maquina do
+    advogado.
+    """
+    monkeypatch.setenv("JUSTICA_OCR", "0")
+    from justica_mcp import ocr
+
+    monkeypatch.setattr(ocr, "_cache_disponibilidade", None)
