@@ -41,21 +41,32 @@ precisa rodar o instalador de novo.
 
 ## 2. Instalar o programa
 
-Abra a pasta do projeto no Google Drive, entre em `scripts` e **copie o
-caminho** do arquivo `instalar.ps1`.
-
-Abra o PowerShell (tecla Windows, digite `powershell`, Enter) e rode, com o
-caminho entre aspas:
+Abra o PowerShell (tecla Windows, digite `powershell`, Enter). Primeiro
+confira que o instalador está visível para a sua máquina:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "G:\...\scripts\instalar.ps1"
+Get-Item "G:\Meu Drive\4.Processos\conector-justica\scripts\instalar.ps1"
 ```
+
+Se aparecerem nome, tamanho e data, rode:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "G:\Meu Drive\4.Processos\conector-justica\scripts\instalar.ps1"
+```
+
+> **Se o primeiro comando der erro**, a letra da unidade do Google Drive na
+> sua máquina não é `G:`. Descubra com `Get-PSDrive -PSProvider FileSystem` e
+> troque a letra nos dois comandos. **Não digite o caminho de exemplo como se
+> fosse literal**: em 06/11/2026 uma instalação da banca parou porque o texto
+> do marcador foi executado tal e qual, e o PowerShell respondeu que o arquivo
+> não tinha extensão `.ps1`.
 
 O `-ExecutionPolicy Bypass` é necessário porque o Windows bloqueia por padrão
 qualquer script vindo de fora da máquina. Ele vale só para essa execução e não
 altera configuração nenhuma.
 
-O instalador faz sete passos e explica cada um. Ao final ele imprime **dois
+O instalador faz oito passos e explica cada um. O primeiro deles confere o
+Node, e avisa sem interromper se ele faltar. Ao final ele imprime **dois
 caminhos em amarelo**. Copie os dois para algum lugar: o conector vai pedi-los
 no passo seguinte.
 
@@ -124,6 +135,16 @@ nenhum valor apareça na tela:
 Ele lista os nomes das chaves e os portais que o programa enxerga, nunca os
 valores.
 
+> **O acesso autenticado vem LIGADO.** Conferido em 05/11/2026 numa máquina
+> recém-instalada: o arquivo da banca traz `JUSTICA_ACESSO_AUTENTICADO=1`.
+> Isso significa que a máquina já nasce capaz de disparar autenticação real,
+> e passa a fazê-lo assim que houver credencial no cofre. Para conferir na
+> sua:
+>
+> ```powershell
+> Select-String -Path "$env:LOCALAPPDATA\justica-mcp\.env" -Pattern "^JUSTICA_ACESSO_AUTENTICADO="
+> ```
+
 ### Carregar as credenciais
 
 As credenciais vêm da planilha da banca, que o responsável indica. Uma única
@@ -143,6 +164,29 @@ Confira depois, sem ver nenhum segredo:
 ```powershell
 & "$env:LOCALAPPDATA\justica-mcp\.venv\Scripts\python.exe" -m justica_mcp.credenciais listar
 ```
+
+### O segundo fator, e a primeira execução de cada máquina
+
+Nem todo portal pede código de segundo fator. O Portal de Serviços do
+Tribunal de Justiça do Estado do Rio de Janeiro **não pede**.
+
+O conector não presume isso: ele decide por observação, e a observação é de
+cada máquina. Enquanto nenhuma autenticação real tiver mostrado se a tela de
+código aparece, ele **recusa** o acesso àquele portal, dizendo que não haveria
+a quem perguntar o código. É recusa correta, e não defeito: ela protege contra
+começar uma sessão que não se pode terminar.
+
+Para ensinar isso à máquina, basta **uma** execução com o navegador visível,
+pela linha de comando, com alguém na frente da tela:
+
+```powershell
+& "$env:LOCALAPPDATA\justica-mcp\.venv\Scripts\justica-portal.exe" consultar --tribunal TJRJ --sistema dcp --processo NUMERO-DO-PROCESSO --confirmo-tentativa-unica
+```
+
+Troque `NUMERO-DO-PROCESSO` por um número real, com pontos e traço. A execução
+gasta uma tentativa, e não é desperdício: é uma consulta de verdade, e o
+resultado fica gravado. A partir dela o conector passa a decidir por
+observação e deixa de recusar.
 
 ### Três cuidados que a equipe precisa observar
 
@@ -302,6 +346,33 @@ O conector pede o download e **responde na hora**, com um número de trabalho.
 Ele não fica esperando, porque isso leva de minutos a horas: o portal gera o
 arquivo quando se pede, e no eproc a geração pode demorar.
 
+**Essa primeira resposta nunca diz que baixou**, porque naquele instante não
+baixou mesmo. Ela diz que o pedido começou. Para saber se terminou:
+
+- "Como está o download."
+
+O estado deixa de ser "em curso" quando acaba. E **concluído não quer dizer
+que veio arquivo**: pode ter vindo só a confirmação de que o portal aceitou o
+pedido e está montando. As últimas linhas do relato dizem qual dos dois.
+
+Depois de concluído, confirme o que de fato chegou. As duas perguntas abaixo
+leem o disco, são gratuitas e não abrem portal:
+
+- "Quais peças existem nesse processo."
+- "Qual a cobertura desse processo, e que folhas faltam."
+
+A segunda é a que evita conclusão errada: uma cópia pode vir incompleta sem
+que nada avise, e ela diz exatamente quais faixas de páginas faltaram, em vez
+de deixar você estimar.
+
+> **Nunca peça o mesmo download duas vezes.** Cada pedido gasta uma tentativa
+> de autenticação da credencial do escritório, abre outro navegador e escreve
+> na mesma pasta. Em 06/11/2026 um processo recebeu quatro pedidos em dez
+> minutos: o primeiro funcionou e gravou os arquivos, e os outros três
+> autenticaram de novo e colidiram com o navegador já aberto. Vale também
+> entre conversas: se você pediu numa conversa, não peça em outra. Pergunte
+> primeiro como está o download.
+
 ### Guardar ou só ler: as duas formas
 
 Você escolhe, e a escolha muda onde o arquivo fica.
@@ -436,6 +507,17 @@ código e **não toca** no seu `.env` nem nas suas credenciais.
 dela: o manifesto aponta para a sua pasta do projeto e para o Python do
 ambiente virtual, então o que ela executa é o código que estiver em disco.
 Atualizar o código já atualiza o que a extensão faz.
+
+**Mas é preciso reiniciar o Claude, e reiniciar tudo.** O servidor que está
+no ar carregou o código antigo na memória, e só troca ao subir de novo. Feche
+o aplicativo **por inteiro**, inclusive pelo ícone ao lado do relógio: fechar
+a janela não encerra o processo.
+
+E feche também sessão de código e Cowork, se houver alguma aberta. Cada uma
+dessas superfícies sobe a própria instância do servidor, com a própria
+memória. Enquanto uma continuar com o código antigo, ela segue se comportando
+como antes, e o sintoma é confuso: a mesma pergunta responde diferente em
+duas conversas da mesma máquina.
 
 **Reinstalar a extensão só é preciso quando o manifesto ou o lançador mudam**,
 isto é, quando há ferramenta nova, campo de configuração novo ou conserto na
