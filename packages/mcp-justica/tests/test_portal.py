@@ -3440,7 +3440,32 @@ def test_o_campo_de_senha_do_keycloak_nao_e_procurado_pelo_tipo():
 
     keycloak = [f for f in FAMILIAS_DE_LOGIN if f["nome"] == "keycloak"][0]
     assert "type=password" not in keycloak["campo_senha_oculto"]
-    assert keycloak["campo_senha_oculto"] == "#password"
+    assert "type=password" not in keycloak["campo_senha"]
+
+
+def test_o_keycloak_confere_a_senha_no_campo_que_o_formulario_posta():
+    """Digita-se na mascara; confere-se no campo que vai ao servidor.
+
+    A tela de `sso.tjsp.jus.br`, lida em 24/11/2026, traz DOIS campos de senha
+    no mesmo formulario: um oculto com `name=password` e sem id, e um visivel
+    com `id=password` e sem name. Quem posta e o `name`. Conferir pelo `id`
+    encontraria a senha na mascara e mandaria clicar em Entrar, gastando uma
+    tentativa da credencial unica para receber "preencha o campo".
+
+    No eproc do Rio os dois seletores caem no MESMO elemento, porque a tela
+    padrao do Keycloak traz `id` e `name` juntos; por isso conferir pelo `name`
+    nao tira nada de la.
+    """
+    from justica_mcp.portal import FAMILIAS_DE_LOGIN
+
+    keycloak = [f for f in FAMILIAS_DE_LOGIN if f["nome"] == "keycloak"][0]
+    assert keycloak["campo_senha_oculto"] == "input[name=password]", (
+        "a conferencia anterior ao clique precisa ler o campo POSTADO, e nao "
+        "a mascara visivel")
+    # E a digitacao continua indo ao campo visivel: digitar no oculto nao
+    # dispara o que a pagina usa para espelhar o valor.
+    assert keycloak["campo_senha"] == "#password"
+    assert keycloak["campo_senha"] != keycloak["campo_senha_oculto"]
 
 
 def test_tela_desconhecida_nao_vira_palpite():

@@ -2348,12 +2348,27 @@ FAMILIAS_DE_LOGIN = (
     {
         "nome": "keycloak",
         "campo_usuario": "#username",
+        # ONDE SE DIGITA: o campo visivel. Ele nao pode ser procurado por
+        # `input[type=password]`, porque a tela traz o olhinho de mostrar a
+        # senha, que troca o tipo para `text`. Lido assim na tela real do eproc
+        # do Rio em 05/10/2026.
         "campo_senha": "#password",
-        # Aqui NAO ha campo espelho: o campo visivel e o que vai ser enviado.
-        # E ele nao pode ser procurado por `input[type=password]`, porque a tela
-        # traz o olhinho de mostrar a senha, que troca o tipo para `text`. Lido
-        # assim na tela real do eproc do Rio em 05/10/2026.
-        "campo_senha_oculto": "#password",
+        # O QUE E ENVIADO: o campo que o formulario POSTA, e quem posta e o
+        # `name`, nunca o `id`. No eproc do Rio os dois sao o mesmo elemento,
+        # porque a tela padrao do Keycloak traz `id` e `name` no mesmo campo, e
+        # por isso `#password` bastava.
+        #
+        # O eproc de Sao Paulo desmentiu isso em 24/11/2026: a tela de
+        # `sso.tjsp.jus.br` traz DOIS campos de senha no mesmo formulario, um
+        # oculto com `name=password` e SEM id, e um visivel com `id=password` e
+        # SEM name. O visivel e mascara; quem chega ao servidor e o oculto.
+        #
+        # Isto nao e detalhe de seletor. A conferencia que antecede o clique le
+        # justamente este campo para abortar de graca quando a senha nao chegou
+        # ao que vai ser enviado. Apontada para a mascara, ela encontraria a
+        # senha digitada e mandaria seguir, e a credencial unica da banca
+        # gastaria uma tentativa para receber de volta "preencha o campo".
+        "campo_senha_oculto": "input[name=password]",
         "botao_entrar": "#kc-login",
         "campo_codigo": "#otp",
         "botao_validar": "#kc-login",
