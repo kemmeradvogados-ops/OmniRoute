@@ -222,8 +222,16 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
     pedir_senha = so_senha or not escolheu
     pedir_semente = so_semente or not escolheu
 
+    # A FRASE DE ABERTURA PRECISA SER VERDADE. Ate 24/11/2026 ela prometia que
+    # nada do que se digita aparece na tela, e o login aparece: ele e pedido
+    # sem mascara de proposito, porque o prompt comum e o que aceita colar e
+    # porque esconde-lo impediria conferi-lo. O preco da promessa falsa foi
+    # real: o cadastro de pessoa fisica do advogado ficou na tela, no historico
+    # do terminal e, dali, numa conversa, depois de o programa ter anunciado
+    # que isso nao aconteceria. Quem avisa antes nao precisa desculpar depois.
     print(f"\nGravando credencial de {identidade.rotulo}.")
-    print("O que voce digitar NAO aparece na tela e NAO fica em arquivo.\n")
+    print("Nada do que voce digitar vai para arquivo. A senha e a semente")
+    print("tambem nao aparecem na tela.\n")
 
     if pedir_login or pedir_senha:
         if pedir_login:
@@ -234,6 +242,10 @@ def cmd_guardar(cofre: Cofre, tribunal: str, sistema: str, so_senha: bool,
             # no terminal e uma armadilha para quem trabalha colando comandos.
             if janela:
                 print("  Abrindo a janela para o login.")
+            else:
+                print("  O login APARECE enquanto voce digita, e fica no historico")
+                print("  do terminal. Ele e dado pessoal, como o cadastro de pessoa")
+                print("  fisica. Para digita-lo fora do terminal, repita com --janela.")
             login = (pedir_segredo(
                 "Login (inscricao, cadastro de pessoa fisica, matricula)",
                 janela, confirmar=False, mascarar=False) or "").strip()

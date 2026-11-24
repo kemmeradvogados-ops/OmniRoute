@@ -179,3 +179,51 @@ def test_login_na_janela_e_visivel_e_pedido_uma_vez_so():
                             mascarar=False)
     assert valor == "218174"
     assert len(mostrados) == 1
+
+
+# --------------------------------------------------------------------------
+# A frase de abertura precisa ser verdade.
+#
+# Ate 24/11/2026 o comando anunciava "O que voce digitar NAO aparece na tela e
+# NAO fica em arquivo" e em seguida pedia o login SEM mascara, porque o prompt
+# comum e o que aceita colar e porque esconder o login impediria conferi-lo.
+# O preco da promessa falsa foi real: o cadastro de pessoa fisica do advogado
+# ficou na tela, no historico do terminal e, dali, numa conversa, depois de o
+# programa ter garantido que isso nao aconteceria.
+#
+# A correcao nao e mascarar o login, que quebraria a colagem: e avisar ANTES.
+
+def test_a_abertura_nao_promete_que_o_login_fica_escondido(monkeypatch, capsys):
+    from justica_mcp import credenciais as mod
+
+    monkeypatch.setattr("builtins.input", lambda _: "218174")
+    monkeypatch.setattr(mod, "pedir_segredo", lambda *a, **kw: "segredo")
+    mod.cmd_guardar(_CofreFalso(), "TJRJ", "pje", False, False, False, True)
+
+    saida = capsys.readouterr().out
+    assert "NAO aparece na tela" not in saida, (
+        "a promessa vale para a senha e a semente, nunca para o login")
+
+
+def test_pedir_o_login_pelo_terminal_avisa_que_ele_aparece(monkeypatch, capsys):
+    from justica_mcp import credenciais as mod
+
+    monkeypatch.setattr("builtins.input", lambda _: "218174")
+    monkeypatch.setattr(mod, "pedir_segredo", lambda *a, **kw: "segredo")
+    mod.cmd_guardar(_CofreFalso(), "TJRJ", "pje", False, False, False, True)
+
+    saida = " ".join(capsys.readouterr().out.split())
+    assert "O login APARECE enquanto voce digita" in saida
+    assert "--janela" in saida, "o aviso precisa dizer como evitar"
+
+
+def test_com_janela_o_aviso_do_terminal_nao_aparece(monkeypatch, capsys):
+    """Com a janela o login nao passa pelo terminal, entao avisar seria ruido."""
+    from justica_mcp import credenciais as mod
+
+    monkeypatch.setattr("builtins.input",
+                        lambda _: (_ for _ in ()).throw(AssertionError("terminal")))
+    monkeypatch.setattr(mod, "pedir_segredo", lambda *a, **kw: "218174")
+    mod.cmd_guardar(_CofreFalso(), "TJRJ", "pje", False, False, True, True)
+
+    assert "O login APARECE" not in capsys.readouterr().out
