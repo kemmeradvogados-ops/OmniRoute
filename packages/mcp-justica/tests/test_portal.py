@@ -10159,3 +10159,170 @@ def test_a_cascata_e_opcao_e_o_padrao_nao_foi_tocado():
     assert 'escolha in ("cascata", "escada")' in fonte
     # O padrao continua anunciando um download por documento.
     assert "Padrao: um download por documento" in fonte
+
+
+# --------------------------------------------------------------------------
+# A consulta do servidor escolhe o ENDERECO pelo grau do numero.
+#
+# Ate 24/11/2026 ela autenticava sempre em `config.url`, o endereco de
+# PRIMEIRO grau, ainda que o de segundo estivesse configurado no .env:
+# processo de segunda instancia era procurado na instalacao de primeira e
+# voltava "nao encontrado", desfecho que se confunde com processo inexistente.
+# A varredura de sistemas ja decidia pelo grau desde 26/10/2026; a consulta
+# do servidor, nao.
+#
+# Numeros sinteticos, com sequencial 1 e digito calculado: nao sao processo de
+# cliente, e o repositorio e compartilhado.
+
+PRIMEIRO_GRAU_RJ = "0000001-69.2026.8.19.0001"
+SEGUNDO_GRAU_RJ = "0000001-72.2026.8.19.0000"
+
+
+@pytest.fixture
+def consulta_sem_navegador(monkeypatch):
+    """Anota o endereco e o perfil com que a consulta autenticaria.
+
+    O autenticador devolve 0 sem rodar `apos_autenticar`, entao nada e lido e
+    a funcao levanta por falta de dados. O que se mede aqui e a DECISAO
+    anterior ao login, que e onde estava o defeito.
+    """
+    from justica_mcp.telas import VARIAVEL_DA_GRAVACAO
+
+    monkeypatch.setenv("JUSTICA_ACESSO_AUTENTICADO", "1")
+    # `ligar_gravacao` escreve direto no ambiente; tocar a chave aqui faz o
+    # monkeypatch devolve-la ao que era no fim do teste.
+    monkeypatch.setenv(VARIAVEL_DA_GRAVACAO, "")
+    registro: dict = {}
+
+    def autenticar(url, tribunal, sistema, *, perfil=None, **resto):
+        registro["url"] = url
+        registro["perfil"] = perfil
+        return 0
+
+    monkeypatch.setattr("justica_mcp.portal.autenticar", autenticar)
+    return registro
+
+
+def _portal_configurado(monkeypatch, **campos):
+    from justica_mcp.core.acesso import ConfigPortal
+
+    config = ConfigPortal(**campos)
+    monkeypatch.setattr("justica_mcp.core.acesso.config_portal",
+                        lambda tribunal, sistema: config)
+    return config
+
+
+def test_processo_de_segundo_grau_autentica_no_endereco_de_segundo_grau(
+        monkeypatch, consulta_sem_navegador):
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    _portal_configurado(
+        monkeypatch, tribunal="TJRJ", sistema="eproc",
+        url="https://eproc1g.exemplo/eproc/", perfil="RJ1",
+        url_2g="https://eproc2g.exemplo/eproc/", perfil_2g="RJ2")
+
+    with pytest.raises(RuntimeError):
+        consultar_processo_estruturado("TJRJ", "eproc", SEGUNDO_GRAU_RJ)
+
+    assert consulta_sem_navegador["url"] == "https://eproc2g.exemplo/eproc/"
+    assert consulta_sem_navegador["perfil"] == "RJ2"
+
+
+def test_processo_de_primeiro_grau_continua_no_endereco_de_primeiro(
+        monkeypatch, consulta_sem_navegador):
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    _portal_configurado(
+        monkeypatch, tribunal="TJRJ", sistema="eproc",
+        url="https://eproc1g.exemplo/eproc/", perfil="RJ1",
+        url_2g="https://eproc2g.exemplo/eproc/", perfil_2g="RJ2")
+
+    with pytest.raises(RuntimeError):
+        consultar_processo_estruturado("TJRJ", "eproc", PRIMEIRO_GRAU_RJ)
+
+    assert consulta_sem_navegador["url"] == "https://eproc1g.exemplo/eproc/"
+    assert consulta_sem_navegador["perfil"] == "RJ1"
+
+
+def test_sem_perfil_proprio_o_segundo_grau_reaproveita_o_do_primeiro(
+        monkeypatch, consulta_sem_navegador):
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    _portal_configurado(
+        monkeypatch, tribunal="TJRJ", sistema="eproc",
+        url="https://eproc1g.exemplo/eproc/", perfil="RJ1",
+        url_2g="https://eproc2g.exemplo/eproc/")
+
+    with pytest.raises(RuntimeError):
+        consultar_processo_estruturado("TJRJ", "eproc", SEGUNDO_GRAU_RJ)
+
+    # O endereco entra na afirmacao de proposito. Sem ele, a consulta presa ao
+    # primeiro grau passaria neste teste: o perfil seria "RJ1" nos dois casos,
+    # pelo motivo errado.
+    assert consulta_sem_navegador["url"] == "https://eproc2g.exemplo/eproc/"
+    assert consulta_sem_navegador["perfil"] == "RJ1"
+
+
+def test_segundo_grau_nao_configurado_recusa_antes_de_gastar_tentativa(
+        monkeypatch, consulta_sem_navegador):
+    """A recusa nomeia a chave e NAO cai no endereco de primeiro grau.
+
+    Cair no primeiro grau devolveria "nao encontrado" sobre processo que esta
+    no segundo, gastando uma tentativa da credencial unica da banca para
+    produzir uma resposta errada.
+    """
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    _portal_configurado(
+        monkeypatch, tribunal="TJRJ", sistema="eproc",
+        url="https://eproc1g.exemplo/eproc/", perfil="RJ1")
+
+    with pytest.raises(RuntimeError) as erro:
+        consultar_processo_estruturado("TJRJ", "eproc", SEGUNDO_GRAU_RJ)
+
+    assert "JUSTICA_PORTAL_TJRJ_EPROC_2G_URL" in str(erro.value)
+    assert "url" not in consulta_sem_navegador, (
+        "autenticou mesmo sem endereco de segundo grau")
+
+
+def test_sem_segundo_grau_com_motivo_registrado_diz_o_motivo(
+        monkeypatch, consulta_sem_navegador):
+    """Sugerir a chave seria pedir que alguem configure endereco inexistente.
+
+    O Portal de Servicos nem chega aqui, porque tem ramo proprio; o PJe do
+    Tribunal de Justica do Rio de Janeiro chega, e dele o operador informou em
+    26/10/2026 que nao ha segundo grau.
+    """
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    _portal_configurado(
+        monkeypatch, tribunal="TJRJ", sistema="pje",
+        url="https://pje1g.exemplo/pje/", perfil=None)
+
+    with pytest.raises(RuntimeError) as erro:
+        consultar_processo_estruturado("TJRJ", "pje", SEGUNDO_GRAU_RJ)
+
+    texto = str(erro.value)
+    assert "nao tem segundo grau" in texto
+    assert "JUSTICA_PORTAL_TJRJ_PJE_2G_URL" not in texto
+
+
+def test_no_portal_de_servicos_o_grau_do_numero_nao_escolhe_endereco(
+        monkeypatch, consulta_sem_navegador):
+    """La o endereco e o MESMO nos dois graus, e quem diz o grau e a LINHA.
+
+    Deduzir o grau do numero aqui mandaria a consulta para um endereco de
+    segundo grau que nao existe, ou faria a funcao recusar um processo que o
+    portal atende.
+    """
+    from justica_mcp.portal import consultar_processo_estruturado
+
+    _portal_configurado(
+        monkeypatch, tribunal="TJRJ", sistema="dcp",
+        url="https://portal.exemplo/portal/", perfil="ADV")
+
+    with pytest.raises(RuntimeError):
+        consultar_processo_estruturado("TJRJ", "dcp", SEGUNDO_GRAU_RJ)
+
+    assert consulta_sem_navegador["url"] == "https://portal.exemplo/portal/"
+    assert consulta_sem_navegador["perfil"] == "ADV"

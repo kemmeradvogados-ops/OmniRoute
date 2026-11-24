@@ -6323,6 +6323,44 @@ def consultar_processo_estruturado(
 
     config = config_portal(tribunal, sistema)
 
+    # O GRAU ESCOLHE O ENDERECO. Ate 24/11/2026 esta funcao autenticava sempre
+    # em `config.url`, o endereco de PRIMEIRO grau, ainda que o de segundo
+    # estivesse configurado: processo de segunda instancia era procurado na
+    # instalacao de primeira e voltava "nao encontrado", desfecho que se
+    # confunde com processo inexistente. A varredura de sistemas ja decide
+    # assim desde 26/10/2026 (`sondar_sistemas`); aqui faltava.
+    #
+    # FORA DO PORTAL DE SERVICOS, apenas. La o endereco e o MESMO nos dois
+    # graus, e quem diz o grau e a LINHA do resultado da busca, jamais o
+    # numero: deduzir o grau do numero ali mandaria a consulta para um endereco
+    # de segundo grau que nao existe.
+    if Identidade(tribunal, sistema).sistema == "dcp":
+        endereco, perfil_da_consulta = config.url, config.perfil
+    else:
+        from .core.cnj import parse_numero
+
+        grau_pedido = parse_numero(numero_processo).grau
+        endereco = config.url_do_grau(grau_pedido)
+        perfil_da_consulta = config.perfil_do_grau(grau_pedido)
+        if not endereco:
+            from .core.tribunais import motivo_sem_segundo_grau
+
+            # Com motivo registrado, dizer o motivo. Sugerir a chave do .env
+            # seria pedir que alguem configure um endereco que nao existe.
+            motivo = motivo_sem_segundo_grau(tribunal, sistema)
+            remedio = (
+                f", porque {motivo}." if motivo else
+                ". Para configurar, no .env: JUSTICA_PORTAL_"
+                f"{tribunal.upper()}_{sistema.upper()}_2G_URL=https://..."
+            )
+            raise RuntimeError(
+                f"O numero informado e de segunda instancia e {config.rotulo} "
+                f"nao tem endereco de segundo grau configurado" + remedio
+                + " Nenhuma autenticacao foi tentada, e nenhuma tentativa da "
+                "credencial foi gasta: consultar o primeiro grau devolveria "
+                "'nao encontrado' sobre processo que esta no segundo."
+            )
+
     # GRAVA A TELA, sempre. A consulta do servidor nao gravava, e em
     # 27/10/2026 a leitura do registro de segundo grau devolveu "1 rotulo, 0
     # movimentacoes" sem deixar nada no disco para olhar. Uma autenticacao
@@ -6412,7 +6450,8 @@ def consultar_processo_estruturado(
     saida, erros = io.StringIO(), io.StringIO()
     with redirect_stdout(saida), redirect_stderr(erros):
         codigo = autenticar(
-            config.url, tribunal, sistema, confirmado=True, perfil=config.perfil,
+            endereco, tribunal, sistema, confirmado=True,
+            perfil=perfil_da_consulta,
             oculto=True, cofre=cofre, estado=estado, apos_autenticar=capturar,
         )
     if "dados" not in guardado:

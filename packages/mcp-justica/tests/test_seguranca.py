@@ -116,6 +116,10 @@ NUMEROS_DECLARADOS = {
     "00000011120208190002",
     "00000011620198190001",
     "00000016920268190001",
+    # Escrito em 24/11/2026 para os testes de endereco por grau da consulta
+    # estruturada. Sequencial 0000001 e origem 0000, segunda instancia:
+    # numero com essa cara nao se confunde com processo de ninguem.
+    "00000017220268190000",
     "00000017820208260100",
     "00000018620138190078",
     "00000018820198190001",
