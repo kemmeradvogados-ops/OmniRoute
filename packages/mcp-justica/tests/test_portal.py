@@ -10351,3 +10351,60 @@ def test_no_portal_de_servicos_o_grau_do_numero_nao_escolhe_endereco(
 
     assert consulta_sem_navegador["url"] == "https://portal.exemplo/portal/"
     assert consulta_sem_navegador["perfil"] == "ADV"
+
+
+# --------------------------------------------------------------------------
+# Tres listas para o mesmo servico, e quem tinha a resposta nao era quem imprimia.
+#
+# Em 24/11/2026 o eproc de Sao Paulo recusou a credencial escrevendo "Nome de
+# usuario ou senha invalida." em `.text-danger`. O gravador de telas conhecia
+# essa classe e a guardou no arquivo; nenhuma lista do relato AO VIVO a
+# conhecia. O operador leu "AVISO NA TELA" com a barra de acessibilidade,
+# apanhada por `.modal-body`, e a frase que respondia a pergunta so apareceu
+# depois, lendo o arquivo gravado. Duas autenticacoes foram gastas sem que o
+# motivo chegasse a quem podia agir sobre ele.
+#
+# A guarda e de SUBCONJUNTO, e numa direcao so: tudo que o gravador sabe ver,
+# o relato ao vivo precisa saber imprimir. O contrario nao vale, porque o
+# relato ao vivo conhece telas que o gravador nunca encontrou.
+
+def _seletores_do_gravador() -> list:
+    """Lê a lista do gravador do PROPRIO texto dele, que e JavaScript.
+
+    Ler o texto, e nao reescrever a lista aqui, e o que faz a guarda valer:
+    acrescentar um seletor la e esquecer daqui quebra este teste.
+    """
+    import re
+    from pathlib import Path
+
+    fonte = (Path(__file__).resolve().parent.parent
+             / "src" / "justica_mcp" / "telas.py").read_text(encoding="utf-8")
+    bloco = re.search(r"const SELETORES_DE_MENSAGEM = \[(.*?)\];", fonte, re.DOTALL)
+    assert bloco, "a lista de seletores do gravador mudou de forma"
+    achados = re.findall(r"'([^']+)'", bloco.group(1))
+    assert len(achados) >= 8, achados
+    return achados
+
+
+def test_todo_seletor_de_recado_do_gravador_tambem_e_lido_ao_vivo():
+    import inspect
+
+    from justica_mcp.portal import MARCAS_DE_AVISO, _mensagens_de_erro
+
+    fonte_do_leitor = inspect.getsource(_mensagens_de_erro)
+    for seletor in _seletores_do_gravador():
+        assert seletor in MARCAS_DE_AVISO, (
+            f"{seletor!r} e lido pelo gravador e NAO por `avisos_na_tela`: o "
+            "recado iria para o arquivo e nao para a tela do operador")
+        assert f'"{seletor}"' in fonte_do_leitor, (
+            f"{seletor!r} e lido pelo gravador e NAO por `_mensagens_de_erro`")
+
+
+def test_a_classe_que_o_eproc_paulista_usou_esta_nas_duas_listas():
+    """O caso concreto de 24/11/2026, nomeado para nao se perder no conjunto."""
+    import inspect
+
+    from justica_mcp.portal import MARCAS_DE_AVISO, _mensagens_de_erro
+
+    assert ".text-danger" in MARCAS_DE_AVISO
+    assert '".text-danger"' in inspect.getsource(_mensagens_de_erro)

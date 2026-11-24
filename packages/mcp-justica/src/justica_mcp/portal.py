@@ -1166,10 +1166,20 @@ def clicar_tolerando_lentidao(elemento, alvo: str, segundos: int) -> None:
 # larga de proposito: cada aplicacao usa a sua, e aqui o custo de olhar num
 # lugar a mais e zero, enquanto o custo de nao ver o recado e uma execucao
 # inteira perdida.
+# AS MESMAS QUE O GRAVADOR DE TELAS CONHECE, mais as daqui. Em 24/11/2026 o
+# eproc de Sao Paulo recusou a credencial dizendo "Nome de usuario ou senha
+# invalida." em `.text-danger`, e essa classe nao estava em lista nenhuma do
+# relato ao vivo: o operador leu "AVISO NA TELA" com a barra de acessibilidade,
+# apanhada por `.modal-body`, e o recado que respondia a pergunta ficou so no
+# arquivo gravado. Duas listas para o mesmo servico, e quem tinha a resposta
+# nao era quem imprimia. O teste
+# `test_todo_seletor_de_recado_do_gravador_tambem_e_lido_ao_vivo` guarda isso.
 MARCAS_DE_AVISO = (
-    "[role=alert]", ".alert", ".toast", ".snackbar", ".notification",
-    ".mensagem", ".message", ".v-alert", ".el-message", ".p-toast",
-    ".swal2-html-container", ".modal-body",
+    "[role=alert]", "[role=status]", ".alert", ".toast", ".snackbar",
+    ".notification", ".mensagem", ".message", ".v-alert", ".el-message",
+    ".p-toast", ".p-toast-detail", ".p-message", ".swal2-html-container",
+    ".modal-body", ".erro", ".text-danger", ".invalid-feedback", ".mat-error",
+    ".empty-message", ".p-datatable-emptymessage",
 )
 
 # Texto dos botoes de fechar. Quando a aplicacao nao usa nenhuma classe
@@ -1524,9 +1534,15 @@ def _mensagens_de_erro(pagina: Any) -> list[str]:
     # Sem elas, a consulta publica voltava "0 resultados" sem dizer se nada foi
     # encontrado ou se o portal recusou o que foi digitado, que sao problemas
     # opostos: o primeiro e resposta, o segundo e defeito nosso.
-    for seletor in (".alert", ".erro", ".error", "[role=alert]", ".infraAviso",
-                    ".msgErro", ".kc-feedback-text", ".pf-c-alert__title",
-                    "#input-error-otp-code", ".input-error",
+    # `.text-danger` e as vizinhas entram pelo mesmo motivo registrado em
+    # MARCAS_DE_AVISO: era a classe em que o eproc de Sao Paulo escreveu a
+    # recusa da credencial, e nenhuma lista do relato ao vivo a conhecia.
+    for seletor in (".alert", ".erro", ".error", "[role=alert]", "[role=status]",
+                    ".infraAviso", ".msgErro", ".kc-feedback-text",
+                    ".pf-c-alert__title", "#input-error-otp-code", ".input-error",
+                    ".text-danger", ".invalid-feedback", ".mat-error",
+                    ".mensagem", ".p-message", ".p-toast-detail",
+                    ".empty-message", ".p-datatable-emptymessage",
                     ".rich-messages-label", ".rich-message-label", ".rf-msg-lbl",
                     ".rich-messages", ".msgError", ".msgInfo", ".msgWarn"):
         for elemento in elementos_tolerando_navegacao(pagina, seletor):
