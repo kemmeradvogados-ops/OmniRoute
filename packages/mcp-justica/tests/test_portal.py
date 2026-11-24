@@ -10408,3 +10408,71 @@ def test_a_classe_que_o_eproc_paulista_usou_esta_nas_duas_listas():
 
     assert ".text-danger" in MARCAS_DE_AVISO
     assert '".text-danger"' in inspect.getsource(_mensagens_de_erro)
+
+
+# --------------------------------------------------------------------------
+# O mesmo recado, uma vez so.
+#
+# Alargar a lista de seletores em 24/11/2026 fez o MESMO elemento casar por
+# mais de um seletor, e o relato do eproc paulista saiu com "Codigo
+# autenticador invalido." duas vezes na mesma tela, parecendo dois envios onde
+# houve um. Num relato que o operador usa para decidir se repete a chamada,
+# parecer dois envios nao e detalhe de estilo.
+
+class _TelaComRecadoRepetido:
+    """Um elemento so, alcancado por dois seletores da lista."""
+
+    def __init__(self, texto="Codigo autenticador invalido.", quantos=2):
+        self.texto, self.quantos = texto, quantos
+
+    def query_selector_all(self, seletor):
+        from justica_mcp.portal import MARCAS_DE_AVISO
+
+        if seletor not in MARCAS_DE_AVISO:
+            return []
+        pai = self
+
+        class _Elemento:
+            def is_visible(self):
+                return True
+
+            def inner_text(self):
+                return pai.texto
+
+        return [_Elemento()]
+
+
+def test_o_mesmo_recado_nao_sai_duas_vezes(monkeypatch):
+    from justica_mcp.portal import _mensagens_de_erro
+
+    recados = _mensagens_de_erro(_TelaComRecadoRepetido())
+    assert recados == ["Codigo autenticador invalido."], recados
+
+
+def test_recados_diferentes_continuam_todos():
+    """Tirar repeticao nao pode virar tirar recado."""
+    from justica_mcp.portal import _mensagens_de_erro
+
+    class _Tela:
+        def __init__(self):
+            self.vez = 0
+
+        def query_selector_all(self, seletor):
+            from justica_mcp.portal import MARCAS_DE_AVISO
+
+            if seletor not in MARCAS_DE_AVISO:
+                return []
+            self.vez += 1
+            texto = f"recado {self.vez}"
+
+            class _Elemento:
+                def is_visible(self):
+                    return True
+
+                def inner_text(self):
+                    return texto
+
+            return [_Elemento()]
+
+    recados = _mensagens_de_erro(_Tela())
+    assert len(recados) == len(set(recados)) > 1, recados

@@ -1526,7 +1526,13 @@ def titulo_tolerando_navegacao(pagina: Any) -> str:
 
 
 def _mensagens_de_erro(pagina: Any) -> list[str]:
-    saida = []
+    # SEM REPETICAO. Com a lista estreita, cada recado casava com um seletor
+    # so. Alargada em 24/11/2026, ela passou a casar o MESMO elemento por mais
+    # de um seletor, e o relato saiu com "Codigo autenticador invalido." duas
+    # vezes na mesma tela, parecendo dois envios onde houve um. `avisos_na_tela`
+    # ja nao repetia; este leitor repetia.
+    saida: list[str] = []
+    vistos: set = set()
     # O Keycloak, que atende o PJe, escreve o recado em classe propria: sem
     # ela, a recusa do codigo chegava ao operador como "nao passou", sem dizer
     # se o codigo estava errado, vencido ou se a conta e que foi bloqueada.
@@ -1554,8 +1560,10 @@ def _mensagens_de_erro(pagina: Any) -> list[str]:
                 texto = re.sub(r"\s+", " ", (elemento.inner_text() or "")).strip()
             except Exception:
                 continue
-            if texto:
-                saida.append(texto[:160])
+            recado = texto[:160]
+            if recado and recado not in vistos:
+                vistos.add(recado)
+                saida.append(recado)
     return saida
 
 
