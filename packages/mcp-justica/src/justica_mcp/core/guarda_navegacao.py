@@ -47,6 +47,16 @@ class Acao(str, Enum):
     PREENCHER = "preencher"
     CLICAR = "clicar"
     BAIXAR = "baixar"
+    # OBTER O DOCUMENTO SEM GRAVAR ARQUIVO. Existe separada de `baixar` para a
+    # auditoria saber responder quem VIU uma peca e quem a BAIXOU, que sao
+    # perguntas diferentes.
+    #
+    # O rigor, porem, e o MESMO de `baixar`, e isso e deliberado. Tratar a
+    # leitura na tela como `ler`, que e sempre liberada, abriria um buraco na
+    # trava: perante o tribunal o documento e obtido do mesmo jeito, e o que
+    # muda e so a gravacao local. Visualizar nao pode ser o atalho que dispensa
+    # a autorizacao que baixar exige.
+    VISUALIZAR = "visualizar"
 
 
 # Termos que sugerem abertura de expediente ou ato que consome prazo.
@@ -101,6 +111,11 @@ TERMOS_DE_RISCO = (
 # assim apenas para alvos explicitamente liberados. A mudanca foi de "nunca"
 # para "mediante autorizacao", nao para "livre".
 ACOES_PROIBIDAS = frozenset()
+
+# As que OBTEM o documento, com ou sem gravar arquivo. Uma lista so, para que
+# acrescentar uma forma nova de obter nao deixe metade das conferencias para
+# tras: a porta e a mesma, e precisa continuar sendo.
+ACOES_DE_DOCUMENTO = frozenset({Acao.BAIXAR, Acao.VISUALIZAR})
 
 
 @dataclass(frozen=True)
@@ -198,11 +213,12 @@ class GuardaNavegacao:
                 acao, alvo,
             ))
 
-        if acao is Acao.BAIXAR and not self.permitir_download:
+        if acao in ACOES_DE_DOCUMENTO and not self.permitir_download:
             return self._registrar(Decisao(
                 False,
-                "Download nao autorizado nesta operacao. Baixar autos e ato de "
-                "outra natureza e so ocorre em comando que o pede explicitamente.",
+                f"{acao.value.capitalize()} nao autorizado nesta operacao. Obter "
+                "documento e ato de outra natureza e so ocorre em comando que o "
+                "pede explicitamente, grave ele o arquivo ou nao.",
                 acao, alvo,
             ))
 
@@ -252,16 +268,18 @@ class GuardaNavegacao:
                 acao, alvo,
             ))
 
-        if acao is Acao.BAIXAR:
-            # Mesmo autorizado, o download obedece a lista de permissao: o alvo
-            # precisa estar liberado na tela, como qualquer outra acao.
-            permissao_download = self._permissao_para(contexto)
-            if permissao_download is None:
+        if acao in ACOES_DE_DOCUMENTO:
+            # Mesmo autorizado, obter documento obedece a lista de permissao: o
+            # alvo precisa estar liberado na tela, como qualquer outra acao.
+            permissao_documento = self._permissao_para(contexto)
+            if permissao_documento is None:
                 return self._registrar(Decisao(
                     False, "Endereco do documento fora da lista de permissao.", acao, alvo,
                 ))
             return self._registrar(Decisao(
-                True, f"Download autorizado nesta operacao ({permissao_download.descricao}).",
+                True,
+                f"Acao {acao.value!r} autorizada nesta operacao "
+                f"({permissao_documento.descricao}).",
                 acao, alvo,
             ))
 

@@ -418,3 +418,64 @@ def test_tela_sem_risco_segue_como_sempre():
     limpa = "https://eproc.exemplo/controlador.php?acao=processo_consultar"
     assert guarda.avaliar(Acao.PREENCHER, BUSCA, url=limpa).permitido is True
     assert guarda.avaliar(Acao.PREENCHER, "#outro", url=limpa).permitido is False
+
+
+# --------------------------------------------------------------------------
+# Visualizar obedece ao MESMO rigor de baixar.
+#
+# Ler a peca na tela, sem gravar arquivo, foi pedido em 28/11/2026. A tentacao
+# era trata-la como `ler`, que a trava sempre libera com a justificativa de que
+# extrair texto nao pratica ato no portal. Isso abriria um buraco: perante o
+# tribunal o documento e obtido do mesmo jeito, e o que muda e so a gravacao
+# local. Visualizar existe com nome proprio para a auditoria saber responder
+# quem VIU e quem BAIXOU, nunca para dispensar a autorizacao.
+
+def test_visualizar_negado_por_padrao():
+    d = _guarda().avaliar(Acao.VISUALIZAR, "doc.pdf",
+                          url="https://eproc.tjrj.jus.br/painel")
+    assert d.permitido is False
+    assert "nao autorizado nesta operacao" in d.motivo
+
+
+def test_visualizar_nao_e_liberado_por_ser_leitura():
+    """`ler` e sempre liberada; `visualizar` NAO pode herdar isso."""
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[PAINEL])
+    alvo = "https://eproc.tjrj.jus.br/painel/doc/1"
+    assert g.avaliar(Acao.LER, alvo).permitido is True
+    recusa = g.avaliar(Acao.VISUALIZAR, alvo)
+    assert recusa.permitido is False
+    # O MOTIVO entra na afirmacao de proposito. Sem ele o teste passava mesmo
+    # com `visualizar` fora da porta dos documentos: a acao caia no caminho
+    # generico e era negada por nao estar na lista de seletores preenchiveis,
+    # ou seja, pelo motivo errado.
+    assert "nao autorizado nesta operacao" in recusa.motivo, recusa.motivo
+
+
+def test_visualizar_autorizado_so_vale_na_tela_liberada():
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[PAINEL],
+                        permitir_download=True)
+    assert g.avaliar(
+        Acao.VISUALIZAR, "https://eproc.tjrj.jus.br/painel/doc/1").permitido is True
+    assert g.avaliar(
+        Acao.VISUALIZAR, "https://outro.tribunal.jus.br/doc/1").permitido is False
+
+
+def test_termo_de_risco_barra_visualizar_igual_a_baixar():
+    """A funcao nao pode virar atalho para abrir expediente, que dispara a
+    ciencia e inicia o prazo (lei nº. 11.419/06, artigo 5º, § 3º)."""
+    g = GuardaNavegacao(modo=Modo.LEITURA, permissoes=[PAINEL],
+                        permitir_download=True)
+    alvo = "https://eproc.tjrj.jus.br/painel/abrir-expediente/1"
+    assert g.avaliar(Acao.BAIXAR, alvo).permitido is False
+    assert g.avaliar(Acao.VISUALIZAR, alvo).permitido is False
+
+
+def test_as_duas_formas_de_obter_documento_passam_pela_mesma_porta():
+    """Guarda contra acrescentar uma forma nova e esquecer metade das
+    conferencias: a porta e uma so, e precisa continuar sendo."""
+    from justica_mcp.core.guarda_navegacao import ACOES_DE_DOCUMENTO
+
+    assert ACOES_DE_DOCUMENTO == frozenset({Acao.BAIXAR, Acao.VISUALIZAR})
+    for acao in ACOES_DE_DOCUMENTO:
+        negada = _guarda().avaliar(acao, "https://eproc.tjrj.jus.br/painel/doc/1")
+        assert negada.permitido is False, f"{acao.value} escapou do padrao NEGAR"
